@@ -5,6 +5,7 @@ import { DaemonError } from "./daemon.js";
 import {
   buildMacosImage,
   buildMacosImagesInBackground,
+  unattendedPreset,
   findMacosImageFiles,
   installLume,
   MACOS_BASE_VM,
@@ -36,6 +37,8 @@ function mac({ vms = [] as string[], exit = 0 } = {}) {
     hasLumeVm: vi.fn(async (_lume: string, name: string) => vms.includes(name)),
     run,
     imageFiles: () => FILES,
+    macosVersion: () => "26.6.2",
+    lumeVersion: async () => "0.6.1",
     installAmikad: vi.fn(async () => "/data/amikad/0.3.0/amikad"),
   } satisfies MacosImageDeps;
   return { deps, out, run };
@@ -283,5 +286,69 @@ describe("buildMacosImagesInBackground", () => {
     });
     expect(options.build).not.toHaveBeenCalled();
     expect(err[0]).toMatch(/could not check Lume for its macOS images/);
+  });
+});
+
+describe("unattendedPreset", () => {
+  it.each([
+    ["15.3", "sequoia"],
+    ["15.7.1", "sequoia"],
+    ["26.6.2", "tahoe"],
+    // Newer than any preset Lume 0.6.1 has: its newest.
+    ["27.1", "tahoe"],
+    ["27.2", "tahoe"],
+  ])("macOS %s uses %s", (version, preset) => {
+    expect(unattendedPreset(version)).toBe(preset);
+  });
+});
+
+describe("the unattended preset in the build", () => {
+  it.each([
+    ["15.5", "sequoia"],
+    ["26.6.2", "tahoe"],
+    ["27.1", "tahoe"],
+  ])(
+    "on macOS %s, lume create gets --unattended %s",
+    async (version, preset) => {
+      const { deps, run, out } = mac();
+      await buildMacosImage(
+        "amika-macos-coder",
+        {},
+        {
+          ...deps,
+          macosVersion: () => version,
+        },
+      );
+      expect(run.mock.calls[0][1]).toEqual([
+        "create",
+        "--ipsw",
+        "latest",
+        "--unattended",
+        preset,
+        MACOS_BASE_VM,
+      ]);
+      expect(out.join("\n")).toContain(
+        `with the ${preset} setup preset (this Mac runs macOS ${version})`,
+      );
+    },
+  );
+});
+
+describe("the Lume version", () => {
+  it("refuses to build with a Lume other than the one it is tested with", async () => {
+    const { deps, run } = mac();
+    await expect(
+      buildMacosImage(
+        "amika-macos-coder",
+        {},
+        {
+          ...deps,
+          lumeVersion: async () => "0.7.2",
+        },
+      ),
+    ).rejects.toThrow(
+      `${LUME} is Lume 0.7.2, but amika-hostd builds macOS images with Lume 0.6.1; install it with`,
+    );
+    expect(run).not.toHaveBeenCalled();
   });
 });

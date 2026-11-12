@@ -9,7 +9,7 @@
  * tools in the clone. Both are slow and large, so callers warn first
  * (`MACOS_IMAGE_COST`).
  */
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import { userInfo } from "node:os";
 import path from "node:path";
@@ -41,6 +41,40 @@ export const MACOS_IMAGE_COST =
  * turns it off for good when Lume is on; these run before it starts.
  */
 export const LUME_NO_TELEMETRY = { LUME_TELEMETRY_ENABLED: "false" } as const;
+
+/**
+ * The unattended-setup preset for a macOS version, as `lume create
+ * --unattended` takes it. `--ipsw latest` installs this Mac's own major
+ * version, so the preset follows the host's. Lume 0.6.1 has presets for
+ * macOS 15 (`sequoia`) and 26 (`tahoe`); a newer version gets the newest
+ * one, which its offline setup barely depends on.
+ */
+export function unattendedPreset(macosVersion: string): string {
+  const major = Number.parseInt(macosVersion, 10);
+  return Number.isFinite(major) && major <= 15 ? "sequoia" : "tahoe";
+}
+
+/** What `lume --version` prints, such as `0.6.1`. */
+async function readLumeVersion(lume: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      lume,
+      ["--version"],
+      { env: { ...process.env, ...LUME_NO_TELEMETRY }, timeout: 30_000 },
+      (error, stdout) => {
+        if (error) reject(error);
+        else resolve(stdout.trim().split("\n").at(-1)?.trim() ?? "");
+      },
+    );
+  });
+}
+
+/** This Mac's macOS version, such as `26.6.2`. */
+function hostMacosVersion(): string {
+  return execFileSync("/usr/bin/sw_vers", ["-productVersion"], {
+    encoding: "utf8",
+  }).trim();
+}
 
 /** Where `lume` is: on `PATH`, else where Lume's installer puts it. */
 export function findLume(env: NodeJS.ProcessEnv): string | undefined {
@@ -133,6 +167,10 @@ export interface MacosImageDeps {
   installAmikad?: typeof ensureAmikad;
   /** Stops the build's commands once this aborts (the daemon is stopping). */
   signal?: AbortSignal;
+  /** This Mac's macOS version; defaults to `sw_vers -productVersion`. */
+  macosVersion?: () => string;
+  /** The version `lume` reports; defaults to `lume --version`. */
+  lumeVersion?: (lume: string) => Promise<string>;
 }
 
 /** Of `templates`, the ones Lume's default storage does not have. */
@@ -181,6 +219,16 @@ export async function buildMacosImage(
       "this amika-hostd has no macOS image build files (macos-image/); reinstall amika-hostd",
     );
   }
+  // The build, and the presets `unattendedPreset` names, are tested with
+  // one Lume release; hostd installs it, but uses a Lume already there.
+  const found = await reported(`Reading ${lume}'s version`, () =>
+    (deps.lumeVersion ?? readLumeVersion)(lume),
+  );
+  if (found !== LUME_VERSION) {
+    throw new DaemonError(
+      `${lume} is Lume ${found || "of an unknown version"}, but amika-hostd builds macOS images with Lume ${LUME_VERSION}; install it with \`curl -fsSL https://raw.githubusercontent.com/trycua/cua/lume-v${LUME_VERSION}/libs/lume/scripts/install.sh | LUME_VERSION=${LUME_VERSION} bash -s -- --no-background-service\``,
+    );
+  }
   const runCommand = deps.run ?? runToStderr;
   const run = (
     command: string,
@@ -207,12 +255,17 @@ export async function buildMacosImage(
   deps.out(`Building the macOS image ${template}. ${MACOS_IMAGE_COST}`);
   if (!(await has(lume, MACOS_BASE_VM))) {
     const ipsw = deps.env.AMIKA_HOSTD_MACOS_IPSW?.trim() || "latest";
+    const version = await reported(
+      "Reading this Mac's macOS version",
+      async () => (deps.macosVersion ?? hostMacosVersion)(),
+    );
+    const preset = unattendedPreset(version);
     deps.out(
-      `Installing macOS into the base VM ${MACOS_BASE_VM}, from ${ipsw === "latest" ? "the newest restore image Lume supports" : ipsw}...`,
+      `Installing macOS into the base VM ${MACOS_BASE_VM}, from ${ipsw === "latest" ? "the newest restore image Lume supports" : ipsw}, with the ${preset} setup preset (this Mac runs macOS ${version})...`,
     );
     const code = await run(
       lume,
-      ["create", "--ipsw", ipsw, "--unattended", "tahoe", MACOS_BASE_VM],
+      ["create", "--ipsw", ipsw, "--unattended", preset, MACOS_BASE_VM],
       env,
     );
     if (code !== 0) {

@@ -11,13 +11,18 @@ amika-hostd builds this image itself once Lume is turned on (with
 daemon runs the steps below in the background, from a copy of this
 directory its release ships. Build it by hand to work on the image.
 
-You need an Apple Silicon Mac with Lume, and a base VM from Lume's
+You need an Apple Silicon Mac with Lume 0.6.1 (the release this build is
+tested with), and a base VM from Lume's
 unattended install:
 
 ```bash
-lume create --ipsw <file> --unattended tahoe <base-vm>
+lume create --ipsw <file> --unattended <preset> <base-vm>
 macos-image/build.sh <base-vm> <image-vm>
 ```
+
+The preset is the macOS version the restore image installs: `tahoe` for
+macOS 26, `sequoia` for 15 (amika-hostd picks it from the Mac's own version,
+which `--ipsw latest` installs).
 
 The build clones the base VM, runs each file in `steps/` in the clone as
 root over SSH, and stops the clone. The clone is the image, in Lume's default

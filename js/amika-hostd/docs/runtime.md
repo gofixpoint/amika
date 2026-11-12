@@ -146,10 +146,17 @@ pre-pull is downloading, and a create of a Lume rig of it is refused at once
 (`503`, `Retry-After: 300`, "Lume has not finished setting up on this
 host"); Linux rigs are not held up. hostd downloads no image; it builds one:
 
-1. `lume create --ipsw <restore image> --unattended tahoe amika-macos-base`
+1. `lume create --ipsw <restore image> --unattended <preset> amika-macos-base`
    makes the base VM, unless it is already there. The restore image is the
-   newest one Lume supports, unless `AMIKA_HOSTD_MACOS_IPSW` names a file or
-   URL.
+   newest one Lume supports, which is this Mac's own major macOS version,
+   unless `AMIKA_HOSTD_MACOS_IPSW` names a file or URL. The preset follows
+   this Mac's version (`sw_vers -productVersion`, `unattendedPreset`):
+   `sequoia` for macOS 15, `tahoe` for 26, and for a newer version the newest
+   preset Lume 0.6.1 has, `tahoe`, which its offline setup barely depends
+   on. Those are Lume 0.6.1's presets, and the build is tested with that
+   release, so it refuses to start with any other: hostd installs 0.6.1,
+   but uses a `lume` already on the Mac, and says how to install 0.6.1
+   when that is another version.
 2. `macos-image/build.sh amika-macos-base <template>` clones the base VM and
    installs Amika's tools in the clone, with the amikad release hostd
    installs for bare metal (`ensureAmikad`, as `AMIKAD_BIN`), the version
