@@ -121,6 +121,7 @@ import {
 import { versionText } from "./build-info.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
 import { runSetup, withoutInvalidSecret, type SetupDeps } from "./setup.js";
+import { uninstall } from "./uninstall.js";
 import {
   planInstalls,
   runInstalls,
@@ -153,7 +154,7 @@ Commands:
                       it is not
   serve               Run the HTTP server in the foreground without registering
   config upgrade      Rewrite old tables in the config file in the current
-                      format (the installer runs it on an upgrade)
+                      format (setup does this too)
   capabilities get    Print the runtimes and presets this host offers Amika,
                       as the config file sets them
   capabilities update [--enable|--disable <runtime>]
@@ -166,6 +167,10 @@ Commands:
                       ngrok or Cloudflare Tunnel URL) to complete its
                       registration. A host whose address Amika assigns takes
                       none
+  uninstall           Stop the daemon, then delete what its runtimes installed:
+                      Lume rigs, and, when you type to confirm, the macOS
+                      images and smolvm. install-amika-hostd.sh --uninstall
+                      runs it, then removes amika-hostd itself
   version             Print version information
 
 Options:
@@ -181,8 +186,10 @@ Options:
                  without asking: smol, lume or bare_metal. Repeatable
   --fg           (up) Stay in the foreground instead of backgrounding
   --json         (capabilities, reload) Print JSON, for scripts and agents
-  --dry-run      (capabilities update) Print the plan and change nothing
-  --yes          (capabilities update) Apply the plan without asking
+  --dry-run      (capabilities update, uninstall) Print the plan and change
+                 nothing
+  --yes          (capabilities update, uninstall) Apply the plan without
+                 asking. It never answers a typed-phrase question
   --smolvm       (serve) Also start smolvm, and stop it on exit, as \`up\` does
   --port <port>  Port a listening daemon binds (AMIKA_HOSTD_PORT, TOML port;
                  default 3020)
@@ -312,6 +319,9 @@ export async function runCli(
     }
     // Stopping and checking need only the pidfiles, not a valid configuration.
     if (parsed.command === "down") return await down(deps);
+    if (parsed.command === "uninstall") {
+      return await uninstallHost(deps, parsed);
+    }
     if (parsed.command === "status") return status(deps);
     if (parsed.command === "config-upgrade") return upgradeConfigOnDisk(deps);
     if (parsed.command === "capabilities-get") {
@@ -493,6 +503,7 @@ type ParsedCommand =
     }
   | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
   | { help: false; command: "down" }
+  | { help: false; command: "uninstall"; yes: boolean; dryRun: boolean }
   | { help: false; command: "status" }
   | { help: false; command: "version" }
   | { help: false; command: "config-upgrade" }
@@ -1077,6 +1088,25 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       ]);
       expectArguments(rest, 0);
       return { help: false, command, fg: values.fg ?? false, flags };
+    case "uninstall":
+      rejectOptions(command, values, [
+        ...SETUP_ONLY,
+        "json",
+        "enable",
+        "disable",
+        "fg",
+        "smolvm",
+        "port",
+        "host",
+        "secret-key-from-up",
+      ]);
+      expectArguments(rest, 0);
+      return {
+        help: false,
+        command,
+        yes: values.yes ?? false,
+        dryRun: values["dry-run"] ?? false,
+      };
     case "down":
     case "status":
     case "version":
@@ -2449,6 +2479,29 @@ async function down(deps: CliDeps): Promise<number> {
       ? "amika-hostd is not running"
       : `Stopped ${stopped.join(" and ")}`,
   );
+  return 0;
+}
+
+/**
+ * Stop the daemon, then delete what its runtimes installed (`uninstall.ts`).
+ * An unreadable config deletes only what needs none: smolvm.
+ */
+async function uninstallHost(
+  deps: CliDeps,
+  options: { yes: boolean; dryRun: boolean },
+): Promise<number> {
+  if (!options.dryRun) await down(deps);
+  let config: HostdConfig | undefined;
+  try {
+    config = resolveTolerant(deps);
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    deps.err(`amika-hostd: ${error.message}; skipping Lume`);
+  }
+  const index = (deps.machineIndex ?? fileMachineIndex)(
+    daemonPaths(deps.env).machineIndexFile,
+  );
+  await uninstall(config, index, options, deps);
   return 0;
 }
 

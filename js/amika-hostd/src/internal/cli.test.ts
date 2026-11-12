@@ -2207,6 +2207,29 @@ storage_dir = "/srv/lume"
   });
 });
 
+describe("uninstall", () => {
+  it("stops the daemon first, but not on a dry run", async () => {
+    const dir = pidDir();
+    const env = { XDG_STATE_HOME: dir, HOME: dir };
+    const dry = harness(env);
+    dry.deps.isRunning.mockReturnValue(true);
+    expect(await runCli(["uninstall", "--dry-run"], dry.deps)).toBe(0);
+    expect(dry.deps.stopProcess).not.toHaveBeenCalled();
+
+    const real = harness(env);
+    real.deps.isRunning.mockReturnValue(true);
+    // No Lume here, so nothing reaches this machine's own.
+    const noLume = { ...real.deps, findLume: () => undefined };
+    expect(await runCli(["uninstall", "--yes"], noLume)).toBe(0);
+    expect(real.deps.stopProcess.mock.calls[0][0]).toBe(999999);
+  });
+
+  it("refuses options it does not take", async () => {
+    const { deps } = harness();
+    expect(await runCli(["uninstall", "--enable", "smol"], deps)).toBe(2);
+  });
+});
+
 describe("status", () => {
   /** A state directory whose pidfiles name a daemon and a smolvm. */
   function running() {
