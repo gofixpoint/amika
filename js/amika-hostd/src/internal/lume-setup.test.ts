@@ -285,6 +285,53 @@ describe("buildMacosImagesInBackground", () => {
     expect(err).toEqual([]);
   });
 
+  it("holds every template while Lume is asked which it has, then releases those it has", async () => {
+    const { options, building } = background(["other"]);
+    let answer: () => void = () => {};
+    const asked = new Promise<void>((resolve) => (answer = resolve));
+    const held: string[][] = [];
+    const running = buildMacosImagesInBackground({
+      ...options,
+      hasLumeVm: async (_lume: string, name: string) => {
+        held.push([...building]);
+        await asked;
+        return name === "amika-macos-coder";
+      },
+    });
+    await vi.waitFor(() => expect(held).toHaveLength(1));
+    // Before Lume has answered, a create of either is refused with a 503.
+    expect(held[0]).toEqual(["amika-macos-coder", "other"]);
+    answer();
+    await running;
+    // Only the missing one was held through its build.
+    expect(options.build).toHaveBeenCalledOnce();
+    expect(building.size).toBe(0);
+  });
+
+  it("stops checking Lume once the daemon stops, quietly, and releases every template", async () => {
+    const stopping = new AbortController();
+    const { options, err, building } = background([]);
+    const hasLumeVm = vi.fn(
+      (_lume: string, _name: string, signal?: AbortSignal) =>
+        new Promise<boolean>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason));
+        }),
+    );
+    const running = buildMacosImagesInBackground({
+      ...options,
+      hasLumeVm,
+      signal: stopping.signal,
+    });
+    await vi.waitFor(() => expect(hasLumeVm).toHaveBeenCalledOnce());
+    stopping.abort();
+    await running;
+    // The hung check was cut short, and the next template never checked.
+    expect(hasLumeVm).toHaveBeenCalledOnce();
+    expect(options.build).not.toHaveBeenCalled();
+    expect(err).toEqual([]);
+    expect(building.size).toBe(0);
+  });
+
   it("logs Lume failing to say what is missing, and never throws", async () => {
     const { options, err } = background([]);
     await buildMacosImagesInBackground({
@@ -458,7 +505,68 @@ describe("Amika's secrets", () => {
   });
 });
 
+describe("buildMacosImage, stopped", () => {
+  it("passes the stop to Lume's checks and amikad's download", async () => {
+    const stopping = new AbortController();
+    const { deps } = mac({ vms: [MACOS_BASE_VM] });
+    await buildMacosImage(
+      "amika-macos-coder",
+      {},
+      { ...deps, signal: stopping.signal },
+    );
+    expect(deps.hasLumeVm.mock.calls[0]).toEqual([
+      LUME,
+      MACOS_BASE_VM,
+      stopping.signal,
+    ]);
+    expect(deps.installAmikad.mock.calls[0]).toEqual([
+      {},
+      expect.objectContaining({ signal: stopping.signal }),
+    ]);
+  });
+
+  it("starts nothing more once stopped while checking for the base VM", async () => {
+    const stopping = new AbortController();
+    const { deps, run } = mac();
+    const build = buildMacosImage(
+      "amika-macos-coder",
+      {},
+      {
+        ...deps,
+        signal: stopping.signal,
+        hasLumeVm: vi.fn(async () => {
+          stopping.abort();
+          return false;
+        }),
+      },
+    );
+    await expect(build).rejects.toThrow();
+    expect(run).not.toHaveBeenCalled();
+    expect(deps.installAmikad).not.toHaveBeenCalled();
+  });
+});
+
 describe("runToStderr", () => {
+  it("on abort, stops the processes the command started too", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "amika-hostd-run-"));
+    const pidFile = path.join(dir, "child.pid");
+    // As build.sh waiting on `lume clone`: bash's own TERM handling waits
+    // for the child, which must get the signal itself.
+    const script = `sleep 30 & echo $! > "${pidFile}"; wait`;
+    const stopping = new AbortController();
+    const running = runToStderr(
+      "/bin/bash",
+      ["-c", script],
+      process.env,
+      stopping.signal,
+    );
+    await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
+    const child = Number(readFileSync(pidFile, "utf8"));
+    stopping.abort();
+    await running;
+    await vi.waitFor(() => expect(isRunning(child)).toBe(false));
+  });
+
   it("on abort, settles only once the command has run its own cleanup and exited", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "amika-hostd-run-"));
     const marker = path.join(dir, "cleaned");
@@ -478,3 +586,12 @@ describe("runToStderr", () => {
     expect(code).toBe(143);
   });
 });
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}

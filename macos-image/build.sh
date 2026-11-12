@@ -105,8 +105,10 @@ if [[ -z "${AMIKAD_BIN:-}" ]]; then
     go -C "$repo/go" build -o "$AMIKAD_BIN" ./cmd/amikad
 fi
 # 2. Clone the base VM and boot the clone with no display.
-lume clone "$base" "$image"
+# Marked first: a clone stopped partway leaves a VM to delete too. The name
+# was free above, so whatever is there is this run's.
 cloned=true
+lume clone "$base" "$image"
 lume run "$image" --detach --display none --vnc disabled \
   --log-file "$work/lume.log"
 ip=""

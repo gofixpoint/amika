@@ -58,6 +58,7 @@ export function unattendedPreset(macosVersion: string): string {
 async function readLumeVersion(
   lume: string,
   env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -66,6 +67,7 @@ async function readLumeVersion(
       {
         env: { ...withoutAmikaSecrets(env), ...LUME_NO_TELEMETRY },
         timeout: 30_000,
+        signal,
       },
       (error, stdout) => {
         if (error) reject(error);
@@ -178,7 +180,11 @@ export interface MacosImageDeps {
   /** Finds the `lume` binary; defaults to `findLume`. */
   findLume?: (env: NodeJS.ProcessEnv) => string | undefined;
   /** Whether Lume's default storage has VM `name`; defaults to `lume get`. */
-  hasLumeVm?: (lume: string, name: string) => Promise<boolean>;
+  hasLumeVm?: (
+    lume: string,
+    name: string,
+    signal?: AbortSignal,
+  ) => Promise<boolean>;
   /** Runs a long command with its output on stderr; returns its exit code. */
   run?: typeof runToStderr;
   /** The build files; defaults to `findMacosImageFiles`. */
@@ -196,18 +202,21 @@ export interface MacosImageDeps {
 /** Of `templates`, the ones Lume's default storage does not have. */
 export async function missingMacosImages(
   templates: readonly string[],
-  deps: Pick<MacosImageDeps, "env" | "findLume" | "hasLumeVm">,
+  deps: Pick<MacosImageDeps, "env" | "findLume" | "hasLumeVm" | "signal">,
 ): Promise<string[]> {
   const lume = (deps.findLume ?? findLume)(deps.env);
   // With no Lume there are no VMs either.
   if (lume === undefined) return [...templates];
   const has =
     deps.hasLumeVm ??
-    ((lumeBin: string, name: string) => hasLumeVm(lumeBin, name, deps.env));
+    ((lumeBin: string, name: string, signal?: AbortSignal) =>
+      hasLumeVm(lumeBin, name, deps.env, signal));
   const missing: string[] = [];
   for (const template of new Set(templates)) {
+    // The daemon stopping, or Lume turned off, ends the check.
+    deps.signal?.throwIfAborted();
     const found = await reported(`Checking Lume for ${template}`, () =>
-      has(lume, template),
+      has(lume, template, deps.signal),
     );
     if (!found) missing.push(template);
   }
@@ -242,7 +251,9 @@ export async function buildMacosImage(
   // The build, and the presets `unattendedPreset` names, are tested with
   // one Lume release; hostd installs it, but uses a Lume already there.
   const found = await reported(`Reading ${lume}'s version`, () =>
-    deps.lumeVersion ? deps.lumeVersion(lume) : readLumeVersion(lume, deps.env),
+    deps.lumeVersion
+      ? deps.lumeVersion(lume)
+      : readLumeVersion(lume, deps.env, deps.signal),
   );
   if (found !== LUME_VERSION) {
     throw new DaemonError(
@@ -260,9 +271,12 @@ export async function buildMacosImage(
     );
   const hasVm =
     deps.hasLumeVm ??
-    ((lumeBin: string, name: string) => hasLumeVm(lumeBin, name, deps.env));
+    ((lumeBin: string, name: string, signal?: AbortSignal) =>
+      hasLumeVm(lumeBin, name, deps.env, signal));
   const has = (lumeBin: string, name: string) =>
-    reported(`Checking Lume for ${name}`, () => hasVm(lumeBin, name));
+    reported(`Checking Lume for ${name}`, () =>
+      hasVm(lumeBin, name, deps.signal),
+    );
   // build.sh calls `lume` by name, and the installer puts it in ~/.local/bin,
   // which a daemon's or an agent's PATH can lack.
   const env = {
@@ -280,6 +294,7 @@ export async function buildMacosImage(
       async () => (deps.macosVersion ?? hostMacosVersion)(),
     );
     const preset = unattendedPreset(version);
+    deps.signal?.throwIfAborted();
     deps.out(
       `Installing macOS into the base VM ${MACOS_BASE_VM}, from ${ipsw === "latest" ? "the newest restore image Lume supports" : ipsw}, with the ${preset} setup preset (this Mac runs macOS ${version})...`,
     );
@@ -294,11 +309,14 @@ export async function buildMacosImage(
       );
     }
   }
+  deps.signal?.throwIfAborted();
   const amikad = await (deps.installAmikad ?? ensureAmikad)(config, {
     env: deps.env,
     platform: deps.platform,
     out: deps.out,
+    signal: deps.signal,
   });
+  deps.signal?.throwIfAborted();
   deps.out(`Installing Amika's tools into ${template}...`);
   const code = await run(
     "/bin/bash",
@@ -369,19 +387,29 @@ export async function buildMacosImagesInBackground(
   options: BackgroundImageOptions,
 ): Promise<void> {
   const { templates, config, out, err, signal, building } = options;
-  let missing: string[];
+  const wanted = [...new Set(templates)];
+  // Each template is unavailable from the start, before Lume is asked which
+  // it has: the daemon already serves, and a create of a missing one would
+  // otherwise reach Lume and fail for good (400) instead of 503. Those Lume
+  // has are released once it says so. Every missing one stays held until its
+  // own build is done, not only the one being built: they are built one at
+  // a time.
+  for (const template of wanted) building?.add(template);
+  let missing: string[] = [];
   try {
-    missing = await missingMacosImages(templates, options);
-  } catch (error) {
-    err(
-      `amika-hostd: could not check Lume for its macOS images: ${errorText(error)}; the next \`amika-hostd up\` tries again`,
-    );
-    return;
-  }
-  // Every missing template is unavailable until its own build is done, not
-  // only the one being built: they are built one at a time.
-  for (const template of missing) building?.add(template);
-  try {
+    try {
+      missing = await missingMacosImages(wanted, options);
+    } catch (error) {
+      // The daemon stopping, or Lume turned off, cut the check short.
+      if (signal?.aborted) return;
+      err(
+        `amika-hostd: could not check Lume for its macOS images: ${errorText(error)}; the next \`amika-hostd up\` tries again`,
+      );
+      return;
+    }
+    for (const template of wanted) {
+      if (!missing.includes(template)) building?.delete(template);
+    }
     for (const template of missing) {
       if (signal?.aborted) return;
       const started = Date.now();
@@ -402,8 +430,9 @@ export async function buildMacosImagesInBackground(
       }
     }
   } finally {
-    // Those never started (a stop cut the queue short) are not building.
-    for (const template of missing) building?.delete(template);
+    // Those never started (a stop or a failed check cut the queue short)
+    // are not building.
+    for (const template of wanted) building?.delete(template);
   }
 }
 
@@ -415,10 +444,12 @@ async function hasLumeVm(
   lume: string,
   name: string,
   env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   return (
-    (await new LumeCli(undefined, lume, quietLumeRunner(env)).get(name)) !==
-    null
+    (await new LumeCli(undefined, lume, quietLumeRunner(env, signal)).get(
+      name,
+    )) !== null
   );
 }
 
@@ -429,6 +460,8 @@ async function hasLumeVm(
  */
 function quietLumeRunner(
   env: NodeJS.ProcessEnv,
+  /** Kills `lume` once this aborts, so a hung `lume get` holds up no stop. */
+  signal?: AbortSignal,
 ): ConstructorParameters<typeof LumeCli>[2] {
   return (command, args, opts = {}) =>
     new Promise((resolve, reject) => {
@@ -442,6 +475,7 @@ function quietLumeRunner(
           },
           encoding: "buffer",
           timeout: opts.timeoutMs,
+          signal,
           maxBuffer: 16 * 1024 * 1024,
         },
         (error, stdout, stderr) => {
@@ -463,18 +497,30 @@ export function runToStderr(
   args: readonly string[],
   env: NodeJS.ProcessEnv,
   /**
-   * Sends the command `SIGTERM` once this aborts. The promise still settles
-   * only when the command has exited, so its own cleanup (build.sh deletes a
-   * half-built template on exit) is done by then.
+   * Sends the command and every process it started `SIGTERM` once this
+   * aborts. The promise still settles only when the command has exited, so
+   * its own cleanup (build.sh deletes a half-built template on exit) is done
+   * by then.
    */
   signal?: AbortSignal,
 ): Promise<number | null> {
   return new Promise((resolve, reject) => {
+    // In a process group of its own, so a stop reaches the command's
+    // children too: build.sh waiting on `lume clone` would otherwise exit
+    // and leave the clone running, to finish a template nobody deletes.
     const child = spawn(command, args, {
       env,
       stdio: ["ignore", process.stderr, process.stderr],
+      detached: true,
     });
-    const stop = () => child.kill("SIGTERM");
+    const stop = () => {
+      try {
+        if (child.pid === undefined) throw new Error("not started");
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        child.kill("SIGTERM");
+      }
+    };
     if (signal?.aborted) stop();
     else signal?.addEventListener("abort", stop, { once: true });
     const settle = () => signal?.removeEventListener("abort", stop);

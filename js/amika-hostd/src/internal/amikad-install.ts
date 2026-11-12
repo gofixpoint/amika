@@ -59,6 +59,8 @@ export interface InstallAmikadDeps {
   /** The releases directory; tests serve a fake one. */
   releasesUrl?: string;
   fetch?: typeof fetch;
+  /** Stops the download once this aborts (the daemon is stopping). */
+  signal?: AbortSignal;
   /** Unpack a `.tar.gz` into a directory; defaults to the system `tar`. */
   extract?: (archive: string, into: string) => Promise<void>;
 }
@@ -126,14 +128,16 @@ async function download(
   );
   deps.out(`Downloading amikad ${version} from ${archiveUrl}`);
   const fetcher = deps.fetch ?? fetch;
-  const checksums = (await fetchBytes(fetcher, checksumsUrl)).toString("utf8");
+  const checksums = (
+    await fetchBytes(fetcher, checksumsUrl, deps.signal)
+  ).toString("utf8");
   const expected = checksumFor(checksums, archive);
   if (expected === undefined) {
     throw new ConfigError(
       `amikad ${version}'s checksums.txt lists no ${archive}; nothing was installed`,
     );
   }
-  const bytes = await fetchBytes(fetcher, archiveUrl);
+  const bytes = await fetchBytes(fetcher, archiveUrl, deps.signal);
   const actual = createHash("sha256").update(bytes).digest("hex");
   if (actual !== expected) {
     throw new ConfigError(
@@ -171,12 +175,19 @@ async function download(
   }
 }
 
-async function fetchBytes(fetcher: typeof fetch, url: string): Promise<Buffer> {
+async function fetchBytes(
+  fetcher: typeof fetch,
+  url: string,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   let response: Response;
   try {
     // GitHub answers a release asset with a redirect to its storage; no
     // credential is sent, so following it is safe.
-    response = await fetcher(url, { signal: AbortSignal.timeout(300_000) });
+    const timeout = AbortSignal.timeout(300_000);
+    response = await fetcher(url, {
+      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
+    });
   } catch (error) {
     throw new ConfigError(
       `cannot download ${url}: ${error instanceof Error ? error.message : String(error)}`,

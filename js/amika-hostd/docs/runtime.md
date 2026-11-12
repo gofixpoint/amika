@@ -172,10 +172,18 @@ until the next `up` or `reload` tries again a create fails on the missing
 template, with a message that points at the log. A step whose result exists
 is skipped, so the next try resumes where a failed one stopped. The base VM
 is kept for later builds; build.sh deletes a half-built template itself.
-Every missing template is refused from the start of the queue, not only
-the one being built. Stopping the daemon stops the build, and waits for
-its commands to exit, so build.sh has deleted a half-built template before
-the daemon is gone and a quick restart cannot take it for a finished one.
+Every template a Lume preset boots is refused from before the daemon asks
+Lume which it has, so a create during that check gets the `503` too, not a
+`400` for a template not found; those Lume has are released once it
+answers, and every missing one stays refused until its own build is done,
+not only the one being built. Stopping the daemon stops the build: its
+checks of Lume (`lume get`, `lume --version`) and amikad's download are
+cut short, and each build command runs in a process group of its own,
+which gets `SIGTERM`, so a `lume clone` that build.sh is waiting on stops
+with it. The daemon waits for the commands to exit, so build.sh has
+deleted a half-built template (it marks the clone for deletion before
+starting it) before the daemon is gone, and a quick restart cannot take
+it for a finished one.
 A reload that turns Lume off stops the build too; a reload during a build that leaves Lume on
 is looked at again once the build is done, so a preset it added is built
 too. The installer and the build run without Amika's API key and secret
