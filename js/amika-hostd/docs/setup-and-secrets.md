@@ -37,7 +37,8 @@ stays as the config has it: on for every new host, and off only with
 smolvm). Each question defaults to what the config already says, so a rerun
 that answers nothing changes nothing. The Lume question says what turning it on costs
 (`MACOS_IMAGE_COST`: a download of about 20 GB, about 60 GB of disk, 30
-minutes or more), since that is when setup builds the macOS image. Setup
+minutes or more), which the daemon then spends building the macOS image in
+the background; setup does not build it. Setup
 refuses to leave no runtime on, to keep on a runtime this machine cannot run
 (Lume in a config copied from an Apple Silicon Mac, say; `--disable` turns it
 off), and to turn off a runtime that has rigs in `machines.json`, with
@@ -103,7 +104,8 @@ restart a running daemon, which keeps the key `up` handed it.
 script. It runs the same setup, answering each question with its default: the
 hostname from `--hostname`, else the configured one or this machine's; the
 configured runtimes, changed by `--enable <runtime>` and `--disable <runtime>`
-(still installing what each needs, and building Lume's image); no to every
+(still installing what each needs; the daemon builds Lume's image once it
+runs); no to every
 other yes/no question, so it never regenerates or replaces a secret key; and
 the API key from stdin when none is stored or set in the environment. An
 answer setup refuses (an invalid hostname, no API key on stdin) ends it with
