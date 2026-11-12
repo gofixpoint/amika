@@ -49,8 +49,8 @@ amika-hostd setup
 ```
 
 It asks for the host's name and your Amika API key, and generates the secret
-key the control plane uses to reach this daemon. Linux VMs (`smol`) are always
-on. It then asks whether the host also runs macOS VMs (`lume`, on an Apple
+key the control plane uses to reach this daemon. Linux VMs (`smol`) are on by
+default. It then asks whether the host also runs macOS VMs (`lume`, on an Apple
 Silicon Mac only; see [macOS rigs](#macos-rigs-lume)) and the machine itself
 (`bare_metal`), both off by default, and installs what each one you turn on
 needs. Secrets go in the system

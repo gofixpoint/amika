@@ -16,6 +16,34 @@ function config(contents: string) {
 }
 
 describe("updateRuntimes", () => {
+  describe("with an empty [runtimes] table, which turns every runtime off", () => {
+    const empty = `${PRESETS}
+[runtimes]
+`;
+
+    it("turns smol on", () => {
+      expect(Object.keys(config(empty).runtimes.runtimes)).toEqual([]);
+      const { contents, steps } = updateRuntimes(
+        empty,
+        { enable: ["smol"], disable: [] },
+        STORAGE,
+      );
+      expect(steps).toEqual(["Turn on smol"]);
+      expect(Object.keys(config(contents).runtimes.runtimes)).toEqual(["smol"]);
+    });
+
+    it("turns on only the runtime asked for, not smol too", () => {
+      const { contents } = updateRuntimes(
+        empty,
+        { enable: ["bare_metal"], disable: [] },
+        STORAGE,
+      );
+      expect(Object.keys(config(contents).runtimes.runtimes)).toEqual([
+        "bare_metal",
+      ]);
+    });
+  });
+
   it("adds storage_dir when it turns back on a Lume table that had none", () => {
     // Valid while off: only a turned-on Lume table needs storage_dir.
     const off = `${PRESETS}

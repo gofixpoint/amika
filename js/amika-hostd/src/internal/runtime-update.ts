@@ -6,7 +6,7 @@
 import { parse as parseToml } from "smol-toml";
 import { ConfigError } from "./config.js";
 import { tomlKey } from "./config-upgrade.js";
-import { RUNTIME_NAMES, type RuntimeName } from "./runtimes.js";
+import type { RuntimeName } from "./runtimes.js";
 
 /** The preset a Lume host offers, and the template it boots by default. */
 export const MACOS_PRESET = "macos-coder";
@@ -34,7 +34,11 @@ export function updateRuntimes(
     lines.findIndex((line) =>
       new RegExp(`^\\s*\\[\\s*runtimes\\.${name}\\s*\\]`).test(line),
     );
-  const hasTables = RUNTIME_NAMES.some((name) => header(name) !== -1);
+  // Any `[runtimes...]` table, an empty `[runtimes]` included, lists the
+  // runtimes that are on; only a file with none leaves smol on by default.
+  const hasTables = lines.some((line) =>
+    /^\s*\[\s*runtimes\s*[.\]]/.test(line),
+  );
   /** The line setting `key` in the table whose header is at `at`, or -1. */
   const keyLine = (at: number, key: string) => {
     let end = at + 1;

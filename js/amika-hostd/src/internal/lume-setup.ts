@@ -298,14 +298,23 @@ export async function buildMacosImage(
     deps.out(
       `Installing macOS into the base VM ${MACOS_BASE_VM}, from ${ipsw === "latest" ? "the newest restore image Lume supports" : ipsw}, with the ${preset} setup preset (this Mac runs macOS ${version})...`,
     );
-    const code = await run(
-      lume,
-      ["create", "--ipsw", ipsw, "--unattended", preset, MACOS_BASE_VM],
-      env,
-    );
+    let code: number | null;
+    try {
+      code = await run(
+        lume,
+        ["create", "--ipsw", ipsw, "--unattended", preset, MACOS_BASE_VM],
+        env,
+      );
+    } catch (error) {
+      await removeHalfMadeBaseVm(lume, env, deps);
+      throw error;
+    }
     if (code !== 0) {
+      // Failed or stopped partway (the daemon stopping, or Lume turned
+      // off): a base VM left behind would pass for a finished one next time.
+      const removed = await removeHalfMadeBaseVm(lume, env, deps);
       throw new DaemonError(
-        `\`lume create\` failed (exit ${code}) making the base VM ${MACOS_BASE_VM}; its output is above`,
+        `\`lume create\` failed (exit ${code}) making the base VM ${MACOS_BASE_VM}; its output is above. ${removed}`,
       );
     }
   }
@@ -336,6 +345,44 @@ export async function buildMacosImage(
     );
   }
   deps.out(`Built the macOS image ${template}.`);
+}
+
+/** How long deleting a half-made base VM may take, a stop included. */
+const BASE_VM_CLEANUP_MS = 60_000;
+
+/**
+ * Delete the base VM a `lume create` that did not finish left behind, and
+ * say what became of it. Only called when the VM was not there before that
+ * create, so it is never one hostd did not make. It runs even once the
+ * build was told to stop, on a deadline of its own, short enough that
+ * `amika-hostd down` still sees the daemon stop.
+ */
+async function removeHalfMadeBaseVm(
+  lume: string,
+  env: NodeJS.ProcessEnv,
+  deps: MacosImageDeps,
+): Promise<string> {
+  const deadline = AbortSignal.timeout(BASE_VM_CLEANUP_MS);
+  const manual = `delete it with \`lume delete ${MACOS_BASE_VM} --force\` before the next try`;
+  try {
+    const exists = await (
+      deps.hasLumeVm ??
+      ((lumeBin: string, name: string, signal?: AbortSignal) =>
+        hasLumeVm(lumeBin, name, deps.env, signal))
+    )(lume, MACOS_BASE_VM, deadline);
+    if (!exists) return `No base VM ${MACOS_BASE_VM} was left behind.`;
+    deps.out(`Deleting the half-made base VM ${MACOS_BASE_VM}...`);
+    const code = await (deps.run ?? runToStderr)(
+      lume,
+      ["delete", MACOS_BASE_VM, "--force"],
+      env,
+      deadline,
+    );
+    if (code === 0) return `Deleted the half-made base VM ${MACOS_BASE_VM}.`;
+    return `Could not delete the half-made base VM ${MACOS_BASE_VM} (\`lume delete\` exit ${code}); ${manual}.`;
+  } catch (error) {
+    return `Could not delete the half-made base VM ${MACOS_BASE_VM} (${errorText(error)}); ${manual}.`;
+  }
 }
 
 /**

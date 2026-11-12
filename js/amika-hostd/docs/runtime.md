@@ -171,7 +171,11 @@ Each step's output goes to the daemon's log. A failed build is logged, and
 until the next `up` or `reload` tries again a create fails on the missing
 template, with a message that points at the log. A step whose result exists
 is skipped, so the next try resumes where a failed one stopped. The base VM
-is kept for later builds; build.sh deletes a half-built template itself.
+is kept for later builds, but only once `lume create` has finished: when it
+fails or is stopped partway, hostd deletes the base VM it left (it checked
+the name was free first), within 60 seconds of its own, so the next try
+makes it again rather than clone a half-installed one. build.sh deletes a
+half-built template itself.
 Every template a Lume preset boots is refused from before the daemon asks
 Lume which it has, so a create during that check gets the `503` too, not a
 `400` for a template not found; those Lume has are released once it
