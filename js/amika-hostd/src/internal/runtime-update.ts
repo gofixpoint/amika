@@ -33,15 +33,22 @@ export function updateRuntimes(
       new RegExp(`^\\s*\\[\\s*runtimes\\.${name}\\s*\\]`).test(line),
     );
   const hasTables = RUNTIME_NAMES.some((name) => header(name) !== -1);
-  /** `enabled` in table `name`: true, false, or undefined (a listed table is on). */
-  const enabledLine = (at: number) => {
+  /** The line setting `key` in the table whose header is at `at`, or -1. */
+  const keyLine = (at: number, key: string) => {
     let end = at + 1;
     while (end < lines.length && !/^\s*\[/.test(lines[end])) {
-      if (/^\s*enabled\s*=/.test(lines[end])) return end;
+      // Bare, or quoted as TOML allows (`"key"` or `'key'`).
+      if (
+        new RegExp(`^\\s*(?:${key}|"${key}"|'${key}')\\s*=`).test(lines[end])
+      ) {
+        return end;
+      }
       end++;
     }
     return -1;
   };
+  /** `enabled` in table `name`: true, false, or undefined (a listed table is on). */
+  const enabledLine = (at: number) => keyLine(at, "enabled");
   const isOn = (name: RuntimeName) => {
     const at = header(name);
     // With no [runtimes] tables, only smol is on.
@@ -64,8 +71,19 @@ export function updateRuntimes(
   }
   for (const name of change.enable) {
     if (isOn(name)) continue;
-    if (header(name) !== -1) setFlag(name, true);
-    else if (name === "lume") {
+    if (header(name) !== -1) {
+      setFlag(name, true);
+      // A turned-off Lume table needs no storage_dir, but a turned-on one
+      // does, so turning it back on adds one.
+      const at = header(name);
+      if (name === "lume" && keyLine(at, "storage_dir") === -1) {
+        lines.splice(
+          at + 1,
+          0,
+          `storage_dir = ${JSON.stringify(lumeStorageDir)}`,
+        );
+      }
+    } else if (name === "lume") {
       append([
         "[runtimes.lume]",
         `storage_dir = ${JSON.stringify(lumeStorageDir)}`,
