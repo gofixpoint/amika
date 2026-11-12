@@ -139,7 +139,7 @@ The daemon builds each template a Lume preset boots that Lume's default
 storage does not have (`buildMacosImagesInBackground` in
 `src/internal/lume-setup.ts`), in the background, as it pre-pulls smol's
 images: after it starts, and after each reload, which may have turned Lume
-on, one build at a time. `capabilities update` only turns Lume on;
+on, one build at a time. Setup and `capabilities update` only turn Lume on;
 `up` announces the build, with what it costs and where its progress is
 logged. While a template is being built (`buildingLumeImages`, a set apart
 from the images pre-pull is downloading, so the two never hold up each

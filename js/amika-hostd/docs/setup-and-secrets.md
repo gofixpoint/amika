@@ -28,20 +28,41 @@ in the environment is used instead, and setup does not ask. Before the prompt
 it names the page that creates one, `/settings/api-keys` on the configured
 API URL's origin.
 
-Setup asks nothing about runtimes: `capabilities update` turns them on and
-off (see [Reload and `capabilities update`](commands-and-registration.md#reload-and-capabilities-update)).
-With `[runtimes.bare_metal]` in the config, setup checks (`checkBareMetal`)
-that the platform runs it (`HostPlatform.runtimes`), that
-an `sshd` binary exists (else it names how to install one), that every
+Then it asks which runtimes the host runs (`src/internal/runtime-choice.ts`):
+one yes/no question for each runtime this machine can run
+(`HostPlatform.runtimes`: bare_metal everywhere hostd runs, lume only on
+Apple Silicon), never about one it cannot. It never asks about smol, which
+stays as the config has it: on for every new host, and off only with
+`--disable smol` (a host the installer set up with `--bare-metal` has no
+smolvm). Each question defaults to what the config already says, so a rerun
+that answers nothing changes nothing. The Lume question says what turning it on costs
+(`MACOS_IMAGE_COST`: a download of about 20 GB, about 60 GB of disk, 30
+minutes or more), since that is when setup builds the macOS image. Setup
+refuses to leave no runtime on, to keep on a runtime this machine cannot run
+(Lume in a config copied from an Apple Silicon Mac, say; `--disable` turns it
+off), and to turn off a runtime that has rigs in `machines.json`, with
+nothing changed. The answers go into the file as
+`capabilities update` writes them (`updateRuntimes`), so turning on Lume adds
+its `storage_dir` and the `macos-coder` preset.
+
+With bare_metal on, setup checks (`checkBareMetal`) that the platform runs it,
+that an `sshd` binary exists (else it names how to install one), that every
 directory above amikad's state directory passes sshd's StrictModes (owned by
 root or the hostd account and not group- or world-writable, else it names the
 directory and the `chmod` that fixes it; `src/internal/strict-modes.ts`),
 installs amikad into hostd's data directory (see
 [Bare-metal runtime](runtime.md#bare-metal-runtime)) unless `amikad_path` is
 set, and prints the resources it detected and the account SSH logs in as.
-These run before anything is stored, so a machine that cannot be a rig is
-refused with nothing changed. A config without smol gets no default
-`[sizes]` or `[presets.*]`.
+With Lume on and no `lume` found, it installs Lume (`installLume`, as
+`capabilities update` does). These run before anything is stored, so a
+machine that cannot be a rig, or a Lume that will not install, is refused
+with nothing changed. A config without smol gets no default `[sizes]` or
+`[presets.*]`.
+
+Setup does not build the macOS image a Lume preset boots: that takes half
+an hour or more, and would hold setup up. The daemon builds it in the
+background once it starts, and refuses macOS rigs until it is done (see
+[Building the template](runtime.md#building-the-template)); setup says so.
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping
@@ -81,8 +102,9 @@ restart a running daemon, which keeps the key `up` handed it.
 `amika-hostd setup --non-interactive` asks nothing, for an AI agent or a
 script. It runs the same setup, answering each question with its default: the
 hostname from `--hostname`, else the configured one or this machine's; the
-configured runtimes (still installing amikad when `bare_metal` is on); no to
-every yes/no question, so it never regenerates or replaces a secret key; and
+configured runtimes, changed by `--enable <runtime>` and `--disable <runtime>`
+(still installing what each needs, and building Lume's image); no to every
+other yes/no question, so it never regenerates or replaces a secret key; and
 the API key from stdin when none is stored or set in the environment. An
 answer setup refuses (an invalid hostname, no API key on stdin) ends it with
 nothing changed, instead of asking again.
@@ -94,10 +116,13 @@ tunnel transport unless the operator wants to expose a port (then add
 (minted by `amika auth api-key create --out <file>` when the `amika` CLI is
 logged in, else from the operator) and pipe it from that file into
 `setup --non-interactive`, choose the file store only with the operator's
-consent when there is no keychain, then run `up`, and `register-url` for a
+consent when there is no keychain, ask the operator about each runtime this
+machine can run (warning about Lume's download and build before asking) and
+apply the answers with `capabilities update`, then run `up`, and `register-url` for a
 listening host (`src/internal/setup-skill.ts`). It needs no terminal or valid config, and
-fills in the config and log files and the daemon's local address (from `host`
-and `port`, loopback for a wildcard bind). The installer points agents at it.
+fills in the config and log files, the daemon's local address (from `host`
+and `port`, loopback for a wildcard bind), and the runtimes this machine can
+run. The installer points agents at it.
 No test checks the text against the CLI, so when a command, option,
 environment variable or error message it names changes, here or in
 `amika auth api-key create`, update the skill text by hand.

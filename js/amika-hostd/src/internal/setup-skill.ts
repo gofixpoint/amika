@@ -5,6 +5,8 @@
  * `setup --non-interactive` instead. It is a SKILL.md document, so an agent
  * can also save it as a skill.
  */
+import { MACOS_IMAGE_COST } from "./lume-setup.js";
+import type { RuntimeName } from "./runtimes.js";
 
 /** What the instructions name, as this host resolves it. */
 export interface SkillContext {
@@ -14,12 +16,26 @@ export interface SkillContext {
   logFile: string;
   /** Where the daemon listens, as a URL this machine can reach. */
   localUrl: string;
+  /** The runtimes this machine can run. */
+  runtimes: readonly RuntimeName[];
 }
+
+/** How step 4 describes each runtime to the agent. */
+const RUNTIME_NOTES: Record<RuntimeName, string> = {
+  smol: "- **smol**: Linux VMs. On by default, and kept as the config has it: do not ask about it, and leave it off on a host whose config turns it off (a bare-metal-only host).",
+  lume: `- **lume**: macOS VMs. Off by default. Turning it on installs Lume and
+  builds a macOS image on this Mac. ${MACOS_IMAGE_COST} Tell the operator
+  this before asking, and turn it on only if they say yes to it.`,
+  bare_metal: `- **bare_metal**: this machine itself, as one rig. Amika gets SSH to it as
+  the operator's own account, and copies nothing onto it. It needs an
+  \`sshd\` binary (the system service need not run). Off by default.`,
+};
 
 export function setupSkill({
   configPath,
   logFile,
   localUrl,
+  runtimes,
 }: SkillContext): string {
   return `---
 name: amika-hostd-setup
@@ -177,25 +193,36 @@ tell the operator.
 
 ## 4. Choose what the host runs
 
-The host runs rigs on runtimes. Ask the operator which they want. With no
-answer, keep what the config says (only \`smol\` when it lists none):
+The host runs rigs on runtimes. This machine can run ${runtimes.map((name) => `\`${name}\``).join(", ") || "none"}.
+Ask the operator about each of them but \`smol\`, one at a time. With no
+answer, keep what the config says (on a new host, only \`smol\` is on):
 
-- **smol**: Linux VMs. On by default.
-- **lume**: macOS VMs, only on a Mac with Apple Silicon.
-- **bare_metal**: this machine itself, as one rig. Amika gets SSH to it as
-  the operator's own account, and copies nothing onto it. It needs an
-  \`sshd\` binary (the system service need not run).
+${runtimes.map((name) => RUNTIME_NOTES[name]).join("\n")}
 
-Change them with \`capabilities update\`. Show the operator the plan first,
-then run the same flags with \`--yes\` once they agree:
+Apply the answers with \`capabilities update\`, naming each runtime to turn
+on or off. Show the operator the plan first, then run the same flags with
+\`--yes\` once they agree:
 
     amika-hostd capabilities update --enable bare_metal --dry-run --json
     amika-hostd capabilities update --enable bare_metal --yes
 
 \`--disable <runtime>\` turns one off. It is refused while that runtime has
 rigs. To make this machine the host's only rig, also pass
-\`--disable smol\`.
-
+\`--disable smol\`. The same flags work on
+\`amika-hostd setup --non-interactive\`.
+${
+  runtimes.includes("lume")
+    ? `
+With Lume on, the daemon builds the macOS image in the background once it
+runs (after \`up\`, or the reload \`capabilities update\` sends a running
+daemon), and that takes 30 minutes or more. Nothing waits for it, but until
+it is built a macOS rig is refused, saying Lume has not finished setting up.
+Tell the operator, and point them at the daemon's log for its progress:
+${logFile}. A failed build is logged there, and the next \`up\` or
+\`amika-hostd reload\` tries again.
+`
+    : ""
+}
 ## 5. Start the daemon
 
     amika-hostd up

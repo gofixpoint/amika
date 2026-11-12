@@ -1006,6 +1006,13 @@ print_next_steps() {
     echo "     in ${CONFIG_PATH}:"
   fi
   echo "       amika-hostd setup"
+  if [ "$OS" = "darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+    echo "     It also asks whether this host runs macOS VMs (lume, a large"
+    echo "     download and build) and this machine itself (bare_metal)."
+  else
+    echo "     It also asks whether this host runs this machine itself"
+    echo "     (bare_metal)."
+  fi
   if [ "$OS" = "linux" ] && { [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] ||
     ! command -v secret-tool >/dev/null 2>&1; }; then
     echo "     amika-hostd keeps its secrets in the desktop keyring through"

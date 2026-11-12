@@ -201,8 +201,9 @@ Each of these is stated in full, with its reason, in the doc it links to.
   `up`, `serve` and `down` start and stop, registration with Amika
   (`amika-api.ts`), `register-url`, or the pidfile.
 - [docs/setup-and-secrets.md](docs/setup-and-secrets.md) — read when changing
-  `amika-hostd setup` (`setup.ts`, `setup-skill.ts`), secret-key regeneration,
-  or where secrets are kept (`credentials.ts`).
+  `amika-hostd setup` (`setup.ts`, `setup-skill.ts`), the runtime questions
+  it shares with `capabilities update` (`runtime-choice.ts`), secret-key
+  regeneration, or where secrets are kept (`credentials.ts`).
 - [docs/configuration.md](docs/configuration.md) — read when changing a
   setting (`config.ts`, `config.example.toml`), preset images, or the image
   cache and pre-pull (`prepull.ts`).
