@@ -10,8 +10,18 @@
  * (`MACOS_IMAGE_COST`).
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { accessSync, constants, existsSync, rmSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import {
+  accessSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { homedir, tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LumeCli } from "@amika/sandbox/lume";
@@ -28,11 +38,22 @@ export const MACOS_BASE_VM = "amika-macos-base";
 
 /**
  * What building a macOS image costs, for the warning before it starts: the
- * restore image (about 20 GB, deleted once the base VM is made), the base VM
- * (about 21 GB), and the template, an APFS clone of it (about 9 GB more).
+ * restore image (about 20 GB, kept for a rebuild), the base VM (about
+ * 21 GB), and the template, an APFS clone of it (about 9 GB more).
  */
 export const MACOS_IMAGE_COST =
-  "This downloads a macOS restore image from Apple (about 20 GB), needs about 50 GB of free disk while it builds and 30 GB after, and takes 30 minutes or more.";
+  "This downloads a macOS restore image from Apple (about 20 GB) and keeps it for a rebuild, needs about 50 GB of free disk, and takes 30 minutes or more.";
+
+/**
+ * Where hostd keeps Apple's restore image once Lume has downloaded it, so a
+ * new base VM needs no download. It is outside hostd's data folder, which
+ * the installer's `--uninstall` deletes; `amika-hostd uninstall` asks first.
+ */
+export function macosRestoreImageDir(env: NodeJS.ProcessEnv): string {
+  const cacheHome =
+    env.XDG_CACHE_HOME || path.join(env.HOME || homedir(), ".cache");
+  return path.join(cacheHome, "amika-hostd", "macos");
+}
 
 /**
  * Lume's opt-out from its usage telemetry, set for every `lume` hostd runs
@@ -219,8 +240,9 @@ export async function missingMacosImages(
  * VM from Apple's restore image unless it is already there, then run
  * `macos-image/build.sh` with the amikad release hostd installs. Each step
  * is skipped when its result exists, so a failed build is retried by
- * running this again. The restore image is Lume's newest supported one,
- * unless `AMIKA_HOSTD_MACOS_IPSW` names a file or URL.
+ * running this again. The restore image is the one `AMIKA_HOSTD_MACOS_IPSW`
+ * names, else the one hostd kept for this Mac's macOS version, else Lume's
+ * newest supported one, which hostd then keeps.
  */
 export async function buildMacosImage(
   template: string,
@@ -274,34 +296,36 @@ export async function buildMacosImage(
   };
   deps.out(`Building the macOS image ${template}. ${MACOS_IMAGE_COST}`);
   if (!(await has(lume, MACOS_BASE_VM))) {
-    const ipsw = deps.env.AMIKA_HOSTD_MACOS_IPSW?.trim() || "latest";
     const version = await reported(
       "Reading this Mac's macOS version",
       async () => (deps.macosVersion ?? hostMacosVersion)(),
     );
     const preset = unattendedPreset(version);
+    const kept = keptRestoreImage(deps.env, version);
+    const ipsw =
+      deps.env.AMIKA_HOSTD_MACOS_IPSW?.trim() ||
+      (kept !== undefined && existsSync(kept) ? kept : "latest");
     deps.out(
       `Installing macOS into the base VM ${MACOS_BASE_VM}, from ${ipsw === "latest" ? "the newest restore image Lume supports" : ipsw}, with the ${preset} setup preset (this Mac runs macOS ${version})...`,
     );
+    const started = Date.now();
     const code = await run(
       lume,
       ["create", "--ipsw", ipsw, "--unattended", preset, MACOS_BASE_VM],
       env,
     );
-    if (code !== 0) {
-      throw new DaemonError(
-        `\`lume create\` failed (exit ${code}) making the base VM ${MACOS_BASE_VM}; its output is above`,
-      );
+    // After a failed create too, so a retry needs no download.
+    if (ipsw === "latest" && kept !== undefined) {
+      keepRestoreImage(deps.env, kept, started, deps.out);
     }
-    // Lume keeps the restore image it downloaded, about 20 GB, in the temp
-    // folder. The base VM is kept, so a rebuild needs no restore image. A
-    // file the operator named is theirs; a failed create keeps it for a retry.
-    if (ipsw === "latest") {
-      const download = path.join(deps.env.TMPDIR || tmpdir(), "latest.ipsw");
-      if (existsSync(download)) {
-        rmSync(download);
-        deps.out(`Deleted the restore image ${download}.`);
-      }
+    if (code !== 0) {
+      const retry =
+        ipsw === kept
+          ? `; if the restore image is bad, delete ${kept} to download it again`
+          : "";
+      throw new DaemonError(
+        `\`lume create\` failed (exit ${code}) making the base VM ${MACOS_BASE_VM}; its output is above${retry}`,
+      );
     }
   }
   const amikad = await (deps.installAmikad ?? ensureAmikad)(config, {
@@ -328,6 +352,57 @@ export async function buildMacosImage(
     );
   }
   deps.out(`Built the macOS image ${template}.`);
+}
+
+/**
+ * The restore image hostd keeps for macOS `version`'s major version, since
+ * the unattended preset follows it; undefined for a version it cannot read.
+ */
+function keptRestoreImage(
+  env: NodeJS.ProcessEnv,
+  version: string,
+): string | undefined {
+  const major = Number.parseInt(version, 10);
+  if (!Number.isFinite(major)) return undefined;
+  return path.join(macosRestoreImageDir(env), `restore-macos${major}.ipsw`);
+}
+
+/**
+ * Move the restore image `lume create --ipsw latest` left in the temp folder
+ * to `kept`, and delete any other kept one. Only a file written since
+ * `since`: an older one can be another macOS version. Lume names the file
+ * only once its download is complete. A failure here does not fail the build.
+ */
+function keepRestoreImage(
+  env: NodeJS.ProcessEnv,
+  kept: string,
+  since: number,
+  out: (line: string) => void,
+): void {
+  const download = path.join(env.TMPDIR || tmpdir(), "latest.ipsw");
+  try {
+    if (!existsSync(download) || statSync(download).mtimeMs < since) return;
+    const dir = path.dirname(kept);
+    mkdirSync(dir, { recursive: true });
+    try {
+      renameSync(download, kept);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+      const partial = `${kept}.partial`;
+      copyFileSync(download, partial);
+      renameSync(partial, kept);
+      rmSync(download);
+    }
+    for (const name of readdirSync(dir)) {
+      const file = path.join(dir, name);
+      if (file !== kept) rmSync(file, { force: true });
+    }
+    out(`Kept the restore image in ${kept}, for a rebuild.`);
+  } catch (error) {
+    out(
+      `Could not keep the restore image ${download}: ${(error as Error).message}`,
+    );
+  }
 }
 
 /**

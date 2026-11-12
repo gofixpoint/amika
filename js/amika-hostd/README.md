@@ -164,8 +164,9 @@ with `amika rig create --host <host> --runtime bare_metal`.
 On an Apple Silicon Mac, the `lume` runtime runs macOS rigs as VMs, through
 [Lume](https://github.com/trycua/cua/tree/main/libs/lume). Each rig is a clone
 of a macOS image built on that Mac. Building it is large: it downloads a
-macOS restore image from Apple (about 20 GB), needs about 50 GB of free disk
-while it builds and 30 GB after, and takes 30 minutes or more. So Lume is off unless you turn it on, by
+macOS restore image from Apple (about 20 GB) and keeps it for a rebuild,
+needs about 50 GB of free disk, and takes 30 minutes or more. So Lume is off
+unless you turn it on, by
 answering yes when `amika-hostd setup` asks, or later with:
 
 ```bash
