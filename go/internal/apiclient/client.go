@@ -1635,6 +1635,12 @@ func MatchHost(hosts []Host, ref string) (*Host, error) {
 }
 
 func (c *Client) doJSON(method, path string, body interface{}, out interface{}) error {
+	return c.doJSONWithHeaders(method, path, body, out, nil)
+}
+
+// doJSONWithHeaders is doJSON with extra request headers, such as
+// Idempotency-Key.
+func (c *Client) doJSONWithHeaders(method, path string, body, out interface{}, headers map[string]string) error {
 	var bodyReader io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -1651,6 +1657,9 @@ func (c *Client) doJSON(method, path string, body interface{}, out interface{}) 
 	token, err := c.TokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("obtaining auth token: %w", err)
+	}
+	for name, value := range headers {
+		req.Header.Set(name, value)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
