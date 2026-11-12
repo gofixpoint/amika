@@ -1,108 +1,124 @@
 # Installation
 
-On a host, install the released daemon with `install-amika-hostd.sh`:
+Installing a host has two parts:
+
+1. `install-amika-hostd.sh` installs amika-hostd and the Node.js it runs on.
+2. `amika-hostd setup` asks which runtimes the host runs, and installs what
+   each one needs (see [Setup](setup-and-secrets.md#setup)).
+
+The script installs nothing that a runtime needs. Keep it that way: put a
+new runtime's installs in `src/internal/runtime-install.ts`.
+
+## What each step installs
+
+| Step                                  | Component                          | Location                                           |
+| ------------------------------------- | ---------------------------------- | -------------------------------------------------- |
+| `install-amika-hostd.sh`              | Launcher                           | `/usr/local/bin/amika-hostd` (`AMIKA_INSTALL_DIR`) |
+| `install-amika-hostd.sh`              | Bundle, example config             | `~/.local/share/amika-hostd/` (`AMIKA_HOSTD_HOME`) |
+| `install-amika-hostd.sh`              | Private Node.js, if needed         | `<data dir>/node/`                                 |
+| `install-amika-hostd.sh`              | smolmachines SDK, `engines.sha256` | `<data dir>/node_modules/`, `<data dir>/`          |
+| `install-amika-hostd.sh` (macOS only) | macOS image build files            | `<data dir>/macos-image/`                          |
+| `setup`                               | Config                             | `~/.config/amika-hostd/config.toml`                |
+| `setup`                               | API key, secret key                | The keychain, or files (`secret_store`)            |
+| `setup`, smol                         | smolvm                             | `~/.smolvm/`, `~/.local/bin/smolvm`                |
+| `setup`, smol                         | smolmachines engine                | `<data dir>/node_modules/<engine package>/`        |
+| `setup`, lume                         | Lume 0.6.1                         | `~/.local/bin/lume`, `~/.local/share/lume/`        |
+| `setup`, bare_metal                   | amikad                             | `<data dir>/amikad/<version>/amikad`               |
+| `up`, `reload`, lume                  | macOS base VM and template         | `~/.lume/` (Lume's default storage)                |
+| `up`                                  | State and logs                     | `~/.local/state/amika-hostd/`                      |
+| Rig create, lume                      | Rig VM (an APFS clone)             | `storage_dir` (default `<data dir>/lume/`)         |
+
+`capabilities update --enable <runtime>` installs the same things as setup.
+`up` installs them again when they are missing, for example a new amikad or
+engine that a new release pins.
+
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh
 ```
 
-It downloads `amika-hostd_<version>.tar.gz` from the `amika-hostd@v<version>`
-GitHub release, verifies it against `checksums.txt`, and installs:
+The script asks no questions. It does these steps:
 
-- the bundle and `config.example.toml` into `$XDG_DATA_HOME/amika-hostd`
-  (default `~/.local/share/amika-hostd`; override with `AMIKA_HOSTD_HOME`),
-  with an `amika-hostd` launcher on `AMIKA_INSTALL_DIR` (default
-  `/usr/local/bin`) that pins the node it runs on;
-- Node.js: the system `node` if it is 22 or newer, otherwise the official
-  Node.js LTS binary (24.22.1, `AMIKA_HOSTD_NODE_VERSION`), verified against
-  `SHASUMS256.txt`, into `node/` in that same directory (the system node is
-  never touched). A system node is used as it is: keeping it patched is its
-  owner's job. A node the installer downloads must be a patched release, at
-  least the October 2026 security release of its major: 22.23.4, 24.22.1 or
-  26.12.1 (`NODE_MIN_VERSIONS`). An unpatched private `node/` from an earlier
-  install is replaced, and an `AMIKA_HOSTD_NODE_VERSION` below the floor fails
-  before anything is installed. Re-running the installer re-selects, so it
-  moves the launcher to a system node installed since;
-- smolvm, through its official installer, unless `smolvm` is on `PATH` or in
-  `~/.smolvm` or `~/.local/bin`. It installs smolvm 1.32.3
-  (`DEFAULT_SMOLVM_VERSION`), the release hostd is tested with. Choose another
-  with `--smolvm-version` (`SMOLVM_VERSION`), `latest` for the newest release,
-  or skip it with `--skip-smolvm`;
-- the machine engine the daemon is moving to: the `smolmachines` SDK
-  (smolvm's engine, embedded) the release carries, into `node_modules/` in
-  that same directory, plus this platform's engine package
-  (`smolmachines-linux-x64-gnu`, `-linux-arm64-gnu` or `-darwin-arm64`:
-  native addon, boot helper, hypervisor libraries and guest rootfs, over
-  100 MB) downloaded from npm (`AMIKA_HOSTD_NPM_REGISTRY`) and verified
-  against the release's `engines.sha256`. Any other platform, or Linux with a
-  C library other than glibc 2.34+, fails before anything is downloaded;
-- a config: `config.example.toml` copied to the user config path below, with
-  `hostname` set to this machine's lowercased `hostname` (left commented when
-  it isn't a valid hostname), unless a config already exists there or in
-  `/etc`. It is never overwritten, and it holds no secret: `amika-hostd setup`
-  keeps the secrets (see [Secret storage](setup-and-secrets.md#secret-storage)).
-  An existing config is kept, and the installer runs `amika-hostd config
-upgrade` on it, which rewrites tables the new daemon no longer reads
-  (`[preset_images]`). A failed upgrade is a warning, not a failed install.
+1. Download `amika-hostd_<version>.tar.gz` from the `amika-hostd@v<version>`
+   GitHub release, and check it against `checksums.txt`.
+2. Copy the bundle, `config.example.toml`, the smolmachines SDK and
+   `engines.sha256` into the data directory. On macOS, also copy
+   `macos-image/`. Each is replaced whole.
+3. Choose the Node.js the launcher runs:
+   - Use the system `node` when it is 22 or newer. Its owner keeps it
+     patched.
+   - Else download Node.js 24.22.1 (`AMIKA_HOSTD_NODE_VERSION`) into
+     `node/`, and check it against `SHASUMS256.txt`. A downloaded Node.js
+     must be a patched release (`NODE_MIN_VERSIONS`): 22.23.4, 24.22.1 or
+     26.12.1. The script replaces an unpatched private `node/`, and refuses
+     an unpatched `AMIKA_HOSTD_NODE_VERSION` before it installs anything.
+4. Write the launcher, which pins that Node.js.
+5. Tell the operator to run `amika-hostd setup`.
 
-Its closing steps point the operator at `amika-hostd setup`, then
-`amika-hostd up` (which runs setup itself if it was skipped).
+Run the script again to update. It chooses the Node.js again, so it moves
+the launcher to a system node installed since. `--dry-run` prints the plan.
 
-`--bare-metal` sets up a host whose only rig is this machine (the
-[bare-metal runtime](runtime.md#bare-metal-runtime)): it skips installing
-smolvm and the KVM and `resize2fs` checks below, and seeds a new config with
-only `[runtimes.bare_metal]`, its preset image tables commented out. Setup
-then installs amikad. The machine engine is still installed, since the
-release carries it either way.
+## Uninstall
 
-On Linux it warns, without failing, when `/dev/kvm` is missing or not
-accessible. On every host it warns, again without failing, when smolvm cannot
-find `resize2fs` (from e2fsprogs) where it looks: smolvm copies each disk from
-a 20 GiB template and shrinks it with `resize2fs` when the rig asks for less,
-so without it a rig with a smaller disk fails to start. `--dry-run` prints the
-plan. Nothing else needs to run alongside the daemon: `amika-hostd up` starts
-smolvm itself (see [smolvm](runtime.md#smolvm)).
+`install-amika-hostd.sh --uninstall` does these steps:
 
-`install-amika-hostd.sh --uninstall` reverses the install. It finds the
-launcher on `PATH` (or in `AMIKA_INSTALL_DIR` when that is set), reads the
-install directory out of the launcher's `exec` line (`AMIKA_HOSTD_HOME` wins
-when set), shows both and asks for confirmation; on "no" it tells the user to
-set `AMIKA_INSTALL_DIR`. It then runs `amika-hostd down` and deletes the
-launcher and the install directory (bundle, `node_modules/`, private `node/`).
-It then asks three separate questions: remove the config and state
-directories, remove the keychain secrets (`security delete-generic-password`
-on macOS, `secret-tool clear` on Linux, plus the file store's `api-key`), and
-remove smolvm (`~/.smolvm` and the `~/.local/bin/smolvm` link into it; a smolvm
-installed anywhere else is never touched). `--purge` answers the first two
-yes without asking, and `--yes` answers every question yes except smolvm's.
-smolvm is removed only by typing `remove smolvm` at its prompt: no flag answers for the
-user, and without a terminal it stays. Prompts read `/dev/tty`, so `--yes` or
-`--purge` is required without one. `/etc/amika-hostd` and the host's Amika
-registration are never removed; it prints how to remove each. `--dry-run` previews it.
+1. Find the launcher on `PATH` (or in `AMIKA_INSTALL_DIR`). Read the data
+   directory from its `exec` line (`AMIKA_HOSTD_HOME` wins). Show both, and
+   ask for confirmation.
+2. Ask whether to remove the config and state directories, and whether to
+   remove the keychain secrets. `--purge` answers yes to both.
+3. Run `amika-hostd uninstall --yes` on the terminal.
+4. Delete the launcher and the data directory.
+5. Delete the secrets, the config and the state directory, as answered.
+6. Print what it never removes: `/etc/amika-hostd` and the host's
+   registration in Amika.
+
+`amika-hostd uninstall` (`src/internal/uninstall.ts`) removes what the
+runtimes installed:
+
+1. Stop the daemon, as `down` does.
+2. Delete the Lume rigs in `machines.json`, then `storage_dir`. `--yes`
+   answers this question.
+3. Delete the base VM and the templates the Lume presets name, only when
+   the operator types `remove macos images`.
+4. Delete `~/.smolvm` and its `~/.local/bin` link, only when the operator
+   types `remove smolvm`.
+5. Name Lume and `$TMPDIR/latest.ipsw`, which it never deletes: other tools
+   can use them.
+
+No flag answers a typed-phrase question. Without a terminal, the answer is
+no. `--dry-run` prints the plan.
 
 ## Release bundle
 
-The daemon is one ESM file, built by `pnpm --filter @amika/hostd build`
-(`scripts/bundle.mjs`, esbuild with every npm dependency inlined, including
-the `smol` provider from the workspace's `@amika/sandbox`), so it runs under
-plain `node` with no `node_modules`; `src/bundle.test.ts` checks that. The
-bundle leaves `smolmachines` external (it finds its native files on disk
-beside its own), but the daemon does not load it yet: it is shipped for the
-planned move from `smolvm serve` to that embedded engine. `@amika/sandbox` is
-TypeScript source resolved bundler-style, so hostd typechecks with
-`moduleResolution: "bundler"` and has no `tsc` emit. `scripts/package-release.sh
-<version> [out-dir]` wraps the bundle, the example config, the `smolmachines`
-package at the exact version `package.json` pins, and `engines.sha256` (each
-platform's engine package, fetched with `npm pack`), and `macos-image/`
-(the repository's `macos-image/build.sh`, its steps and assets, with
-`sandbox-image/versions.env` beside them) in one tarball for every platform,
-and writes `checksums.txt`. On macOS the installer copies `macos-image/` next
-to the bundle, replacing the old copy, for setup to build Lume's image with. It stamps the bundle with
-`v<version>`, the checkout's commit and the build time, which
-`amika-hostd version` prints. The Release workflow
-runs it for an `amika-hostd@v*` tag. To test the installer against a local
-build, point `AMIKA_RELEASE_URL` at that directory, with a temporary `HOME`
-and `AMIKA_INSTALL_DIR`:
+`pnpm --filter @amika/hostd build` builds the daemon as one ESM file
+(`scripts/bundle.mjs`). esbuild inlines every npm dependency, including the
+`smol` provider from `@amika/sandbox`, so the bundle runs under plain
+`node`. `src/bundle.test.ts` checks this. `@amika/sandbox` is TypeScript
+source that hostd resolves bundler-style, so hostd typechecks with
+`moduleResolution: "bundler"` and has no `tsc` emit.
+
+The bundle keeps `smolmachines` external, because the SDK finds its native
+files beside itself on disk. The daemon does not load it yet: hostd ships it
+for the move from `smolvm serve` to the embedded engine.
+
+`scripts/package-release.sh <version> [out-dir]` makes one tarball for every
+platform, and writes `checksums.txt`. The tarball holds:
+
+- the bundle, stamped with `v<version>`, the commit and the build time
+  (`amika-hostd version` prints them)
+- `config.example.toml`
+- the `smolmachines` package, at the version `package.json` pins
+- `engines.sha256`: each platform's engine archive and its sha256, from
+  `npm pack`
+- `macos-image/`: `build.sh`, its steps and assets, and
+  `sandbox-image/versions.env`
+
+The Release workflow runs the script for an `amika-hostd@v*` tag.
+
+To test the script against a local build, set `AMIKA_RELEASE_URL` to the
+build directory, with a temporary `HOME` and `AMIKA_INSTALL_DIR`:
 
 ```bash
 js/amika-hostd/scripts/package-release.sh 0.1.0 /tmp/hostd-release
@@ -111,6 +127,7 @@ HOME=/tmp/hostd-home AMIKA_INSTALL_DIR=/tmp/hostd-bin \
   sh install-amika-hostd.sh
 ```
 
-`src/installer.test.ts` runs the installer that way against a fake release,
-npm registry and Node.js dist (`AMIKA_HOSTD_NODE_DIST_URL`), with fake `node`
-binaries, to pin which node it picks and that the launcher runs it.
+`src/installer.test.ts` runs the script that way against a fake release and
+Node.js dist (`AMIKA_HOSTD_NODE_DIST_URL`), with fake `node` binaries. It
+checks which node the script picks, that the launcher runs it, and that the
+script installs nothing for a runtime.
