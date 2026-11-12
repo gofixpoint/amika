@@ -103,6 +103,7 @@ function harness() {
     amikadStateDir: path.join(stateDir, "amikad"),
     amikad,
     logFile: path.join(stateDir, "log", "amikad.log"),
+    pidFile: path.join(stateDir, "amikad.pid"),
     resources: () => RESOURCES,
     now: () => new Date("2026-10-30T12:00:00Z"),
     supervisor: {
@@ -473,6 +474,20 @@ describe("bareMetalRuntime: amikad serve", () => {
     await h.runtime.exec("rig", { command: serve });
     await h.runtime.shutdown();
     expect(await healthz(amikadPort)).toBe(false);
+  });
+
+  it("records its pid while it runs, for `down`", async () => {
+    const h = harness();
+    await created(h);
+    await h.runtime.exec("rig", {
+      command: sh("amikad serve --beta-no-relay --bg"),
+    });
+    const servePid = Number(
+      readFileSync(path.join(h.bin, "serve.pid"), "utf8"),
+    );
+    expect(Number(readFileSync(h.options.pidFile, "utf8"))).toBe(servePid);
+    await h.runtime.shutdown();
+    await eventually(() => !existsSync(h.options.pidFile));
   });
 
   it("resumes a running rig's bridge only once it was provisioned", async () => {

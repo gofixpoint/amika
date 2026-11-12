@@ -84,6 +84,7 @@ import {
   claimPidFile as claimPidFileOnDisk,
   daemonPaths,
   ensureNotRunning,
+  isAmikadRunning as isAmikadProcess,
   isDaemonProcess,
   isDaemonRunning,
   isSmolvmRunning as isSmolvmProcess,
@@ -92,6 +93,7 @@ import {
   type HandedSecrets,
   readRunningPid,
   hostdDataDir,
+  removePidFile,
   removeSmolvmFiles,
   removeStaleSmolvmFiles,
   startInBackground as spawnInBackground,
@@ -224,6 +226,7 @@ export interface CliDeps {
   ) => Promise<void>;
   stopProcess?: typeof stopProcessByPid;
   isSmolvmRunning?: (pid: number) => boolean;
+  isAmikadRunning?: (pid: number) => boolean;
   claimPidFile?: typeof claimPidFileOnDisk;
   notifyReady?: typeof notifyParent;
   isRunning?: (pid: number) => boolean;
@@ -2167,6 +2170,7 @@ function bareMetalRuntimeFor(
     amikadStateDir: paths.amikadStateDir,
     amikad: amikadBinary(config, deps.env),
     logFile: paths.amikadLogFile,
+    pidFile: paths.amikadPidFile,
     resources: () => platform.detectResources(),
     err: deps.err,
   });
@@ -2391,6 +2395,9 @@ async function stopSmolvm(runtime: ManagedSmolvm | undefined, deps: CliDeps) {
 /** Long enough for the daemon's own shutdown, which includes smolvm's. */
 const DOWN_TIMEOUT_MS = SHUTDOWN_GRACE_MS + SMOLVM_STOP_TIMEOUT_MS + 5_000;
 
+/** How long `down` waits for a left-behind amikad, which stops its sshd. */
+const AMIKAD_STOP_TIMEOUT_MS = 10_000;
+
 /**
  * Stop the daemon, which stops its smolvm, and then any smolvm a daemon left
  * behind (one that was killed, or gave up waiting for smolvm to exit).
@@ -2425,9 +2432,25 @@ async function down(deps: CliDeps): Promise<number> {
     // Left by a run that never got to clean up (a reboot, say).
     removeStaleSmolvmFiles(paths);
   }
+  // A daemon that stops normally stops its amikad first; one that crashed
+  // leaves it running, with its sshd.
+  const isAmikad = deps.isAmikadRunning ?? isAmikadProcess;
+  const amikad = readRunningPid(paths.amikadPidFile, isAmikad);
+  if (amikad !== undefined) {
+    deps.out(`Stopping amikad (pid ${amikad})`);
+    if (
+      !(await stop(amikad, isAmikad, { timeoutMs: AMIKAD_STOP_TIMEOUT_MS }))
+    ) {
+      throw new DaemonError(
+        `amikad (pid ${amikad}) did not exit within ${AMIKAD_STOP_TIMEOUT_MS / 1000}s; see ${paths.amikadLogFile}`,
+      );
+    }
+    removePidFile(paths.amikadPidFile, amikad);
+  }
   const stopped = [
     ...(daemon === undefined ? [] : ["amika-hostd"]),
     ...(smolvm === undefined ? [] : ["smolvm"]),
+    ...(amikad === undefined ? [] : ["amikad"]),
   ];
   deps.out(
     stopped.length === 0

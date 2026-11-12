@@ -164,6 +164,7 @@ function harness(env: NodeJS.ProcessEnv = ENV) {
       ) => true,
     ),
     isSmolvmRunning: vi.fn(() => false),
+    isAmikadRunning: vi.fn(() => false),
     smolvmVersion: vi.fn(
       async (_env: NodeJS.ProcessEnv): Promise<string | undefined> => "1.25.0",
     ),
@@ -264,6 +265,7 @@ describe("runCli", () => {
         bareMetalRigFile: "/state/amika-hostd/bare-metal-rig.json",
         amikadStateDir: "/state/amika-hostd/amikad",
         amikadLogFile: "/state/amika-hostd/log/amikad.log",
+        amikadPidFile: "/state/amika-hostd/amikad.pid",
       },
       { isRunning: deps.isRunning, env: expect.any(Object), secretKey: SECRET },
     );
@@ -1539,6 +1541,18 @@ describe("down", () => {
     // No daemon is left to remove its pidfile or URL file.
     expect(existsSync(path.join(dir, "amika-hostd", "smolvm.pid"))).toBe(false);
     expect(existsSync(path.join(dir, "amika-hostd", "smolvm.url"))).toBe(false);
+  });
+
+  it("stops an amikad a crashed daemon left behind", async () => {
+    const { deps, out, dir } = running();
+    writeFileSync(path.join(dir, "amika-hostd", "amikad.pid"), "777777\n");
+    deps.isAmikadRunning.mockReturnValue(true);
+    expect(await runCli(["down"], deps)).toBe(0);
+    expect(deps.stopProcess.mock.calls.map((call) => call[0])).toEqual([
+      777777,
+    ]);
+    expect(out).toEqual(["Stopping amikad (pid 777777)", "Stopped amikad"]);
+    expect(existsSync(path.join(dir, "amika-hostd", "amikad.pid"))).toBe(false);
   });
 
   it("removes smolvm files a dead run left behind", async () => {
