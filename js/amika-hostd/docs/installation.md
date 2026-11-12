@@ -29,8 +29,9 @@ new runtime's installs in `src/internal/runtime-install.ts`.
 | Rig create, lume                      | Rig VM (an APFS clone)             | `storage_dir` (default `<data dir>/lume/`)         |
 
 `capabilities update --enable <runtime>` installs the same things as setup.
-`up` installs them again when they are missing, for example a new amikad or
-engine that a new release pins.
+`up` installs them again when they are missing, for example a new amikad that
+a new release pins. `up` does not install the engine: the daemon does not load
+it yet, and a failed download must not keep a host down.
 
 ## Install
 
@@ -78,8 +79,10 @@ the launcher to a system node installed since. `--dry-run` prints the plan.
 runtimes installed:
 
 1. Stop the daemon, as `down` does.
-2. Delete the Lume rigs in `machines.json`, then `storage_dir`. `--yes`
-   answers this question.
+2. Delete the Lume rigs in `machines.json`. `--yes` answers this question.
+   Then delete `storage_dir` when it is hostd's default, or empty. An
+   operator's `storage_dir` can be a whole volume, so a folder that still
+   holds other files stays.
 3. Delete the base VM and the templates the Lume presets name, only when
    the operator types `remove macos images`.
 4. Delete `~/.smolvm` and its `~/.local/bin` link, only when the operator

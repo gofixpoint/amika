@@ -142,6 +142,7 @@ export interface BareMetalRuntimeOptions {
       | "stableMs"
       | "stopTimeoutMs"
       | "fetch"
+      | "isLeftover"
     >
   >;
   err?: (line: string) => void;

@@ -3,17 +3,19 @@
  * after `down` has stopped the daemon. `install-amika-hostd.sh --uninstall`
  * runs it, then removes amika-hostd itself, its config, state and secrets.
  *
- * - Lume rigs and `storage_dir`: deleted, after a yes (or `--yes`).
+ * - Lume rigs: deleted, after a yes (or `--yes`), and then `storage_dir`
+ *   when it is hostd's default or left empty.
  * - The macOS base VM and templates in Lume's own storage: deleted only when
  *   the operator types a phrase, since a rebuild takes half an hour.
  * - smolvm in `~/.smolvm`: deleted only when the operator types a phrase,
  *   since other tools can use it.
  * - Lume itself and a downloaded restore image: never deleted, only named.
  */
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import type { HostdConfig } from "./config.js";
+import { hostdDataDir } from "./daemon.js";
 import {
   findLume,
   LUME_NO_TELEMETRY,
@@ -77,11 +79,18 @@ export async function uninstall(
         await runLume(["stop", rig, "--storage", storageDir, "--force"]);
         await runLume(["delete", rig, "--storage", storageDir, "--force"]);
       }
-      if (isSafeToRemove(storageDir, home)) {
+      // An operator's storage_dir can be a whole volume: delete it only once
+      // the rigs are gone and it is empty. hostd's default is its own.
+      const own =
+        path.resolve(storageDir) ===
+        path.resolve(hostdDataDir(deps.env), "lume");
+      if (!existsSync(storageDir)) {
+        // Nothing left to delete.
+      } else if (own || readdirSync(storageDir).length === 0) {
         remove(storageDir);
         deps.out(`Deleted ${storageDir}`);
       } else {
-        deps.out(`Not deleting ${storageDir}: it is not a folder of its own`);
+        deps.out(`Kept ${storageDir}: it holds files that are not Lume rigs`);
       }
     }
   }
@@ -126,7 +135,9 @@ export async function uninstall(
         deps,
       )
     ) {
-      remove(path.join(home, ".local", "bin", "smolvm"));
+      // The installer's link into ~/.smolvm, and no other smolvm.
+      const link = path.join(home, ".local", "bin", "smolvm");
+      if (linkTarget(link) === path.join(smolvmHome, "smolvm")) remove(link);
       remove(smolvmHome);
       deps.out(`Deleted ${smolvmHome}`);
     }
@@ -171,12 +182,11 @@ async function typed(
   return (await deps.prompt(`${question} `))?.trim() === phrase;
 }
 
-/** An absolute folder that is not `/` or the home directory. */
-function isSafeToRemove(dir: string, home: string): boolean {
-  const resolved = path.resolve(dir);
-  return (
-    path.isAbsolute(dir) &&
-    resolved !== path.parse(resolved).root &&
-    resolved !== path.resolve(home)
-  );
+/** Where the symlink `file` points, or undefined if it is not one. */
+function linkTarget(file: string): string | undefined {
+  try {
+    return readlinkSync(file);
+  } catch {
+    return undefined;
+  }
 }

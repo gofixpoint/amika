@@ -298,8 +298,10 @@ export async function buildMacosImage(
     // file the operator named is theirs; a failed create keeps it for a retry.
     if (ipsw === "latest") {
       const download = path.join(deps.env.TMPDIR || tmpdir(), "latest.ipsw");
-      rmSync(download, { force: true });
-      deps.out(`Deleted the restore image ${download}.`);
+      if (existsSync(download)) {
+        rmSync(download);
+        deps.out(`Deleted the restore image ${download}.`);
+      }
     }
   }
   const amikad = await (deps.installAmikad ?? ensureAmikad)(config, {

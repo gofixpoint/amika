@@ -1082,6 +1082,30 @@ describe("runSetup: the bare_metal runtime", () => {
     expect(h.out).toContain("  runtimes  smol");
   });
 
+  it("sets up a new host that cannot run smol with bare_metal alone", async () => {
+    // A Linux host with no glibc 2.34+: the smolmachines engine cannot run.
+    const noSmol = hostPlatformFor("linux", {
+      arch: () => "x64",
+      glibcVersion: () => "2.31",
+      path: "",
+      isExecutable: (file) => file === "/usr/sbin/sshd",
+      availableParallelism: () => 8,
+      totalmem: () => 16 * 1024 ** 3,
+      statfs: () => ({ bsize: 4096, blocks: (500 * 1024 ** 3) / 4096 }),
+      homedir: () => "/home/jakub",
+    });
+    const h = bareMetalHarness(
+      { answers: ["", "y"], secrets: ["amk_123"] },
+      noSmol,
+    );
+    await runSetup(h.deps);
+    expect(h.deps.prompt.mock.calls.map(([q]) => q)).toEqual([
+      "Hostname [jakubs-macbook-pro]: ",
+      `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
+    ]);
+    expect(Object.keys(h.config().runtimes.runtimes)).toEqual(["bare_metal"]);
+  });
+
   it("readies a bare_metal host: checks sshd, installs amikad, shows the machine", async () => {
     const h = bareMetalHarness({
       answers: ["", "", ""],

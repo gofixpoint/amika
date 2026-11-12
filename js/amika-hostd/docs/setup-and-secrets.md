@@ -73,6 +73,8 @@ lists what is missing; each step installs one thing:
   the directory and the `chmod` that fixes it (`src/internal/strict-modes.ts`).
 - With bare_metal on, setup prints the resources it detected and the
   account that SSH logs in as.
+- A config that names no runtime has smol on by default. On a machine that
+  cannot run smol, setup turns that default off instead of refusing.
 
 Setup does not build the macOS image a Lume preset boots: that takes 30
 minutes or more. The daemon builds it in the background once it starts,

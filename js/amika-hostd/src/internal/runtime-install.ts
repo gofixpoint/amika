@@ -40,6 +40,11 @@ export interface InstallStep {
   runtime: RuntimeName;
   /** What it installs, in words, for the plan. */
   text: string;
+  /**
+   * Whether the daemon runs what it installs. `up` installs only these, so
+   * a download the daemon does not need never keeps a host down.
+   */
+  daemonUses: boolean;
   run(): Promise<void>;
 }
 
@@ -111,6 +116,7 @@ function planSmol(plan: InstallPlan, deps: RuntimeInstallDeps): void {
   if ((deps.findSmolvm ?? findSmolvm)(deps.env) === undefined) {
     plan.steps.push({
       runtime: "smol",
+      daemonUses: true,
       text: `Install smolvm ${smolvmVersionToInstall(deps.env)} with its installer, into ~/.smolvm (no sudo)`,
       run: () => (deps.installSmolvm ?? installSmolvm)(deps),
     });
@@ -122,6 +128,7 @@ function planSmol(plan: InstallPlan, deps: RuntimeInstallDeps): void {
     plan.steps.push({
       runtime: "smol",
       text: `Download the smolmachines engine (${archive}, over 100 MB) from npm into ${files.dir}/node_modules`,
+      daemonUses: false,
       run: () => (deps.installEngine ?? installEngine)(pkg, files, deps),
     });
   }
@@ -131,6 +138,7 @@ function planLume(plan: InstallPlan, deps: RuntimeInstallDeps): void {
   if ((deps.findLume ?? findLume)(deps.env) !== undefined) return;
   plan.steps.push({
     runtime: "lume",
+    daemonUses: true,
     text: `Install Lume ${LUME_VERSION} with its installer, into ~/.local/bin (downloads from GitHub; no sudo)`,
     run: () => (deps.installLume ?? installLume)(deps),
   });
@@ -151,6 +159,7 @@ function planBareMetal(
   }
   plan.steps.push({
     runtime: "bare_metal",
+    daemonUses: true,
     text: `Install amikad ${DEFAULT_AMIKAD_VERSION} into ${hostdDataDir(deps.env)}, for SSH to this machine (no sudo)`,
     run: async () => {
       await (deps.installAmikad ?? ensureAmikad)(config, {
