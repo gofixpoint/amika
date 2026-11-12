@@ -28,8 +28,9 @@ a port yourself, through ngrok or Cloudflare Tunnel, the daemon can
   host can use either, and is better off with an organization key, which
   outlives the person who made it.
 
-Node.js and [smolvm](https://smolmachines.com) are installed for you if the
-machine doesn't have them.
+The installer adds Node.js if the machine doesn't have it. `amika-hostd setup`
+installs what each runtime you choose needs, such as
+[smolvm](https://smolmachines.com) for Linux VMs.
 
 ## Run a BYOC rig
 
@@ -39,23 +40,27 @@ machine doesn't have them.
 curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh
 ```
 
-[Installation](docs/installation.md) lists what the installer puts where, its
-options, and how `--uninstall` removes it again.
+It installs only amika-hostd and Node.js. [Installation](docs/installation.md)
+lists what each step puts where, and how `--uninstall` removes it again.
 
-### 2. Set up credentials
+### 2. Set it up
 
 ```bash
 amika-hostd setup
 ```
 
 It asks for the host's name and your Amika API key, and generates the secret
-key the control plane uses to reach this daemon. Linux VMs (`smol`) are on by
-default. It then asks whether the host also runs macOS VMs (`lume`, on an Apple
-Silicon Mac only; see [macOS rigs](#macos-rigs-lume)) and the machine itself
-(`bare_metal`), both off by default, and installs what each one you turn on
-needs. Secrets go in the system
-keychain. On a server with no keychain, set `secret_store = "file"` in the
-config first. Edit the file the installer printed: the daemon reads
+key the control plane uses to reach this daemon. It then asks which rigs the
+host runs, and installs what each one you turn on needs:
+
+- Linux VMs (`smol`, on by default): smolvm
+- macOS VMs (`lume`, Apple Silicon only; see [macOS rigs](#macos-rigs-lume)):
+  Lume
+- the machine itself (`bare_metal`; see [Bare-metal rigs](#bare-metal)):
+  amikad
+
+Secrets go in the system keychain. On a server with no keychain, set
+`secret_store = "file"` in the config first: the daemon reads
 `$XDG_CONFIG_HOME/amika-hostd/config.toml` (`~/.config/...` by default) if it
 exists and `/etc/amika-hostd/config.toml` otherwise, never both.
 [Setup and secret storage](docs/setup-and-secrets.md) covers what setup asks,
@@ -147,13 +152,8 @@ rigs on the same host. To add it to a host:
 amika-hostd capabilities update --enable bare_metal
 ```
 
-For a host whose only rig is this machine, install without smolvm:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh -s -- --bare-metal
-amika-hostd setup
-amika-hostd up
-```
+For a host whose only rig is this machine, answer no to Linux VMs and yes to
+this machine when `amika-hostd setup` asks.
 
 Either way amika-hostd installs `amikad` into its own data directory (no
 `sudo`) and reports the CPUs, memory and disk it detects. Create the rig
@@ -164,8 +164,8 @@ with `amika rig create --host <host> --runtime bare_metal`.
 On an Apple Silicon Mac, the `lume` runtime runs macOS rigs as VMs, through
 [Lume](https://github.com/trycua/cua/tree/main/libs/lume). Each rig is a clone
 of a macOS image built on that Mac. Building it is large: it downloads a
-macOS restore image from Apple (about 20 GB), needs about 60 GB of free disk,
-and takes 30 minutes or more. So Lume is off unless you turn it on, by
+macOS restore image from Apple (about 20 GB), needs about 50 GB of free disk
+while it builds and 30 GB after, and takes 30 minutes or more. So Lume is off unless you turn it on, by
 answering yes when `amika-hostd setup` asks, or later with:
 
 ```bash

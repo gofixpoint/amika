@@ -150,7 +150,11 @@ host"); Linux rigs are not held up. hostd downloads no image; it builds one:
 1. `lume create --ipsw <restore image> --unattended <preset> amika-macos-base`
    makes the base VM, unless it is already there. The restore image is the
    newest one Lume supports, which is this Mac's own major macOS version,
-   unless `AMIKA_HOSTD_MACOS_IPSW` names a file or URL. The preset follows
+   unless `AMIKA_HOSTD_MACOS_IPSW` names a file or URL. Lume downloads the
+   newest one to `$TMPDIR/latest.ipsw` and keeps it. The build deletes it
+   once the base VM is made, since the base VM is kept. A file the operator
+   names stays, and a failed `lume create` keeps the download for a retry.
+   The preset follows
    this Mac's version (`sw_vers -productVersion`, `unattendedPreset`):
    `sequoia` for macOS 15, `tahoe` for 26, and for a newer version the newest
    preset Lume 0.6.1 has, `tahoe`, which its offline setup barely depends

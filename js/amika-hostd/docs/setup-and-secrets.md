@@ -16,8 +16,7 @@ sets one, which is saved instead (Amika may already know it). With the
 keychain store, setup writes `secret_store = "keychain"` to mark that the
 keychain holds this host's secret key; when the file has that line but the
 keychain shows no key, setup first asks whether to generate one, since the key
-may be in a keychain that is only locked. (The hostname is no such mark: the
-installer seeds it.) When the environment chooses a store
+may be in a keychain that is only locked. When the environment chooses a store
 (`AMIKA_HOSTD_SECRET_STORE`) other than the one the file alone would (its
 `secret_store`, else the keychain default), setup writes `secret_store` to
 match where it kept the secrets, so the choice outlasts the variable, and says
@@ -28,42 +27,59 @@ in the environment is used instead, and setup does not ask. Before the prompt
 it names the page that creates one, `/settings/api-keys` on the configured
 API URL's origin.
 
-Then it asks which runtimes the host runs (`src/internal/runtime-choice.ts`):
-one yes/no question for each runtime this machine can run
-(`HostPlatform.runtimes`: bare_metal everywhere hostd runs, lume only on
-Apple Silicon), never about one it cannot. It never asks about smol, which
-stays as the config has it: on for every new host, and off only with
-`--disable smol` (a host the installer set up with `--bare-metal` has no
-smolvm). Each question defaults to what the config already says, so a rerun
-that answers nothing changes nothing. The Lume question says what turning it on costs
-(`MACOS_IMAGE_COST`: a download of about 20 GB, about 60 GB of disk, 30
-minutes or more), which the daemon then spends building the macOS image in
-the background; setup does not build it. Setup
-refuses to leave no runtime on, to keep on a runtime this machine cannot run
-(Lume in a config copied from an Apple Silicon Mac, say; `--disable` turns it
-off), and to turn off a runtime that has rigs in `machines.json`, with
-nothing changed. The answers go into the file as
-`capabilities update` writes them (`updateRuntimes`), so turning on Lume adds
-its `storage_dir` and the `macos-coder` preset.
+### Runtimes
 
-With bare_metal on, setup checks (`checkBareMetal`) that the platform runs it,
-that an `sshd` binary exists (else it names how to install one), that every
-directory above amikad's state directory passes sshd's StrictModes (owned by
-root or the hostd account and not group- or world-writable, else it names the
-directory and the `chmod` that fixes it; `src/internal/strict-modes.ts`),
-installs amikad into hostd's data directory (see
-[Bare-metal runtime](runtime.md#bare-metal-runtime)) unless `amikad_path` is
-set, and prints the resources it detected and the account SSH logs in as.
-With Lume on and no `lume` found, it installs Lume (`installLume`, as
-`capabilities update` does). These run before anything is stored, so a
-machine that cannot be a rig, or a Lume that will not install, is refused
-with nothing changed. A config without smol gets no default `[sizes]` or
-`[presets.*]`.
+Setup then asks which runtimes the host runs
+(`src/internal/runtime-choice.ts`):
 
-Setup does not build the macOS image a Lume preset boots: that takes half
-an hour or more, and would hold setup up. The daemon builds it in the
-background once it starts, and refuses macOS rigs until it is done (see
-[Building the template](runtime.md#building-the-template)); setup says so.
+- It asks one yes/no question for each runtime this machine can run
+  (`HostPlatform.runtimes`), and never about one it cannot.
+  - smol: where the smolmachines engine runs (Linux x64 or arm64 with
+    glibc 2.34+, and Apple Silicon).
+  - lume: Apple Silicon only.
+  - bare_metal: Linux and macOS.
+- Each question defaults to what the config says. On a new host, only smol
+  is on. A rerun that answers nothing changes nothing.
+- Each question says what turning the runtime on installs. The Lume
+  question gives the cost of the macOS image (`MACOS_IMAGE_COST`).
+- Setup refuses, with nothing changed, to:
+  - leave no runtime on
+  - keep on a runtime this machine cannot run (`--disable` turns it off)
+  - turn off a runtime that has rigs in `machines.json`
+
+Setup writes the answers as `capabilities update` does (`updateRuntimes`).
+Turning on Lume adds its `storage_dir` and the `macos-coder` preset. A
+config without smol gets no default `[sizes]` or `[presets.*]`.
+
+Then setup installs what each runtime that is on needs
+(`src/internal/runtime-install.ts`). `planInstalls` checks the machine and
+lists what is missing; each step installs one thing:
+
+| Runtime    | Checks                                                      | Installs                        |
+| ---------- | ----------------------------------------------------------- | ------------------------------- |
+| smol       | The engine runs here; warns on no `/dev/kvm` or `resize2fs` | smolvm, the smolmachines engine |
+| lume       | None                                                        | Lume 0.6.1                      |
+| bare_metal | An `sshd` binary; sshd's StrictModes on amikad's state      | amikad                          |
+
+- A check that fails refuses setup before anything is stored.
+- smolvm is `DEFAULT_SMOLVM_VERSION`, or `AMIKA_HOSTD_SMOLVM_VERSION`
+  (`latest` for the newest). Its own installer puts it in `~/.smolvm`.
+- The engine is the archive `engines.sha256` pins for this platform. Setup
+  downloads it from npm (`AMIKA_HOSTD_NPM_REGISTRY`), checks its sha256,
+  and unpacks it into `node_modules/` beside the bundle. A bundle run from
+  a checkout has no `engines.sha256`, so setup skips the engine.
+- StrictModes needs every directory above amikad's state directory owned by
+  root or the hostd account, and not group- or world-writable. Setup names
+  the directory and the `chmod` that fixes it (`src/internal/strict-modes.ts`).
+- With bare_metal on, setup prints the resources it detected and the
+  account that SSH logs in as.
+
+Setup does not build the macOS image a Lume preset boots: that takes 30
+minutes or more. The daemon builds it in the background once it starts,
+and refuses macOS rigs until it is done (see
+[Building the template](runtime.md#building-the-template)). Setup says so.
+
+### Writing the config
 
 It then writes `hostname` in place (a live line, bare or quoted, else the
 commented `# hostname = ...` one; otherwise above the first table), keeping
@@ -100,34 +116,46 @@ key would reach the Amika, organization or hostname this run reaches, while
 would keep using an overriding secret key. After regenerating, setup says to
 restart a running daemon, which keeps the key `up` handed it.
 
-`amika-hostd setup --non-interactive` asks nothing, for an AI agent or a
-script. It runs the same setup, answering each question with its default: the
-hostname from `--hostname`, else the configured one or this machine's; the
-configured runtimes, changed by `--enable <runtime>` and `--disable <runtime>`
-(still installing what each needs; the daemon builds Lume's image once it
-runs); no to every
-other yes/no question, so it never regenerates or replaces a secret key; and
-the API key from stdin when none is stored or set in the environment. An
-answer setup refuses (an invalid hostname, no API key on stdin) ends it with
-nothing changed, instead of asking again.
+### Without a terminal
 
-`amika-hostd setup --skill` prints, as a SKILL.md document, how an agent sets
-the host up with it: settle the hostname with the operator, keep the default
-tunnel transport unless the operator wants to expose a port (then add
-`transport = "listen"`), get an API key, user-scoped for a tunnelled host
-(minted by `amika auth api-key create --out <file>` when the `amika` CLI is
-logged in, else from the operator) and pipe it from that file into
-`setup --non-interactive`, choose the file store only with the operator's
-consent when there is no keychain, ask the operator about each runtime this
-machine can run (warning about Lume's download and build before asking) and
-apply the answers with `capabilities update`, then run `up`, and `register-url` for a
-listening host (`src/internal/setup-skill.ts`). It needs no terminal or valid config, and
-fills in the config and log files, the daemon's local address (from `host`
-and `port`, loopback for a wildcard bind), and the runtimes this machine can
-run. The installer points agents at it.
-No test checks the text against the CLI, so when a command, option,
-environment variable or error message it names changes, here or in
-`amika auth api-key create`, update the skill text by hand.
+`amika-hostd setup --non-interactive` asks nothing, for an AI agent or a
+script. It runs the same setup, and gives each question its default:
+
+- the hostname from `--hostname`, else the configured one or this machine's
+- the configured runtimes, changed by `--enable <runtime>` and
+  `--disable <runtime>`, with the same installs
+- no to every other yes/no question, so it never regenerates or replaces a
+  secret key
+- the API key from stdin, when none is stored or set in the environment
+
+An answer setup refuses (an invalid hostname, no API key on stdin) stops it
+with nothing changed.
+
+### The setup skill
+
+`amika-hostd setup --skill` prints a SKILL.md document
+(`src/internal/setup-skill.ts`). It tells an agent to:
+
+1. Agree the hostname with the operator.
+2. Keep the tunnel transport, unless the operator wants to expose a port.
+3. Ask the operator about each runtime this machine can run, with what each
+   installs, before setup installs anything.
+4. Get an API key: user-scoped for a tunnelled host. Make it with
+   `amika auth api-key create --out <file>` when the `amika` CLI is signed
+   in, else get it from the operator. Pipe the file into
+   `setup --non-interactive`, with the runtime flags.
+5. Use the file store only with the operator's consent, when there is no
+   keychain.
+6. Run `up`, then `register-url` for a listening host.
+
+The skill needs no terminal and no valid config. It fills in the config and
+log paths, the daemon's local address, and the runtimes this machine can
+run. The install script points agents at it.
+
+`setup-skill.test.ts` parses each `amika-hostd` command in the skill with
+the CLI's parser. Update the text by hand when an error message or
+environment variable it names changes, or an option of
+`amika auth api-key create`.
 
 `up` runs setup first whenever the hostname, secret key or API key is
 missing, or the file still holds a `secret_key` while secrets are kept in the
