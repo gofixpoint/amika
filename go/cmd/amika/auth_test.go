@@ -417,7 +417,7 @@ func TestAuthLogin_WritesManagedSSHSessionBlock(t *testing.T) {
 		"  UserKnownHostsFile " + filepath.Join(home, ".ssh", "amika_known_hosts") + "\n" +
 		"  ProxyCommand " + binaryPath + " plumbing ssh-stdio-proxy %h\n" +
 		"  ServerAliveInterval 15\n" +
-		"  ServerAliveCountMax 3\n"
+		"  ServerAliveCountMax 5\n"
 	if !strings.Contains(string(conf), want) {
 		t.Fatalf("amika.conf missing the session block:\nwant:\n%s\ngot:\n%s", want, conf)
 	}

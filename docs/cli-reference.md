@@ -531,7 +531,7 @@ touched.
 | `IdentityAgent` / `ForwardAgent`               | Amika's agent, `yes`     | Forward only the Amika key, never every key in your ordinary agent         |
 | `StrictHostKeyChecking` / `UserKnownHostsFile` | `yes`, Amika's file      | Pin each sandbox host key in a dedicated file, so a change fails closed    |
 | `ProxyCommand`                                 | `amika plumbing …`     | Carry the session over Amika's WebSocket transport instead of a TCP dial   |
-| `ServerAliveInterval` / `ServerAliveCountMax`  | `15`, `3`                | Notice a dead transport instead of hanging                                 |
+| `ServerAliveInterval` / `ServerAliveCountMax`  | `15`, `5`                | Notice a dead transport, but only after the 60 s resume window             |
 
 A bare-metal rig logs in as the account running `amika-hostd` on
 that machine, which the control plane reports with each SSH session. When
@@ -551,6 +551,15 @@ Amika SSH connection, including an editor deep link, starts it again and
 reloads the key. The first editor connection after upgrading a config written
 by an older Amika version updates the config and asks the client to reconnect
 once, so OpenSSH can parse the new forwarding options.
+
+A dropped network connection does not end an SSH session. When the Wi-Fi
+changes or a link drops, the `ProxyCommand` keeps OpenSSH's side open and
+reconnects to the rig, and the rig keeps the session for 60 seconds, so
+OpenSSH sees only a pause. If the rig cannot be reached for 60 seconds, the
+`ProxyCommand` prints one line and exits, and OpenSSH reports the connection
+closed. A rig whose `amikad` predates this connects as before, and a drop ends
+its session. The `ProxyCommand` records each drop and reconnection in
+`ssh-proxy.log` in Amika's state directory.
 
 The `ProxyCommand` pins the sandbox's host key every time it runs, so an alias
 also works in tools that never call the Amika CLI. An editor's Remote-SSH deep
