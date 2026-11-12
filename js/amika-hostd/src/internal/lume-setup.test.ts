@@ -352,3 +352,72 @@ describe("the Lume version", () => {
     expect(run).not.toHaveBeenCalled();
   });
 });
+
+describe("the background build's unavailable templates", () => {
+  it("holds every missing template from the start, and frees all of them when cut short", async () => {
+    const { deps } = mac({ vms: [] });
+    const stopping = new AbortController();
+    const building = new Set<string>();
+    const seen: string[][] = [];
+    await buildMacosImagesInBackground({
+      ...deps,
+      templates: ["first", "second"],
+      config: {},
+      err: () => {},
+      building,
+      signal: stopping.signal,
+      build: async () => {
+        seen.push([...building]);
+        // Stopped during the first build: the second never starts.
+        stopping.abort();
+        throw new DaemonError("Starting lume failed: aborted");
+      },
+    });
+    expect(seen).toEqual([["first", "second"]]);
+    expect(building.size).toBe(0);
+  });
+});
+
+describe("Amika's secrets", () => {
+  const SECRETS = {
+    AMIKA_API_KEY: "amk_1",
+    AMIKA_HOSTD_API_KEY: "amk_2",
+    AMIKA_HOSTD_SECRET_KEY: "s".repeat(64),
+  };
+
+  it("never reach Lume's installer", async () => {
+    const run = vi.fn(
+      async (
+        _command: string,
+        _args: readonly string[],
+        _env: NodeJS.ProcessEnv,
+      ) => 1 as number | null,
+    );
+    await installLume({
+      env: { HOME: "/home/op", ...SECRETS },
+      out: () => {},
+      run,
+    }).catch(() => {});
+    const env = run.mock.calls[0][2];
+    expect(env.HOME).toBe("/home/op");
+    for (const name of Object.keys(SECRETS))
+      expect(env).not.toHaveProperty(name);
+  });
+
+  it("never reach the build's commands", async () => {
+    const { deps, run } = mac();
+    await buildMacosImage(
+      "amika-macos-coder",
+      {},
+      {
+        ...deps,
+        env: { ...deps.env, ...SECRETS },
+      },
+    );
+    for (const [, , env] of run.mock.calls) {
+      for (const name of Object.keys(SECRETS)) {
+        expect(env).not.toHaveProperty(name);
+      }
+    }
+  });
+});

@@ -171,7 +171,12 @@ until the next `up` or `reload` tries again a create fails on the missing
 template, with a message that points at the log. A step whose result exists
 is skipped, so the next try resumes where a failed one stopped. The base VM
 is kept for later builds; build.sh deletes a half-built template itself.
-Stopping the daemon stops the build.
+Every missing template is refused from the start of the queue, not only
+the one being built. Stopping the daemon stops the build, and so does a
+reload that turns Lume off; a reload during a build that leaves Lume on
+is looked at again once the build is done, so a preset it added is built
+too. The installer and the build run without Amika's API key and secret
+key in their environment.
 
 ## Machine runtime
 

@@ -1856,8 +1856,105 @@ image = "amika-macos-coder"
     await vi.waitFor(() => expect(pulling?.size).toBe(0));
     stop();
     expect(await serving).toBe(0);
-    // Stopping the daemon stops a build still running.
-    expect(options.signal?.aborted).toBe(true);
+  });
+
+  describe("the background Lume build across reloads", () => {
+    const LUME_ON = `${BASE}
+[runtimes.smol]
+[runtimes.lume]
+storage_dir = "/srv/lume"
+[presets.macos-coder.runtimes.lume]
+image = "amika-macos-coder"
+`;
+
+    /** A daemon serving `contents`, whose builds wait until released. */
+    function serving(contents: string) {
+      const h = reloadable(contents);
+      const releases: (() => void)[] = [];
+      const buildMacosImages = vi.fn(
+        (_options: BackgroundImageOptions) =>
+          new Promise<void>((resolve) => releases.push(resolve)),
+      );
+      let reload: () => void = () => {};
+      let stop: () => void = () => {};
+      const stopped = new Promise<void>((resolve) => (stop = resolve));
+      const running = runCli(["serve"], {
+        ...h.deps,
+        buildMacosImages,
+        shutdownSignal: () => stopped,
+        reloadSignal: (handler: () => void) => {
+          reload = handler;
+          return () => {};
+        },
+      } as CliDeps);
+      const reloaded = async (seq: number) => {
+        await vi.waitFor(() => {
+          const result = JSON.parse(
+            readFileSync(h.paths.reloadResultFile, "utf8"),
+          );
+          expect(result.seq).toBe(seq);
+        });
+      };
+      return {
+        ...h,
+        buildMacosImages,
+        releases,
+        reload: () => reload(),
+        reloaded,
+        finish: async () => {
+          stop();
+          expect(await running).toBe(0);
+        },
+      };
+    }
+
+    it("looks again once a build is done when a reload came during it", async () => {
+      const d = serving(LUME_ON);
+      await vi.waitFor(() => expect(d.buildMacosImages).toHaveBeenCalledOnce());
+      d.files.config = `${LUME_ON}
+[presets.macos-xcode.runtimes.lume]
+image = "amika-macos-xcode"
+`;
+      d.reload();
+      await d.reloaded(1);
+      // One build at a time: the reload does not start a second.
+      expect(d.buildMacosImages).toHaveBeenCalledOnce();
+      d.releases[0]();
+      await vi.waitFor(() =>
+        expect(d.buildMacosImages).toHaveBeenCalledTimes(2),
+      );
+      expect(d.buildMacosImages.mock.calls[1][0].templates).toEqual([
+        "amika-macos-coder",
+        "amika-macos-xcode",
+      ]);
+      d.releases[1]();
+      await d.finish();
+    });
+
+    it("stops a build still running when the daemon stops", async () => {
+      const d = serving(LUME_ON);
+      await vi.waitFor(() => expect(d.buildMacosImages).toHaveBeenCalledOnce());
+      const { signal } = d.buildMacosImages.mock.calls[0][0];
+      const finished = d.finish();
+      await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+      d.releases[0]();
+      await finished;
+    });
+
+    it("stops the build when a reload turns Lume off", async () => {
+      const d = serving(LUME_ON);
+      await vi.waitFor(() => expect(d.buildMacosImages).toHaveBeenCalledOnce());
+      const { signal } = d.buildMacosImages.mock.calls[0][0];
+      expect(signal?.aborted).toBe(false);
+      d.files.config = `${BASE}
+[runtimes.smol]
+`;
+      d.reload();
+      await d.reloaded(1);
+      await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+      d.releases[0]();
+      await d.finish();
+    });
   });
 
   describe("capabilities update", () => {

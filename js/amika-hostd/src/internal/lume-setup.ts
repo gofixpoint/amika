@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { LumeCli } from "@amika/sandbox/lume";
 import type { HostPlatform } from "../platforms/index.js";
 import { ensureAmikad } from "./amikad-install.js";
-import { ConfigError } from "./config.js";
+import { ConfigError, ENV_NAMES } from "./config.js";
 import { DaemonError } from "./daemon.js";
 
 /** Lume's release that milestone 0 of spec 028 tested. */
@@ -76,6 +76,20 @@ function hostMacosVersion(): string {
   }).trim();
 }
 
+/**
+ * `env` without Amika's API key and secret key: Lume's installer is fetched
+ * from GitHub, and neither it nor the build needs them.
+ */
+export function withoutAmikaSecrets(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const secrets: readonly string[] = [
+    ...ENV_NAMES.apiKey,
+    ...ENV_NAMES.secretKey,
+  ];
+  return Object.fromEntries(
+    Object.entries(env).filter(([name]) => !secrets.includes(name)),
+  );
+}
+
 /** Where `lume` is: on `PATH`, else where Lume's installer puts it. */
 export function findLume(env: NodeJS.ProcessEnv): string | undefined {
   const dirs = [
@@ -110,7 +124,7 @@ export async function installLume(deps: {
       `set -o pipefail; curl -fsSL ${script} | bash -s -- --no-background-service`,
     ],
     // The installer runs the new binary once, which honours the opt-out.
-    { ...deps.env, LUME_VERSION, ...LUME_NO_TELEMETRY },
+    { ...withoutAmikaSecrets(deps.env), LUME_VERSION, ...LUME_NO_TELEMETRY },
   );
   if (code !== 0 || findLume(deps.env) === undefined) {
     throw new DaemonError(
@@ -246,7 +260,7 @@ export async function buildMacosImage(
   // build.sh calls `lume` by name, and the installer puts it in ~/.local/bin,
   // which a daemon's or an agent's PATH can lack.
   const env = {
-    ...deps.env,
+    ...withoutAmikaSecrets(deps.env),
     ...LUME_NO_TELEMETRY,
     PATH: [path.dirname(lume), deps.env.PATH]
       .filter(Boolean)
@@ -358,24 +372,32 @@ export async function buildMacosImagesInBackground(
     );
     return;
   }
-  for (const template of missing) {
-    if (signal?.aborted) return;
-    building?.add(template);
-    const started = Date.now();
-    try {
-      await (options.build ?? buildMacosImage)(template, config, options);
-      out(
-        `Built the macOS image ${template} for Lume rigs (${Math.round((Date.now() - started) / 60_000)} min)`,
-      );
-    } catch (error) {
-      // The daemon stopping cuts the build short; that is no failure.
+  // Every missing template is unavailable until its own build is done, not
+  // only the one being built: they are built one at a time.
+  for (const template of missing) building?.add(template);
+  try {
+    for (const template of missing) {
       if (signal?.aborted) return;
-      err(
-        `amika-hostd: could not build the macOS image ${template}: ${errorText(error)}; Lume rigs of it fail until it is built, and the next \`amika-hostd up\` or \`amika-hostd reload\` tries again`,
-      );
-    } finally {
-      building?.delete(template);
+      const started = Date.now();
+      try {
+        await (options.build ?? buildMacosImage)(template, config, options);
+        out(
+          `Built the macOS image ${template} for Lume rigs (${Math.round((Date.now() - started) / 60_000)} min)`,
+        );
+      } catch (error) {
+        // The daemon stopping, or Lume turned off, cuts the build short;
+        // that is no failure.
+        if (signal?.aborted) return;
+        err(
+          `amika-hostd: could not build the macOS image ${template}: ${errorText(error)}; Lume rigs of it fail until it is built, and the next \`amika-hostd up\` or \`amika-hostd reload\` tries again`,
+        );
+      } finally {
+        building?.delete(template);
+      }
     }
+  } finally {
+    // Those never started (a stop cut the queue short) are not building.
+    for (const template of missing) building?.delete(template);
   }
 }
 
@@ -408,7 +430,10 @@ function quietLumeRunner(
         command,
         args,
         {
-          env: { ...(opts.env ?? env), ...LUME_NO_TELEMETRY },
+          env: {
+            ...withoutAmikaSecrets(opts.env ?? env),
+            ...LUME_NO_TELEMETRY,
+          },
           encoding: "buffer",
           timeout: opts.timeoutMs,
           maxBuffer: 16 * 1024 * 1024,

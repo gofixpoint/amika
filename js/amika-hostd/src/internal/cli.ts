@@ -2041,9 +2041,26 @@ async function serveInForeground(
     // As the pre-pull below, but for Lume: build each macOS template its
     // presets boot that Lume lacks, after startup and after each reload
     // (which may have turned Lume on), one build at a time.
+    /** Stops the running build: the daemon stopping, or Lume turned off. */
+    let lumeBuild: AbortController | undefined;
+    /** A reload came during a build, so look again once it is done. */
+    let rescanLume = false;
     const buildLumeImages = () => {
-      if (buildingLume || !serving.runtimes.runtimes.lume) return;
+      if (!serving.runtimes.runtimes.lume) {
+        // A reload turned Lume off: its build has no use any more.
+        lumeBuild?.abort();
+        return;
+      }
       if (interrupted.signal.aborted) return;
+      if (buildingLume) {
+        // The reload may have added or changed a preset.
+        rescanLume = true;
+        return;
+      }
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      interrupted.signal.addEventListener("abort", stop, { once: true });
+      lumeBuild = controller;
       buildingLume = (deps.buildMacosImages ?? buildMacosImagesInBackground)({
         templates: Object.values(presetImages(serving.runtimes, "lume")),
         config: serving,
@@ -2052,7 +2069,7 @@ async function serveInForeground(
         err: deps.err,
         platform: platformOf(deps),
         findLume: deps.findLume,
-        signal: interrupted.signal,
+        signal: controller.signal,
         building: prepull.pulling,
       })
         .catch((error: unknown) => {
@@ -2062,7 +2079,13 @@ async function serveInForeground(
           );
         })
         .finally(() => {
+          interrupted.signal.removeEventListener("abort", stop);
           buildingLume = undefined;
+          lumeBuild = undefined;
+          if (rescanLume) {
+            rescanLume = false;
+            buildLumeImages();
+          }
         });
     };
     if (routed && deps.reloadSignal) {
