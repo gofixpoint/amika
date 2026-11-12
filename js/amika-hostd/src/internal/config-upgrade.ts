@@ -1,7 +1,7 @@
 /**
  * Rewrite an old `config.toml` in the current format. `amika-hostd config
- * upgrade` and `setup` run it, and the installer runs the command on an
- * upgrade, so a host keeps working after hostd stops reading the old tables.
+ * upgrade` and `setup` run it, so a host keeps working after hostd stops
+ * reading the old tables.
  */
 import { parse as parseToml } from "smol-toml";
 import { ConfigError, type HostdConfigFile } from "./config.js";

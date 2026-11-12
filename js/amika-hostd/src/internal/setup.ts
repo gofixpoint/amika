@@ -228,11 +228,21 @@ export async function runSetup(
   // file says, so a rerun that answers nothing changes nothing.
   const platform = deps.platform ?? currentHostPlatform();
   const wasOn = new Set(Object.keys(saved.runtimes.runtimes) as RuntimeName[]);
+  // A config that names no runtime has smol on by default. Where smol cannot
+  // run (no engine for this machine), that default is turned off, not
+  // refused: the operator never chose it.
+  const given = givenRuntimes ?? { enable: [], disable: [] };
+  const smolByDefault = !/^\s*\[\s*runtimes\./m.test(file?.contents ?? "");
   const runtimeChange = await chooseRuntimes(
     platform.runtimes(),
     wasOn,
     askYesNo(deps.prompt),
-    givenRuntimes,
+    smolByDefault &&
+      !platform.runtimes().includes("smol") &&
+      !given.enable.includes("smol") &&
+      !given.disable.includes("smol")
+      ? { ...given, disable: [...given.disable, "smol"] }
+      : given,
   );
   const runtimesOn = new Set(wasOn);
   for (const name of runtimeChange.enable) runtimesOn.add(name);

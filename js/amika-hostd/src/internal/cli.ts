@@ -383,14 +383,17 @@ export async function runCli(
         // machine cannot run.
         checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
         const on = config.runtimes.runtimes;
-        // What setup installed, again: a new hostd can pin a newer amikad or
-        // engine than the last setup installed.
-        await runInstalls(
-          planInstalls(Object.keys(on) as RuntimeName[], config, {
-            ...deps,
-            platform: platformOf(deps),
-          }),
+        // What setup installed, again: a new hostd can pin a newer amikad
+        // than the last setup installed. Only what the daemon runs.
+        const installs = planInstalls(
+          Object.keys(on) as RuntimeName[],
+          config,
+          { ...deps, platform: platformOf(deps) },
         );
+        await runInstalls({
+          ...installs,
+          steps: installs.steps.filter((step) => step.daemonUses),
+        });
         // smolvm runs only for smol, so its warnings apply only then.
         if (on.smol) warnUncachedSizes(config, deps);
         // Alongside registration, so a slow smolvm never delays it.

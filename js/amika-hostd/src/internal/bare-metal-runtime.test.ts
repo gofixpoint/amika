@@ -3,6 +3,7 @@
  * that records how it was run and, for `serve`, answers `/healthz` on the
  * address hostd gives it.
  */
+import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -488,6 +489,38 @@ describe("bareMetalRuntime: amikad serve", () => {
     expect(Number(readFileSync(h.options.pidFile, "utf8"))).toBe(servePid);
     await h.runtime.shutdown();
     await eventually(() => !existsSync(h.options.pidFile));
+  });
+
+  it("stops an amikad a crashed daemon left, before starting its own", async () => {
+    const h = harness();
+    const leftover = spawn("sleep", ["30"]);
+    const exited = new Promise((resolve) => leftover.once("exit", resolve));
+    writeFileSync(h.options.pidFile, `${leftover.pid}\n`);
+    const runtime = bareMetalRuntime({
+      ...h.options,
+      supervisor: {
+        ...h.options.supervisor,
+        isLeftover: (pid) =>
+          pid === leftover.pid &&
+          leftover.exitCode === null &&
+          leftover.signalCode === null,
+      },
+    });
+    opened.push(runtime);
+    await runtime.create({
+      name: "rig",
+      image: "ignored",
+      network: true,
+      services: [{ name: "amikad", port: 60999 }],
+    });
+    await runtime.exec("rig", {
+      command: sh("amikad serve --beta-no-relay --bg"),
+    });
+    await exited;
+    const servePid = Number(
+      readFileSync(path.join(h.bin, "serve.pid"), "utf8"),
+    );
+    expect(Number(readFileSync(h.options.pidFile, "utf8"))).toBe(servePid);
   });
 
   it("resumes a running rig's bridge only once it was provisioned", async () => {

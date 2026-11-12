@@ -11,8 +11,11 @@ import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { closeSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
+  isAmikadRunning,
   openLogFile,
+  readRunningPid,
   removePidFile,
+  stopProcess,
   writePidFile,
   type Spawn,
 } from "./daemon.js";
@@ -56,6 +59,8 @@ export interface AmikadSupervisorOptions {
   /** How long `stop` waits for `SIGTERM` before `SIGKILL`. */
   stopTimeoutMs?: number;
   err?: (line: string) => void;
+  /** Whether a pid in `pidFile` is a live amikad; defaults to `ps`. */
+  isLeftover?: (pid: number) => boolean;
   spawn?: Spawn;
   fetch?: typeof fetch;
 }
@@ -74,6 +79,7 @@ export function amikadSupervisor({
   stableMs = 60_000,
   stopTimeoutMs = 5_000,
   err = () => {},
+  isLeftover = isAmikadRunning,
   spawn = nodeSpawn,
   fetch: fetcher = fetch,
 }: AmikadSupervisorOptions): AmikadSupervisor {
@@ -88,6 +94,7 @@ export function amikadSupervisor({
     },
     async start() {
       await stopChild();
+      await stopLeftover();
       wanted = true;
       crashes = 0;
       const started = launch();
@@ -189,6 +196,21 @@ export function amikadSupervisor({
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Stop an amikad a crashed daemon left running, which still holds the
+   * rig's ports, before starting a new one over its pid file.
+   */
+  async function stopLeftover(): Promise<void> {
+    if (pidFile === undefined) return;
+    const leftover = readRunningPid(pidFile, isLeftover);
+    if (leftover === undefined || leftover === child?.pid) return;
+    err(
+      `amika-hostd: stopping amikad (pid ${leftover}) left by an earlier run`,
+    );
+    await stopProcess(leftover, isLeftover, { timeoutMs: stopTimeoutMs });
+    removePidFile(pidFile, leftover);
   }
 
   async function stopChild(): Promise<void> {

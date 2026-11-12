@@ -3117,4 +3117,19 @@ describe("the bare_metal runtime", () => {
     expect(await runCli(["up"], h.deps)).toBe(0);
     expect(h.installAmikad).not.toHaveBeenCalled();
   });
+
+  it("installs no engine on `up`, which the daemon does not load", async () => {
+    const h = configured(SIZES);
+    const installEngine = vi.fn(async () => {});
+    const deps = {
+      ...h.deps,
+      engineFiles: () => ({
+        dir: "/nonexistent/hostd",
+        checksums: `${"a".repeat(64)}  smolmachines-linux-x64-gnu-1.22.2.tgz\n`,
+      }),
+      installEngine,
+    };
+    expect(await runCli(["up"], deps)).toBe(0);
+    expect(installEngine).not.toHaveBeenCalled();
+  });
 });
