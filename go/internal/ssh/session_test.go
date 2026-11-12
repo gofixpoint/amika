@@ -190,6 +190,7 @@ func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
 		pins,
 		"sbx_123",
 		"my.team.sbx_123.localhost-3011.amika",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("PrepareSessionHost: %v", err)
@@ -202,7 +203,7 @@ func TestPrepareSessionHostPinsAPIHostKeyBeforeOpenSSH(t *testing.T) {
 	}
 }
 
-func (c *fakeCreator) CreateSSHSession(name string) (*apiclient.SSHSession, error) {
+func (c *fakeCreator) CreateSSHSession(name string, _ []apiclient.SSHSessionTransport) (*apiclient.SSHSession, error) {
 	c.calls++
 	user := c.sshUser
 	if user == "" {
@@ -274,6 +275,7 @@ func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 		strings.NewReader("from-openssh"),
 		&stdout,
 		nil,
+		ProxyOptions{},
 	)
 	if err != nil {
 		t.Fatalf("ProxySession: %v", err)
@@ -317,6 +319,7 @@ func TestProxySessionAcceptsNormalWebSocketClosure(t *testing.T) {
 		strings.NewReader(""),
 		io.Discard,
 		nil,
+		ProxyOptions{},
 	); err != nil {
 		t.Fatalf("ProxySession normal close: %v", err)
 	}
@@ -336,6 +339,7 @@ func TestProxySessionRefusesToDialWhenTheHostKeyChanged(t *testing.T) {
 		strings.NewReader(""),
 		io.Discard,
 		nil,
+		ProxyOptions{},
 	)
 	if !errors.Is(err, ErrHostKeyMismatch) {
 		t.Fatalf("ProxySession error = %v, want %v", err, ErrHostKeyMismatch)

@@ -1,13 +1,22 @@
 package sandboxcmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"time"
 
+	"github.com/gofixpoint/amika/go/internal/amikanet"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
 	"github.com/gofixpoint/amika/go/internal/cliargs"
 	"github.com/gofixpoint/amika/go/internal/cliflags"
+	"github.com/gofixpoint/amika/go/internal/filelock"
 	"github.com/gofixpoint/amika/go/internal/output"
 	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
@@ -39,6 +48,55 @@ var sshV2OwnValueFlags = map[string]bool{
 	"--output":        true,
 	"-o":              true,
 	"--remote-target": true,
+	"--transport":     true,
+}
+
+func init() {
+	// Testing only, so hidden: `amika rig --transport iroh ssh <rig>` uses
+	// iroh alone, with no fallback, and `direct_ws` skips iroh. The server
+	// still decides, so the flag cannot turn iroh on for a rig.
+	sandboxSSHV2Cmd.Flags().String("transport", "", "use one SSH transport: iroh or direct_ws")
+	_ = sandboxSSHV2Cmd.Flags().MarkHidden("transport")
+}
+
+// makeNewDeviceKey is a seam over replacing the amika-net device key, so
+// tests do not touch the real config directory.
+var makeNewDeviceKey = func(stderr io.Writer) error {
+	path, err := amikanet.DeviceKeyFile(basedir.New(""))
+	if err != nil {
+		return err
+	}
+	old, err := amikanet.NewDeviceKey(path, time.Now())
+	if err != nil {
+		return err
+	}
+	if old != "" {
+		fmt.Fprintf(stderr, "Made a new amika-net device key; the old one is at %s\n", old)
+	} else {
+		fmt.Fprintln(stderr, "Made a new amika-net device key")
+	}
+	return nil
+}
+
+// stopDeviceAgent drains the agent before the key at its path changes.
+// The next connection starts an agent that reads the replacement key.
+var stopDeviceAgent = func(ctx context.Context) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	binary, err := amikanet.FindBinary()
+	if errors.Is(err, amikanet.ErrNotInstalled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, binary, "agent", "stop").Run(); err != nil {
+		return fmt.Errorf("stop amika-net before replacing its device key: %w", err)
+	}
+	return nil
 }
 
 var sandboxSSHV2Cmd = &cobra.Command{
@@ -133,8 +191,18 @@ Examples:
 		if err != nil {
 			return err
 		}
+		transportFlag, _ := cmd.Flags().GetString("transport")
+		transport, err := ssh.ParseProxyTransport(transportFlag)
+		if err != nil {
+			return err
+		}
 		if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
 			return err
+		}
+		if newKey, _ := cmd.Flags().GetBool("new-device-key"); newKey {
+			if err := replaceDeviceKey(cmd.Context(), cmd.ErrOrStderr()); err != nil {
+				return err
+			}
 		}
 		target, err := getRemoteTarget(cmd)
 		if err != nil {
@@ -151,17 +219,91 @@ Examples:
 		if err != nil {
 			return rigref.Explain(ref, err)
 		}
+		// With --transport, the create request asks for that transport alone,
+		// so one the server cannot give fails here, before ssh starts.
 		alias, err := prepareSessionTarget(
 			basedir.New(""),
-			client,
+			ssh.WithTransport(client, transport),
 			sandbox.Name,
 			sandbox.ID,
 		)
 		if err != nil {
 			return err
 		}
-		return execSessionSSH(alias, ssh.BuildSessionSSHArgv(forward, nameIdx, alias))
+		argv := ssh.BuildSessionSSHArgv(forward, nameIdx, alias)
+		// ssh's own -v also makes the proxy name the transport on stderr.
+		verbose := cliargs.HasShortOption(forward[:nameIdx], 'v', cliargs.SSHArgLetters)
+		option, err := ssh.ProxyCommandOption(transport, verbose)
+		if err != nil {
+			return err
+		}
+		if option != "" {
+			argv = append([]string{"-o", option}, argv...)
+		}
+		return execSessionSSH(alias, argv)
 	},
+}
+
+// replaceDeviceKey holds the sidecar's start lock until the key is replaced.
+// A concurrent connection can start its next agent only after that write.
+func replaceDeviceKey(ctx context.Context, stderr io.Writer) error {
+	if runtime.GOOS != "windows" {
+		dir, err := deviceAgentDir(os.LookupEnv)
+		if err != nil {
+			return err
+		}
+		if err := ensurePrivateAgentDir(dir); err != nil {
+			return err
+		}
+		lockCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		lock, err := filelock.Acquire(lockCtx, filepath.Join(dir, "agent.lock"))
+		cancel()
+		if err != nil {
+			return fmt.Errorf("lock amika-net before replacing its device key: %w", err)
+		}
+		defer lock.Close()
+	}
+	if err := stopDeviceAgent(ctx); err != nil {
+		return err
+	}
+	return makeNewDeviceKey(stderr)
+}
+
+// deviceAgentDir matches amika-net's agent directory selection.
+func deviceAgentDir(env func(string) (string, bool)) (string, error) {
+	if dir, set := env("AMIKA_NET_AGENT_DIR"); set {
+		return filepath.Abs(dir)
+	}
+	if dir, _ := env("XDG_RUNTIME_DIR"); dir != "" {
+		return filepath.Join(dir, "amika-net"), nil
+	}
+	cache, _ := env("XDG_CACHE_HOME")
+	if cache == "" {
+		home, _ := env("HOME")
+		if home == "" {
+			return "", errors.New("HOME is not set")
+		}
+		cache = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(cache, "amika", "amika-net"), nil
+}
+
+// ensurePrivateAgentDir uses the sidecar's ownership and permissions checks.
+func ensurePrivateAgentDir(dir string) error {
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("amika-net directory %s must be a private directory with mode 0700", dir)
+	}
+	return checkAgentDirectoryOwner(dir, info)
 }
 
 var sandboxCodeV2Cmd = &cobra.Command{

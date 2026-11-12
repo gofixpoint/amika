@@ -110,6 +110,35 @@ func ConsumesNextArg(tok, argLetters string) bool {
 	return false
 }
 
+// HasShortOption reports whether a getopt-style argv of options sets the
+// single-letter option letter, alone or in a bundled cluster such as
+// "-Nv". A letter after an argument-taking letter in the same cluster is
+// that option's value, and the token after an argument-taking option is
+// skipped.
+func HasShortOption(args []string, letter byte, argLetters string) bool {
+	for i := 0; i < len(args); i++ {
+		tok := args[i]
+		if len(tok) < 2 || tok[0] != '-' || tok[1] == '-' {
+			if tok == "--" {
+				return false
+			}
+			continue
+		}
+		for j := 1; j < len(tok); j++ {
+			if tok[j] == letter {
+				return true
+			}
+			if strings.IndexByte(argLetters, tok[j]) >= 0 {
+				break
+			}
+		}
+		if ConsumesNextArg(tok, argLetters) {
+			i++
+		}
+	}
+	return false
+}
+
 // HasHelpFlag reports whether args requests help. Only a help flag written
 // among the leading options counts: once the first operand or a "--" appears,
 // later tokens belong to the underlying utility (for ssh, they form the remote

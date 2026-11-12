@@ -4,8 +4,11 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	cryptossh "golang.org/x/crypto/ssh"
@@ -50,7 +53,7 @@ func TestCreateSSHSessionPostsForEveryDial(t *testing.T) {
 
 	client := NewClient(server.URL, "api-token")
 	for range 2 {
-		session, err := client.CreateSSHSession("sbx_123")
+		session, err := client.CreateSSHSession("sbx_123", nil)
 		if err != nil {
 			t.Fatalf("CreateSSHSession: %v", err)
 		}
@@ -127,5 +130,125 @@ func TestSSHSessionResumeSwitchDefaultsOn(t *testing.T) {
 		if got := session.ResumeEnabled(); got != want {
 			t.Errorf("%s: ResumeEnabled = %v, want %v", body, got, want)
 		}
+	}
+}
+
+func validIrohSession(t *testing.T) SSHSession {
+	t.Helper()
+	relay := "https://relay.example"
+	return SSHSession{
+		SessionID:         "sshs_1",
+		Transport:         SSHSessionTransportIroh,
+		ConnectURL:        "wss://sandbox.example/v1/ssh-sessions",
+		ConnectCredential: base64.RawURLEncoding.EncodeToString(make([]byte, 32)),
+		SandboxID:         "sbx_123",
+		SSHUser:           "amika",
+		HostPublicKey:     testEd25519PublicKey(t),
+		Iroh: &SSHSessionIroh{
+			EndpointID: strings.Repeat("0f", 32),
+			RelayURL:   &relay,
+			RigID:      "rig_abc-1",
+			Port:       60899,
+		},
+	}
+}
+
+func TestSSHSessionValidateAcceptsAnIrohDescriptor(t *testing.T) {
+	valid := validIrohSession(t)
+	if err := valid.Validate("sbx_123"); err != nil {
+		t.Fatalf("Validate iroh session: %v", err)
+	}
+	noRelay := validIrohSession(t)
+	noRelay.Iroh.RelayURL = nil
+	if err := noRelay.Validate("sbx_123"); err != nil {
+		t.Fatalf("Validate iroh session with no relay: %v", err)
+	}
+
+	bad := func(edit func(*SSHSession)) SSHSession {
+		s := validIrohSession(t)
+		edit(&s)
+		return s
+	}
+	text := func(v string) *string { return &v }
+	tests := map[string]SSHSession{
+		"no iroh object":         bad(func(s *SSHSession) { s.Iroh = nil }),
+		"direct_ws with iroh":    bad(func(s *SSHSession) { s.Transport = SSHSessionTransportDirectWS }),
+		"uppercase endpoint id":  bad(func(s *SSHSession) { s.Iroh.EndpointID = strings.Repeat("0F", 32) }),
+		"short endpoint id":      bad(func(s *SSHSession) { s.Iroh.EndpointID = "0f" }),
+		"rig id with a colon":    bad(func(s *SSHSession) { s.Iroh.RigID = "rig:1" }),
+		"rig id with a space":    bad(func(s *SSHSession) { s.Iroh.RigID = "a b" }),
+		"empty rig id":           bad(func(s *SSHSession) { s.Iroh.RigID = "" }),
+		"port zero":              bad(func(s *SSHSession) { s.Iroh.Port = 0 }),
+		"port too large":         bad(func(s *SSHSession) { s.Iroh.Port = 65536 }),
+		"relay url like a flag":  bad(func(s *SSHSession) { s.Iroh.RelayURL = text("--direct") }),
+		"relay url with a user":  bad(func(s *SSHSession) { s.Iroh.RelayURL = text("https://u:p@relay.example") }),
+		"relay url other scheme": bad(func(s *SSHSession) { s.Iroh.RelayURL = text("file:///etc/passwd") }),
+		"iroh with a bad route":  bad(func(s *SSHSession) { s.ConnectURL = "wss://sandbox.example/other" }),
+	}
+	for name, session := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := session.Validate("sbx_123"); err == nil {
+				t.Fatal("Validate returned nil")
+			}
+		})
+	}
+}
+
+func TestCreateSSHSessionSendsTheTransportList(t *testing.T) {
+	var bodies []string
+	irohSession := validIrohSession(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(data))
+		answer := irohSession
+		if !strings.Contains(string(data), `"iroh"`) {
+			answer.Transport, answer.Iroh = SSHSessionTransportDirectWS, nil
+		}
+		_ = json.NewEncoder(w).Encode(answer)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "api-token")
+
+	session, err := client.CreateSSHSession("sbx_123", []SSHSessionTransport{SSHSessionTransportDirectWS, SSHSessionTransportIroh})
+	if err != nil || session.Transport != SSHSessionTransportIroh || session.Iroh.RigID != "rig_abc-1" {
+		t.Fatalf("CreateSSHSession = %+v, %v", session, err)
+	}
+	if _, err := client.CreateSSHSession("sbx_123", []SSHSessionTransport{SSHSessionTransportDirectWS}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateSSHSession("sbx_123", nil); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{`{"transports":["direct_ws","iroh"]}`, `{"transports":["direct_ws"]}`, ``}
+	for i := range want {
+		if strings.TrimSpace(bodies[i]) != want[i] {
+			t.Fatalf("body %d = %q, want %q", i, bodies[i], want[i])
+		}
+	}
+}
+
+func TestCreateSSHSessionRefusesATransportItDidNotList(t *testing.T) {
+	irohSession := validIrohSession(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(irohSession)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "api-token")
+	for _, transports := range [][]SSHSessionTransport{nil, {SSHSessionTransportDirectWS}} {
+		if _, err := client.CreateSSHSession("sbx_123", transports); !errors.Is(err, ErrInvalidSSHSession) {
+			t.Fatalf("transports %v: err = %v, want ErrInvalidSSHSession", transports, err)
+		}
+	}
+}
+
+func TestCreateSSHSessionReportsAnUnavailableTransport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"code":"ssh_transport_unavailable","message":"iroh is not available for this rig: its host is not in tunnel_iroh mode"}`))
+	}))
+	defer server.Close()
+	_, err := NewClient(server.URL, "api-token").CreateSSHSession("sbx_123", []SSHSessionTransport{SSHSessionTransportIroh})
+	if !errors.Is(err, ErrSSHTransportUnavailable) || !strings.Contains(err.Error(), "its host is not in tunnel_iroh mode") {
+		t.Fatalf("err = %v", err)
 	}
 }

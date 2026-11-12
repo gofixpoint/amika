@@ -145,3 +145,29 @@ func TestResolvedTokenSource_ReresolvesOnEachCall(t *testing.T) {
 		t.Fatalf("second Token = (%q, %v), want (second, nil)", tok, err)
 	}
 }
+
+func TestCredentialIdentityNamesTheAccountWithoutTheSecret(t *testing.T) {
+	t.Setenv("AMIKA_STATE_DIRECTORY", t.TempDir())
+	t.Setenv("AMIKA_API_KEY", "")
+	if _, err := CredentialIdentity(); err == nil {
+		t.Fatal("an identity with no credential")
+	}
+
+	if err := auth.SaveSession(auth.WorkOSSession{AccessToken: "session-token", UserID: "user_01", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	if got, err := CredentialIdentity(); err != nil || got != "user:user_01" {
+		t.Fatalf("session identity = %q, %v", got, err)
+	}
+
+	// The API key wins, as it does for requests.
+	t.Setenv("AMIKA_API_KEY", "amika_secret_key")
+	first, err := CredentialIdentity()
+	if err != nil || !strings.HasPrefix(first, "api_key:") || strings.Contains(first, "amika_secret_key") {
+		t.Fatalf("API key identity = %q, %v", first, err)
+	}
+	t.Setenv("AMIKA_API_KEY", "amika_other_key")
+	if second, _ := CredentialIdentity(); second == first {
+		t.Fatal("two API keys gave one identity")
+	}
+}
