@@ -25,6 +25,7 @@ new runtime's installs in `src/internal/runtime-install.ts`.
 | `setup`, lume                         | Lume 0.6.1                         | `~/.local/bin/lume`, `~/.local/share/lume/`        |
 | `setup`, bare_metal                   | amikad                             | `<data dir>/amikad/<version>/amikad`               |
 | `up`, `reload`, lume                  | macOS base VM and template         | `~/.lume/` (Lume's default storage)                |
+| `up`, `reload`, lume                  | macOS restore image                | `~/.cache/amika-hostd/macos/` (`XDG_CACHE_HOME`)   |
 | `up`                                  | State and logs                     | `~/.local/state/amika-hostd/`                      |
 | Rig create, lume                      | Rig VM (an APFS clone)             | `storage_dir` (default `<data dir>/lume/`)         |
 
@@ -85,9 +86,11 @@ runtimes installed:
    holds other files stays.
 3. Delete the base VM and the templates the Lume presets name, only when
    the operator types `remove macos images`.
-4. Delete `~/.smolvm` and its `~/.local/bin` link, only when the operator
+4. Delete the kept macOS restore image, `~/.cache/amika-hostd/macos/`, only
+   when the operator types `remove macos restore image`.
+5. Delete `~/.smolvm` and its `~/.local/bin` link, only when the operator
    types `remove smolvm`.
-5. Name Lume and `$TMPDIR/latest.ipsw`, which it never deletes: other tools
+6. Name Lume and `$TMPDIR/latest.ipsw`, which it never deletes: other tools
    can use them.
 
 No flag answers a typed-phrase question. Without a terminal, the answer is

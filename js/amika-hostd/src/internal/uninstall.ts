@@ -7,11 +7,20 @@
  *   when it is hostd's default or left empty.
  * - The macOS base VM and templates in Lume's own storage: deleted only when
  *   the operator types a phrase, since a rebuild takes half an hour.
+ * - The macOS restore image hostd kept: deleted only when the operator types
+ *   its own phrase, since it saves a 20 GB download.
  * - smolvm in `~/.smolvm`: deleted only when the operator types a phrase,
  *   since other tools can use it.
- * - Lume itself and a downloaded restore image: never deleted, only named.
+ * - Lume itself and a restore image left in the temp folder: never deleted,
+ *   only named.
  */
-import { existsSync, readdirSync, readlinkSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  readdirSync,
+  readlinkSync,
+  rmdirSync,
+  rmSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import type { HostdConfig } from "./config.js";
@@ -20,6 +29,7 @@ import {
   findLume,
   LUME_NO_TELEMETRY,
   MACOS_BASE_VM,
+  macosRestoreImageDir,
   missingMacosImages,
   runToStderr,
   withoutAmikaSecrets,
@@ -119,6 +129,30 @@ export async function uninstall(
         for (const image of images) await runLume(["delete", image, "--force"]);
         deps.out(`Deleted the Lume VMs ${images.join(", ")}`);
       }
+    }
+  }
+
+  // Apple's restore image, kept to make the base VM again with no download.
+  const restoreDir = macosRestoreImageDir(deps.env);
+  if (existsSync(restoreDir)) {
+    const phrase = "remove macos restore image";
+    if (options.dryRun) {
+      deps.out(`Would ask about the macOS restore image in ${restoreDir}`);
+    } else if (
+      await typed(
+        `The macOS restore image (${restoreDir}, about 20 GB) lets amika-hostd make the base VM again with no download. Type '${phrase}' to delete it, or press Enter to keep it:`,
+        phrase,
+        deps,
+      )
+    ) {
+      remove(restoreDir);
+      // ~/.cache/amika-hostd, if nothing else is in it.
+      try {
+        rmdirSync(path.dirname(restoreDir));
+      } catch {
+        // Not empty, or already gone.
+      }
+      deps.out(`Deleted ${restoreDir}`);
     }
   }
 

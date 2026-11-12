@@ -27,13 +27,17 @@ function index(...entries: [string, RuntimeName][]): MachineIndex {
 }
 
 /**
- * A home with smolvm in it and an operator's own (empty) Lume storage
- * folder, Lume found, and every Lume command and deletion faked.
+ * A home with smolvm and a kept macOS restore image in it, and an operator's
+ * own (empty) Lume storage folder, Lume found, and every Lume command and
+ * deletion faked.
  */
 function harness(answers: (string | undefined)[] = [], { tty = true } = {}) {
   const home = mkdtempSync(path.join(tmpdir(), "amika-hostd-uninstall-"));
   mkdirSync(path.join(home, ".smolvm"));
   writeFileSync(path.join(home, ".smolvm", "smolvm"), "");
+  const restoreDir = path.join(home, ".cache", "amika-hostd", "macos");
+  mkdirSync(restoreDir, { recursive: true });
+  writeFileSync(path.join(restoreDir, "restore-macos26.ipsw"), "");
   const storageDir = path.join(home, "lume-rigs");
   mkdirSync(storageDir);
   const out: string[] = [];
@@ -46,7 +50,14 @@ function harness(answers: (string | undefined)[] = [], { tty = true } = {}) {
     run: vi.fn(async () => 0),
     remove: vi.fn(),
   };
-  return { home, storageDir, config: lumeConfig(storageDir), out, deps };
+  return {
+    home,
+    storageDir,
+    restoreDir,
+    config: lumeConfig(storageDir),
+    out,
+    deps,
+  };
 }
 
 const lumeCalls = (h: ReturnType<typeof harness>) =>
@@ -56,7 +67,7 @@ const lumeCalls = (h: ReturnType<typeof harness>) =>
 
 describe("uninstall", () => {
   it("deletes the Lume rigs and an emptied storage_dir, and asks about the rest", async () => {
-    const h = harness(["", ""]);
+    const h = harness(["", "", ""]);
     await uninstall(
       h.config,
       index(["mac-1", "lume"], ["linux-1", "smol"]),
@@ -68,11 +79,12 @@ describe("uninstall", () => {
       ["delete", "mac-1", "--storage", h.storageDir, "--force"],
     ]);
     expect(h.deps.remove).toHaveBeenCalledWith(h.storageDir);
-    // Enter keeps the macOS images and smolvm.
+    // Enter keeps the macOS images, the restore image and smolvm.
     expect(h.deps.prompt?.mock.calls.map(([q]) => q)).toEqual([
       expect.stringMatching(
         /amika-macos-base, amika-macos-coder.*'remove macos images'/,
       ),
+      expect.stringMatching(/'remove macos restore image'/),
       expect.stringMatching(/'remove smolvm'/),
     ]);
     expect(h.deps.remove).toHaveBeenCalledTimes(1);
@@ -95,7 +107,7 @@ describe("uninstall", () => {
   });
 
   it("deletes the macOS images and smolvm only for the typed phrase", async () => {
-    const h = harness(["remove macos images", "remove smolvm"]);
+    const h = harness(["remove macos images", "", "remove smolvm"]);
     const link = path.join(h.home, ".local", "bin", "smolvm");
     mkdirSync(path.dirname(link), { recursive: true });
     symlinkSync(path.join(h.home, ".smolvm", "smolvm"), link);
@@ -106,10 +118,19 @@ describe("uninstall", () => {
     ]);
     expect(h.deps.remove).toHaveBeenCalledWith(link);
     expect(h.deps.remove).toHaveBeenCalledWith(path.join(h.home, ".smolvm"));
+    expect(h.deps.remove).not.toHaveBeenCalledWith(h.restoreDir);
+  });
+
+  it("deletes the restore image only for its own typed phrase", async () => {
+    // No to the Lume storage folder; the restore image's phrase is typed.
+    const h = harness(["n", "", "remove macos restore image", ""]);
+    await uninstall(h.config, index(), { yes: false, dryRun: false }, h.deps);
+    expect(lumeCalls(h)).toEqual([]);
+    expect(h.deps.remove.mock.calls).toEqual([[h.restoreDir]]);
   });
 
   it("leaves a smolvm in ~/.local/bin that is not a link into ~/.smolvm", async () => {
-    const h = harness(["", "remove smolvm"]);
+    const h = harness(["", "", "remove smolvm"]);
     const own = path.join(h.home, ".local", "bin", "smolvm");
     mkdirSync(path.dirname(own), { recursive: true });
     writeFileSync(own, "");
@@ -124,6 +145,7 @@ describe("uninstall", () => {
     expect(h.deps.remove).not.toHaveBeenCalledWith(
       path.join(h.home, ".smolvm"),
     );
+    expect(h.deps.remove).not.toHaveBeenCalledWith(h.restoreDir);
   });
 
   it("keeps the Lume rigs without a yes", async () => {
@@ -150,6 +172,9 @@ describe("uninstall", () => {
     expect(h.deps.remove).not.toHaveBeenCalled();
     expect(h.out).toContain(
       `Would delete the Lume rigs mac-1 and ${h.storageDir}`,
+    );
+    expect(h.out).toContain(
+      `Would ask about the macOS restore image in ${h.restoreDir}`,
     );
   });
 });
