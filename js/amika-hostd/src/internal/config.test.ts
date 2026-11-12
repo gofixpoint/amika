@@ -47,6 +47,7 @@ describe("resolveConfig", () => {
       },
       transport: "tunnel",
       tunnelGatewayUrl: undefined,
+      tunnelResume: true,
       amikadPath: undefined,
       configPath: undefined,
     });
@@ -516,6 +517,30 @@ describe("the tunnel gateway URL", () => {
     expect(() =>
       resolveConfig({ file: file('tunnel_gateway_url = "gw.example"\n') }),
     ).toThrow(/not a URL/);
+  });
+});
+
+describe("the tunnel resume switch", () => {
+  it("offers v3 unless the environment turns it off", () => {
+    expect(resolveConfig({}).tunnelResume).toBe(true);
+    expect(
+      resolveConfig({ env: { AMIKA_HOSTD_TUNNEL_RESUME: "1" } }).tunnelResume,
+    ).toBe(true);
+    expect(
+      resolveConfig({ env: { AMIKA_HOSTD_TUNNEL_RESUME: "0" } }).tunnelResume,
+    ).toBe(false);
+    // Blank sets nothing, as for every variable.
+    expect(
+      resolveConfig({ env: { AMIKA_HOSTD_TUNNEL_RESUME: " " } }).tunnelResume,
+    ).toBe(true);
+  });
+
+  it("refuses a value that would make the kill switch a no-op", () => {
+    for (const value of ["off", "false", "no", "2"]) {
+      expect(() =>
+        resolveConfig({ env: { AMIKA_HOSTD_TUNNEL_RESUME: value } }),
+      ).toThrow(/AMIKA_HOSTD_TUNNEL_RESUME must be 0 or 1/);
+    }
   });
 });
 

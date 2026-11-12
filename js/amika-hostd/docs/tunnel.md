@@ -14,8 +14,9 @@ serves, so no route exists twice.
 
 This document covers the client half, which lives in this repo. The relay
 is in amika-mono (`js/gateway-cloudflare`). The wire
-format is `amika.tunnel.v2`, and its code is `@amika/tunnel-protocol`
-(`js/tunnel-protocol` in this repo), which both ends import.
+format is `amika.tunnel.v2`, or `amika.tunnel.v3` when the relay resumes
+sessions, and its code is `@amika/tunnel-protocol` (`js/tunnel-protocol` in
+this repo), which both ends import.
 
 ## The pieces
 
@@ -25,13 +26,15 @@ directory:
 | File                    | What it owns                                                   |
 | ----------------------- | -------------------------------------------------------------- |
 | `tunnel-dial.ts`        | The WSS handshake, and what the gateway's answer means         |
-| `tunnel-session.ts`     | One live session: frames, the stream table, liveness, drain    |
+| `tunnel-link.ts`        | One WebSocket: its bytes, its keep-alive, how it ended         |
+| `tunnel-session.ts`     | One session: the stream table, drain, and v3's counts and log  |
 | `tunnel-bridge.ts`      | One stream turned into a request to this daemon's own server   |
 | `tunnel-socket-pair.ts` | Two connected sockets with nothing under them, for `node:http` |
 | `tunnel-serving.ts`     | An `http.Server` with no listener, fed those sockets           |
 | `tunnel-backoff.ts`     | How long to wait before dialling again                         |
-| `tunnel-client.ts`      | The loop: dial, serve, decide what a disconnect meant          |
+| `tunnel-client.ts`      | The loop: dial, serve, resume, decide what a disconnect meant  |
 | `tunnel-target.ts`      | Where to attach, and what to prove it with                     |
+| `tunnel-fault-pipe.ts`  | Test support: an in-memory socket a test cuts at any frame     |
 
 ## Decisions
 
@@ -96,10 +99,13 @@ The normal way a tunnel dies is a closed laptop lid. The socket stays in
 `ESTABLISHED`, the kernel accepts writes, and no WebSocket or TCP event
 reports anything. Only an unanswered round trip finds it.
 
-So `TunnelSession` sends the text message `PING` (`amika.tunnel.v2.ping`)
-every `KEEP_ALIVE_INTERVAL_MS` and ends the session when the text `PONG`
-(`amika.tunnel.v2.pong`) does not
-come back within `PING_TIMEOUT_MS`. The relay registers that pair with
+So `TunnelLink` sends the text message `PING` (`amika.tunnel.v2.ping`)
+every `KEEP_ALIVE_INTERVAL_MS` and ends the socket when nothing at all
+arrives from the relay within `PING_TIMEOUT_MS`: neither the text `PONG`
+(`amika.tunnel.v2.pong`) nor any frame. Any message answers, because the
+`PING` queues behind the frames sent before it, and the `PONG` behind the
+relay's. On a busy link a lone `PONG` can take seconds, and a socket that
+ended for that was a socket that worked. The relay registers that pair with
 Cloudflare's `setWebSocketAutoResponse`, so its runtime answers without
 waking the relay: an idle host costs nothing, and the relay is not billed a
 message for it. The relay also reads when it last answered, which is how it
@@ -156,6 +162,63 @@ makes the same distinction (`server.ts`).
 Disconnecting is **not** shutdown. A dropped tunnel leaves the daemon and
 every rig on this host running while it reconnects, and it never falls back
 to opening a port.
+
+### A session that outlives its socket
+
+Cloudflare's edge restarts end the tunnel WebSocket with no warning, and a
+path can break with no close at all. In v2 a stream belongs to one socket,
+so every SSH session and preview on the host ends with it. v3 (spec 035,
+`specs/035-host-connection-drops.d/resumable-tunnel.md` in amika-mono)
+keeps them.
+
+The daemon offers `amika.tunnel.v3, amika.tunnel.v2`, and the relay picks.
+A v3 session counts the frames it sends and the frames it processes, keeps
+the frames the relay has not acknowledged in a replay log
+(`HOSTD_MAX_REPLAY_BYTES`, 32 MiB), and acknowledges what it processed with
+`ACK` after 256 KiB or 200 ms. No frame carries its number: WebSocket keeps
+order, so a frame's position is its number.
+
+When a v3 socket ends, `TunnelSession` detaches instead of ending: every
+stream and its connection to the rig stay open, and a 60 s grace starts.
+`TunnelClient` dials again at once (if the socket had settled, so a socket
+that dies on attaching cannot loop with no wait), then on its backoff,
+capped at a sixth of the grace while the session waits. Each of those dials
+gives up after 6 s rather than the usual 20 s, so a dial made during a
+silent break, and stuck in TCP's retries, gives way to a fresh one soon after
+the path is back. Each dial carries `x-amika-tunnel-session` (the relay's connection id) and
+`x-amika-tunnel-received` (this side's received count). A `101` with the
+same connection id resumes: the session checks the relay's received count,
+resends from its log every frame after it, and carries on. Anything else
+starts fresh and resets the old session's streams, as v2 always does: a new
+connection id, a v2 answer, a count above what was sent or one the log no
+longer covers (the socket is closed `1002`), or the grace running out.
+
+Some ends are not drops. A protocol error, a relay close of `1002`, and a
+relay close of `CLOSE_SESSION_ENDED` end the session at once, and so does
+shutdown, which closes with `CLOSE_SESSION_ENDED` so the relay does not hold
+the session for a resume that will not come. A stop or restart of the daemon
+ends its sessions: the state is in memory only.
+
+While detached, and while more than 2 MiB is unacknowledged, the session
+reports itself congested, so upstream WebSockets pause and bodies wait:
+messages carry no credit, and this is what bounds what waits ahead of new
+traffic on the link and what a resume sends again.
+
+A resume that answers resets the backoff, and a resumed socket never counts
+toward the "credential may have been revoked" warning: the relay knew the
+session, so it accepted this host.
+
+A v3 socket pings every 10 s and ends at its first ping that nothing answers
+within 5 s, because ending a socket early now costs a resume rather than
+every stream.
+
+`AMIKA_HOSTD_TUNNEL_RESUME=0` offers v2 alone. The relay has its own switch,
+so either end can turn resume off without the other.
+
+The daemon logs `tunnel_detached`, `tunnel_resumed`,
+`tunnel_resume_refused` and `tunnel_session_ended` with the connection id,
+as the relay does, so the two logs join. They name fields only: never a
+frame, a header value or a close reason.
 
 ### The relay sends heads, and Node parses HTTP at both ends
 

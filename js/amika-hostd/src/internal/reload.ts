@@ -23,6 +23,7 @@ const RESTART_SETTINGS = [
   "snapshotDir",
   "transport",
   "tunnelGatewayUrl",
+  "tunnelResume",
   "amikadPath",
 ] as const satisfies readonly (keyof HostdConfig)[];
 

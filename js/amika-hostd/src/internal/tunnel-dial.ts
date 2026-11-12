@@ -12,6 +12,8 @@ import {
   CREDENTIAL_HEADER,
   HOST_ID_HEADER,
   MAX_FRAME_BYTES,
+  TUNNEL_RECEIVED_HEADER,
+  TUNNEL_SESSION_HEADER,
   TUNNEL_SUBPROTOCOL,
 } from "@amika/tunnel-protocol";
 
@@ -77,6 +79,8 @@ export class TunnelUnavailable extends Error {
 
 export interface DialedTunnel {
   ws: WebSocket;
+  /** The subprotocol the gateway selected: one of those offered. */
+  protocol: string;
   /**
    * The gateway's id for this attachment, if it sent one. Reported in
    * logs and in the daemon's readiness result, and the value an operator
@@ -88,6 +92,18 @@ export interface DialedTunnel {
   connectionId?: string;
   /** The public address the gateway assigned this host, if it sent one. */
   publicUrl?: string;
+  /**
+   * The relay's received count, as it sent it, on a `101` that resumed a
+   * v3 session. `TunnelClient` parses and checks it.
+   */
+  received?: string;
+}
+
+/** The v3 session a redial asks the relay to continue. */
+export interface ResumeRequest {
+  connectionId: string;
+  /** How many counted frames this side has processed in the session. */
+  received: number;
 }
 
 export interface DialOptions {
@@ -95,6 +111,13 @@ export interface DialOptions {
   handshakeTimeoutMs: number;
   /** What this daemon calls itself to the gateway. */
   userAgent: string;
+  /**
+   * The subprotocols to offer, most preferred first. Defaults to
+   * `amika.tunnel.v2` alone.
+   */
+  protocols?: readonly string[];
+  /** Sent as the resume headers: the session to continue. */
+  resume?: ResumeRequest;
   /** Injected in tests. */
   connect?: (url: string, options: ConnectOptions) => WebSocket;
 }
@@ -115,8 +138,9 @@ export async function dialTunnel(
   const connect =
     options.connect ??
     ((at, settings) => new WebSocket(at, settings.protocols, settings));
+  const offered = options.protocols ?? [TUNNEL_SUBPROTOCOL];
   const ws = connect(url, {
-    protocols: [TUNNEL_SUBPROTOCOL],
+    protocols: [...offered],
     headers: {
       // The credential goes in a header and never in the URL. A query
       // string reaches the access log of every proxy on the path, and an
@@ -128,6 +152,14 @@ export async function dialTunnel(
       [CREDENTIAL_HEADER]: target.credential,
       [HOST_ID_HEADER]: target.hostId,
       "user-agent": options.userAgent,
+      // Neither is a secret: the relay authorizes a resume exactly as it
+      // authorizes a fresh dial, and continues only this host's session.
+      ...(options.resume
+        ? {
+            [TUNNEL_SESSION_HEADER]: options.resume.connectionId,
+            [TUNNEL_RECEIVED_HEADER]: String(options.resume.received),
+          }
+        : {}),
     },
     // No frame is larger, so an inbound message above this is a peer that
     // is not the relay, or one that is wrong. `ws` assembles a whole
@@ -173,19 +205,26 @@ export async function dialTunnel(
         // bytes after this point are read as tunnel frames by whatever is at
         // the other end, so a peer that did not agree to this protocol is
         // refused here rather than fed a frame stream.
-        if (ws.protocol !== TUNNEL_SUBPROTOCOL) {
+        if (!offered.includes(ws.protocol)) {
           ws.close(1002, "subprotocol");
           reject(
             new TunnelUnavailable(
-              `Gateway did not accept the ${TUNNEL_SUBPROTOCOL} subprotocol (answered ${ws.protocol === "" ? "none" : ws.protocol})`,
+              `Gateway did not accept the ${offered.join(" or ")} subprotocol (answered ${ws.protocol === "" ? "none" : ws.protocol})`,
             ),
           );
           return;
         }
+        // Paused until a `TunnelLink` takes the socket. `ws` emits the frames
+        // that arrived in the same read as the `101` on a later tick, before
+        // the code awaiting this dial can listen, and a v3 relay sends its
+        // resend there. `TunnelLink` resumes it.
+        ws.pause();
         resolve({
           ws,
+          protocol: ws.protocol,
           connectionId: header(handshake, CONNECTION_ID_HEADER),
           publicUrl: header(handshake, PUBLIC_URL_HEADER),
+          received: header(handshake, TUNNEL_RECEIVED_HEADER),
         });
       });
 
