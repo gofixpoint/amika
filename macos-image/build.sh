@@ -7,9 +7,17 @@
 # Usage: macos-image/build.sh <base-vm> <image-vm>
 #
 # Environment:
-#   AMIKAD_BIN  amikad for darwin/arm64. Default: build it from this checkout.
+#   AMIKAD_BIN  amikad for darwin/arm64. Default: build it from this checkout,
+#               which needs Go. A copy outside a checkout (amika-hostd's
+#               release) has no Go source, so there it must be set.
 #   STEPS       Step names to run, for example "10-amika-user 60-amikad".
 #               Default: every step, in order.
+#   VERSIONS_ENV  The version pins the steps read. Default: versions.env
+#               beside this script, which amika-hostd's release ships, else
+#               this checkout's sandbox-image/versions.env.
+#   NODE        A Node.js binary to read Lume's JSON with. amika-hostd sets
+#               it to its own Node; without it the build uses python3, which
+#               a Mac has only with the Xcode Command Line Tools.
 
 set -euo pipefail
 
@@ -24,12 +32,58 @@ repo="$(dirname "$here")"
 bootstrap_user=lume
 export AMIKA_IMAGE_PASSWORD=lume
 
+# Checked before anything is cloned, so a copy run outside a checkout
+# fails at once, naming what it lacks.
+if [[ -z "${VERSIONS_ENV:-}" ]]; then
+  if [[ -f "$here/versions.env" ]]; then
+    VERSIONS_ENV="$here/versions.env"
+  else
+    VERSIONS_ENV="$repo/sandbox-image/versions.env"
+  fi
+fi
+if [[ ! -f "$VERSIONS_ENV" ]]; then
+  echo "no version pins at $VERSIONS_ENV; set VERSIONS_ENV" >&2
+  exit 1
+fi
+if [[ -n "${AMIKAD_BIN:-}" ]]; then
+  if [[ ! -f "$AMIKAD_BIN" ]]; then
+    echo "AMIKAD_BIN names no file: $AMIKAD_BIN" >&2
+    exit 1
+  fi
+elif [[ ! -d "$repo/go/cmd/amikad" ]]; then
+  echo "no Go checkout at $repo to build amikad from; set AMIKAD_BIN to an amikad for darwin/arm64" >&2
+  exit 1
+fi
+
 # The cleanup deletes the image VM on failure, so it must be one this run
 # made, never a VM that was there before.
 if lume get "$image" >/dev/null 2>&1; then
   echo "$image already exists; delete it or choose another name" >&2
   exit 1
 fi
+
+# Print field `ip` (the address once the VM runs, else empty) or `status`
+# of the image VM, from `lume get`.
+vm_field() {
+  local json
+  json="$(lume get "$image" --format json)"
+  if [[ -n "${NODE:-}" ]]; then
+    "$NODE" -e '
+      const vm = JSON.parse(process.argv[2])[0];
+      const field = process.argv[1];
+      console.log(field === "ip"
+        ? (vm.status === "running" && vm.ipAddress) || ""
+        : vm.status);' "$1" "$json"
+  else
+    python3 -c '
+import json, sys
+vm = json.loads(sys.argv[2])[0]
+if sys.argv[1] == "ip":
+    print(vm.get("ipAddress") or "" if vm["status"] == "running" else "")
+else:
+    print(vm["status"])' "$1" "$json"
+  fi
+}
 
 work="$(mktemp -d)"
 cloned=false
@@ -57,8 +111,7 @@ lume run "$image" --detach --display none --vnc disabled \
   --log-file "$work/lume.log"
 ip=""
 for _ in $(seq 1 120); do
-  ip="$(lume get "$image" --format json | python3 -c \
-    'import json, sys; vm = json.load(sys.stdin)[0]; print(vm.get("ipAddress") or "" if vm["status"] == "running" else "")')"
+  ip="$(vm_field ip)"
   [[ -n "$ip" ]] && break
   sleep 1
 done
@@ -87,7 +140,7 @@ tar -C "$here" -cf - steps assets | guest \
   'rm -rf /tmp/amika-image && mkdir /tmp/amika-image && tar -C /tmp/amika-image -xf -'
 guest 'cat > /tmp/amika-image/amikad' <"$AMIKAD_BIN"
 # The steps use the Linux image's version pins.
-guest 'cat > /tmp/amika-image/versions.env' <"$repo/sandbox-image/versions.env"
+guest 'cat > /tmp/amika-image/versions.env' <"$VERSIONS_ENV"
 if [[ -z "${STEPS:-}" ]]; then
   for file in "$here"/steps/*.sh; do
     STEPS="${STEPS:-} $(basename "$file" .sh)"
@@ -108,8 +161,7 @@ printf '%s\n' "$AMIKA_IMAGE_PASSWORD" | guest \
   "sudo -S -p '' sh -c 'rm -rf /tmp/amika-image && shutdown -h now'" || true
 status=""
 for _ in $(seq 1 120); do
-  status="$(lume get "$image" --format json | python3 -c \
-    'import json, sys; print(json.load(sys.stdin)[0]["status"])')"
+  status="$(vm_field status)"
   [[ "$status" == stopped ]] && break
   sleep 1
 done
