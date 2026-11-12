@@ -1008,7 +1008,11 @@ function hasSettings(config: HostdConfig): boolean {
   return REGISTRATION_SETTINGS.every((key) => config[key] !== undefined);
 }
 
-function parseCommand(args: readonly string[]): ParsedCommand {
+/**
+ * Parse argv into a command, throwing `UsageError` for anything the command
+ * does not take. Exported so a test checks the setup skill's commands.
+ */
+export function parseCommand(args: readonly string[]): ParsedCommand {
   let parsed;
   try {
     parsed = parseArgs({
