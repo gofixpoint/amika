@@ -36,7 +36,7 @@ enabled = false
     expect(config(contents).runtimes.runtimes.lume?.storageDir).toBe(STORAGE);
   });
 
-  it.each([`"storage_dir"`, `'storage_dir'`])(
+  it.each([`"storage_dir"`, `'storage_dir'`, String.raw`"storage\u005fdir"`])(
     "keeps a storage_dir written as the quoted key %s",
     (key) => {
       const off = `${PRESETS}

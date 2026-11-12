@@ -3,6 +3,7 @@
  * "`amika-hostd capabilities`"): turn runtimes on or off in
  * `[runtimes.*]`, keeping everything else in `config.toml` as it is.
  */
+import { parse as parseToml } from "smol-toml";
 import { tomlKey } from "./config-upgrade.js";
 import { RUNTIME_NAMES, type RuntimeName } from "./runtimes.js";
 
@@ -75,8 +76,8 @@ export function updateRuntimes(
       setFlag(name, true);
       // A turned-off Lume table needs no storage_dir, but a turned-on one
       // does, so turning it back on adds one.
-      const at = header(name);
-      if (name === "lume" && keyLine(at, "storage_dir") === -1) {
+      if (name === "lume" && !lumeHasStorageDir(contents)) {
+        const at = header(name);
         lines.splice(
           at + 1,
           0,
@@ -117,4 +118,20 @@ export function updateRuntimes(
     contents: steps.length ? `${lines.join("\n")}\n` : contents,
     steps,
   };
+}
+
+/**
+ * Whether the Lume table in `contents` sets `storage_dir`, as TOML reads it:
+ * a key may be spelled many ways (`"storage\u005fdir"`, say), which a match
+ * on the text would miss and so add a second one. A file that does not parse
+ * fails once the change is read back anyway, so it counts as having none.
+ */
+function lumeHasStorageDir(contents: string): boolean {
+  let parsed: { runtimes?: { lume?: Record<string, unknown> } };
+  try {
+    parsed = parseToml(contents);
+  } catch {
+    return false;
+  }
+  return parsed.runtimes?.lume?.storage_dir !== undefined;
 }
