@@ -7,7 +7,7 @@ uses the same version pins (`sandbox-image/versions.env`).
 ## Build
 
 amika-hostd builds this image itself once Lume is turned on (with
-`amika-hostd capabilities update --enable lume`): the
+`amika-hostd setup` or `amika-hostd capabilities update --enable lume`): the
 daemon runs the steps below in the background, from a copy of this
 directory its release ships. Build it by hand to work on the image.
 

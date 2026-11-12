@@ -71,7 +71,10 @@ restart, so rigs keep running and the tunnel and SSH sessions stay up
 
 `amika-hostd capabilities update --enable|--disable <runtime>` changes
 `[runtimes.*]` in `config.toml` and nothing else
-(`src/internal/runtime-update.ts`):
+(`src/internal/runtime-update.ts`). With no runtime named it asks about each
+one this machine can run but smol, as setup does
+(`src/internal/runtime-choice.ts`);
+without a terminal it then exits with an error naming the flags.
 
 1. It prints the plan. Turning on Lume adds `storage_dir` (in hostd's data
    directory) and, unless a preset already uses Lume, the `macos-coder`
@@ -96,7 +99,8 @@ It refuses to turn off a runtime with rigs, as recorded in `machines.json`.
 `--dry-run` prints the plan and changes nothing; `--yes` applies it without
 asking; with no terminal and neither flag, it exits with an error naming
 both. `--json` prints the plan and result as JSON. A second run with the
-same flags makes no change. `setup` never installs Lume.
+same flags makes no change. Setup installs and builds the same things for
+the runtimes it turns on.
 
 ## Registration
 

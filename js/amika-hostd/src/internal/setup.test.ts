@@ -1,9 +1,11 @@
 /** Cover `amika-hostd setup` with every prompt, file and keychain faked. */
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { hostPlatformFor, type HostPlatform } from "../platforms/index.js";
 import { ConfigError, resolveConfig, type HostdConfigFile } from "./config.js";
+import { daemonPaths } from "./daemon.js";
 import { PromptCancelled } from "./prompt.js";
 import {
   DEFAULT_PRESET_IMAGES,
@@ -14,6 +16,10 @@ import {
   type SetupDeps,
 } from "./setup.js";
 import type { StrictModesViolation } from "./strict-modes.js";
+import { RUNTIME_QUESTIONS } from "./runtime-choice.js";
+
+/** The runtime questions setup asks on Linux: only bare_metal, as smol stays on. */
+const LINUX_RUNTIME_PROMPTS = [`${RUNTIME_QUESTIONS.bare_metal} [y/N] `];
 
 /** The presets a config with the default preset images resolves to. */
 const DEFAULT_PRESETS = expect.objectContaining({
@@ -48,6 +54,7 @@ function harness({
   storedSecret,
   kind = "file",
   env = {},
+  platform = hostPlatformFor("linux"),
 }: {
   answers?: (string | undefined)[];
   secrets?: (string | undefined)[];
@@ -57,6 +64,8 @@ function harness({
   storedSecret?: string;
   kind?: "file" | "keychain";
   env?: NodeJS.ProcessEnv;
+  /** The OS setup runs on; Linux, which offers smol and bare_metal. */
+  platform?: HostPlatform;
 }) {
   const out: string[] = [];
   const err: string[] = [];
@@ -90,7 +99,13 @@ function harness({
     }),
   };
   const deps = {
-    env: { XDG_CONFIG_HOME: "/config", ...env },
+    // A state directory that does not exist, so no test reads this
+    // machine's own (its machine index, say).
+    env: {
+      XDG_CONFIG_HOME: "/config",
+      XDG_STATE_HOME: "/nonexistent/amika-hostd-test-state",
+      ...env,
+    },
     out: (line: string) => out.push(line),
     err: (line: string) => err.push(line),
     prompt: vi.fn(async (_question: string) => answers.shift()),
@@ -107,6 +122,7 @@ function harness({
     writeConfigFile: vi.fn((name: string, contents: string) => {
       written[name] = contents;
     }),
+    platform,
     systemHostname: () => "Jakubs-MacBook-Pro.local",
     generateSecretKey: vi.fn(() => NEW_SECRET),
     registerHost: vi.fn(
@@ -198,6 +214,7 @@ describe("runSetup", () => {
       "Hostname [builder]: ",
       "Regenerate the secret key Amika uses to reach this host? [y/N] ",
       "Update the stored Amika API key? [y/N] ",
+      ...LINUX_RUNTIME_PROMPTS,
     ]);
     expect(h.written[PATH]).toBe(file);
     expect(h.deps.generateSecretKey).not.toHaveBeenCalled();
@@ -603,6 +620,7 @@ describe("runSetup with the keychain store", () => {
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
+      ...LINUX_RUNTIME_PROMPTS,
     ]);
     expect(h.keychainSecret.value).toBe(NEW_SECRET);
     // Setup marks the file, so a later run knows the keychain has the key.
@@ -624,6 +642,7 @@ describe("runSetup with the keychain store", () => {
       "Hostname [builder]: ",
       "Generate a new secret key? [y/N] ",
       "Update the stored Amika API key? [y/N] ",
+      ...LINUX_RUNTIME_PROMPTS,
     ]);
     expect(h.out).toContain(
       "No secret key found in the test keychain (secret key). If it is there but locked, unlock it and run setup again, rather than replace the secret key Amika may know.",
@@ -972,6 +991,7 @@ describe("runSetup on the shipped example", () => {
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [jakubs-macbook-pro]: ",
+      ...LINUX_RUNTIME_PROMPTS,
     ]);
     expect(h.config()).toMatchObject({
       hostname: "builder",
@@ -1032,7 +1052,7 @@ describe("runSetup: the bare_metal runtime", () => {
     return { ...h, deps, installAmikad, strictModesViolation };
   }
 
-  it("asks nothing about runtimes, and leaves them as they are", async () => {
+  it("leaves the runtimes as they are when the questions get no answer", async () => {
     const h = bareMetalHarness({
       answers: ["", "", ""],
       file: FILE_CONFIGURED,
@@ -1102,7 +1122,8 @@ describe("runSetup: the bare_metal runtime", () => {
     [
       "an OS without bare metal",
       hostPlatformFor("win32"),
-      /cannot make this machine a rig on win32/,
+      // Refused with the other runtimes this machine cannot run.
+      /config turns on bare_metal, which this machine cannot run/,
     ],
     [
       "a machine with no sshd",
@@ -1119,5 +1140,104 @@ describe("runSetup: the bare_metal runtime", () => {
     expect((error as Error).message).toMatch(why);
     expect(h.written).toEqual({});
     expect(h.installAmikad).not.toHaveBeenCalled();
+  });
+});
+
+describe("runSetup: choosing runtimes", () => {
+  const FILE_CONFIGURED = `secret_store = "file"\n${CONFIGURED}`;
+  const MAC = hostPlatformFor("darwin", { arch: () => "arm64" } as never);
+  const LUME_PROMPT = `${RUNTIME_QUESTIONS.lume} [y/N] `;
+
+  /** Setup on an Apple Silicon Mac, with Lume's installer faked. */
+  function macHarness(
+    answers: (string | undefined)[],
+    { lumeInstalled = false } = {},
+  ) {
+    const h = harness({
+      answers,
+      file: FILE_CONFIGURED,
+      storedKey: "k",
+      platform: MAC,
+    });
+    const deps = {
+      ...h.deps,
+      findLume: () => (lumeInstalled ? "/usr/local/bin/lume" : undefined),
+      installLume: vi.fn(async () => {}),
+    };
+    return { ...h, deps };
+  }
+
+  it("asks about Lume on a Mac, saying what it costs, and defaults to no", async () => {
+    const h = macHarness(["", "", ""]);
+    await runSetup(h.deps);
+    expect(h.deps.prompt.mock.calls.map(([q]) => q)).toContain(LUME_PROMPT);
+    expect(LUME_PROMPT).toMatch(/about 20 GB.*30 minutes or more/);
+    expect(h.written[PATH]).toBe(FILE_CONFIGURED);
+    expect(h.deps.installLume).not.toHaveBeenCalled();
+  });
+
+  it("with a yes to Lume, installs it and turns it on, leaving the image to the daemon", async () => {
+    // Hostname, regenerate, API key, lume, bare_metal.
+    const h = macHarness(["", "", "", "y", ""]);
+    await runSetup(h.deps);
+    expect(h.deps.installLume).toHaveBeenCalledOnce();
+    expect(h.written[PATH]).toContain("[runtimes.lume]");
+    expect(h.written[PATH]).toContain(
+      '[presets.macos-coder.runtimes.lume]\nimage = "amika-macos-coder"',
+    );
+    expect(h.config().runtimes.runtimes).toHaveProperty("smol");
+    // The build would hold setup up for half an hour; the daemon does it.
+    expect(h.out).toContain(
+      "Lume rigs boot a macOS image this Mac builds once. amika-hostd builds it in the background when it starts, and refuses macOS rigs until it is done.",
+    );
+  });
+
+  it("takes --enable and --disable without asking about those runtimes", async () => {
+    const h = macHarness(["", "", ""]);
+    await runSetup(h.deps, {
+      runtimes: { enable: ["lume"], disable: ["smol"] },
+    });
+    const questions = h.deps.prompt.mock.calls.map(([q]) => q);
+    expect(questions).not.toContain(LUME_PROMPT);
+    expect(questions).toContain(`${RUNTIME_QUESTIONS.bare_metal} [y/N] `);
+    expect(Object.keys(h.config().runtimes.runtimes)).toEqual(["lume"]);
+  });
+
+  it("refuses a copied config's Lume on Linux before installing anything", async () => {
+    const file = `${FILE_CONFIGURED}
+[runtimes.smol]
+[runtimes.lume]
+storage_dir = "/srv/lume"
+`;
+    const h = harness({ answers: ["", "", ""], file, storedKey: "k" });
+    const deps = {
+      ...h.deps,
+      findLume: () => undefined,
+      installLume: vi.fn(async () => {}),
+    };
+    await expect(runSetup(deps)).rejects.toThrow(
+      "The config turns on lume, which this machine cannot run",
+    );
+    expect(deps.installLume).not.toHaveBeenCalled();
+    expect(h.written).toEqual({});
+  });
+
+  it("refuses to turn off a runtime that has rigs, changing nothing", async () => {
+    const state = mkdtempSync(path.join(tmpdir(), "amika-hostd-setup-"));
+    const h = harness({
+      answers: ["", "", ""],
+      file: FILE_CONFIGURED,
+      storedKey: "k",
+      env: { XDG_STATE_HOME: state },
+    });
+    const index = daemonPaths(h.deps.env).machineIndexFile;
+    mkdirSync(path.dirname(index), { recursive: true });
+    writeFileSync(index, JSON.stringify({ machines: { dev: "smol" } }));
+    await expect(
+      runSetup(h.deps, {
+        runtimes: { enable: ["bare_metal"], disable: ["smol"] },
+      }),
+    ).rejects.toThrow("smol has 1 rig (dev). Delete it, then try again.");
+    expect(h.written).toEqual({});
   });
 });

@@ -11,6 +11,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AmikaApiError, HostTransportConflictError } from "./amika-api.js";
 import { hostPlatformFor } from "../platforms/index.js";
+import { RUNTIME_QUESTIONS } from "./runtime-choice.js";
 import type { BackgroundImageOptions } from "./lume-setup.js";
 import { PromptCancelled, runCli, USAGE, type CliDeps } from "./cli.js";
 import {
@@ -2068,6 +2069,42 @@ image = "amika-macos-coder"
       });
     });
 
+    describe("with no runtime named", () => {
+      it("asks about each runtime this machine can run", async () => {
+        const { deps, files } = reloadable();
+        // lume: no; bare_metal: yes; then apply. smol is not asked about.
+        const answers = ["n", "y", "y"];
+        const asking = {
+          ...deps,
+          prompt: vi.fn(async (_q: string) => answers.shift()),
+          installAmikad: vi.fn(async () => "/data/amikad/amikad"),
+          strictModesViolation: vi.fn(() => undefined),
+          platform: hostPlatformFor("darwin", {
+            arch: () => "arm64",
+            path: "",
+            isExecutable: (file) => file === "/usr/sbin/sshd",
+          }),
+        };
+        expect(await runCli(["capabilities", "update"], asking)).toBe(0);
+        expect(asking.prompt.mock.calls.map(([q]) => q)).toEqual([
+          `${RUNTIME_QUESTIONS.lume} [y/N] `,
+          `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
+          "Apply this plan? [y/N] ",
+        ]);
+        expect(files.config).toContain("[runtimes.bare_metal]");
+        expect(files.config).not.toContain("[runtimes.lume]");
+      });
+
+      it("needs a terminal", async () => {
+        const { deps, err, files } = reloadable();
+        expect(await runCli(["capabilities", "update"], deps)).toBe(1);
+        expect(err.join("\n")).toContain(
+          "with no terminal, pass --enable <runtime> or --disable <runtime>",
+        );
+        expect(files.config).toBe(BASE);
+      });
+    });
+
     describe("--enable bare_metal", () => {
       /** A Mac with an sshd, unless `sshd` is false. */
       const mac = ({ sshd = true } = {}) =>
@@ -2398,6 +2435,38 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
       expect(deps.credentials.value).toBe("amk_123");
     });
 
+    it("turns runtimes on and off with --enable and --disable, asking nothing", async () => {
+      const h = piped("amk_123");
+      const deps = {
+        ...h.deps,
+        platform: hostPlatformFor("darwin", { arch: () => "arm64" } as never),
+        findLume: () => "/usr/local/bin/lume",
+      };
+      expect(
+        await runCli(["setup", "--non-interactive", "--enable", "lume"], deps),
+      ).toBe(0);
+      expect(h.files[CONFIG_PATH]).toContain("[runtimes.lume]");
+      expect(h.files[CONFIG_PATH]).toContain("[runtimes.smol]");
+    });
+
+    it("refuses --enable for a runtime this machine cannot run, writing nothing", async () => {
+      const h = piped("amk_123");
+      const deps = { ...h.deps, platform: hostPlatformFor("linux") };
+      expect(
+        await runCli(["setup", "--non-interactive", "--enable", "lume"], deps),
+      ).toBe(1);
+      expect(h.err.join("\n")).toContain("This machine cannot run lume");
+      expect(h.files).toEqual({});
+    });
+
+    it("takes no --enable with --skill", async () => {
+      const { deps, err } = piped("");
+      expect(await runCli(["setup", "--skill", "--enable", "lume"], deps)).toBe(
+        2,
+      );
+      expect(err[0]).toContain("--skill takes no --enable or --disable");
+    });
+
     it("defaults to this machine's hostname", async () => {
       const { deps, files } = piped("amk_123");
       expect(await runCli(["setup", "--non-interactive"], deps)).toBe(0);
@@ -2593,11 +2662,13 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
       path.join(import.meta.dirname, "../../config.example.toml"),
       "utf8",
     ).replace('# hostname = "my-host"', 'hostname = "builder"');
-    const { deps, files } = unconfigured([""], ["amk_123"]);
+    const { deps: base, files } = unconfigured([""], ["amk_123"]);
+    const deps = { ...base, platform: hostPlatformFor("linux") };
     files[CONFIG_PATH] = seeded;
     expect(await runCli(["up"], deps)).toBe(0);
     expect(deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
+      `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
     ]);
     expect(deps.keychainSecret.value).toBe(SECRET);
     expect(files[CONFIG_PATH]).toMatch(/^secret_store = "keychain"$/m);
