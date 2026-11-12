@@ -11,6 +11,9 @@
 #                                  one dependency the bundle leaves out
 #   engines.sha256                 the SHA-256 of each platform's engine
 #                                  package on npm, in `sha256sum` format
+#   macos-image/                   macos-image/build.sh, its steps and assets,
+#                                  and sandbox-image/versions.env: what hostd
+#                                  runs to build the macOS image Lume rigs boot
 # plus OUT_DIR/checksums.txt in the `sha256sum` format install-amika-hostd.sh
 # verifies. The engine itself (native addon, boot helper, hypervisor libraries
 # and guest rootfs) is per platform and over 100 MB, so the tarball does not
@@ -58,6 +61,15 @@ AMIKA_HOSTD_VERSION="v${version}" \
   AMIKA_HOSTD_BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
   node "${package_dir}/scripts/bundle.mjs" "${staging_dir}/amika-hostd.mjs"
 cp "${package_dir}/config.example.toml" "${staging_dir}/"
+
+# The macOS image build, with the version pins its steps read beside it
+# (hostd passes them to build.sh as VERSIONS_ENV).
+repo_dir="$(cd "${package_dir}/../.." && pwd)"
+mkdir -p "${staging_dir}/macos-image"
+cp "${repo_dir}/macos-image/build.sh" "${staging_dir}/macos-image/"
+cp -R "${repo_dir}/macos-image/steps" "${repo_dir}/macos-image/assets" \
+  "${staging_dir}/macos-image/"
+cp "${repo_dir}/sandbox-image/versions.env" "${staging_dir}/macos-image/"
 
 # `npm pack` fetches a package's registry tarball and verifies its integrity.
 (cd "$work_dir" && npm pack --silent "smolmachines@${engine_version}" >/dev/null)

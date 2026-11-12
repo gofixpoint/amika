@@ -523,6 +523,12 @@ install_hostd() {
   install -m 0644 "$BUNDLE_PATH" "${HOSTD_HOME}/amika-hostd.mjs"
   install -m 0644 "${ARCHIVE_DIR}/config.example.toml" \
     "${HOSTD_HOME}/config.example.toml"
+  # What amika-hostd runs to build the macOS image Lume rigs boot,
+  # replaced whole so a step a newer release dropped does not linger.
+  rm -rf "${HOSTD_HOME}/macos-image"
+  if [ "$OS" = "darwin" ] && [ -d "${ARCHIVE_DIR}/macos-image" ]; then
+    cp -R "${ARCHIVE_DIR}/macos-image" "${HOSTD_HOME}/macos-image"
+  fi
   if [ "$BARE_METAL" != "true" ]; then
     install_engine
   fi
