@@ -39,7 +39,12 @@ function mac({ vms = [] as string[], exit = 0 } = {}) {
     ) => exit as number | null,
   );
   const deps = {
-    env: { PATH: "/usr/bin", HOME: "/home/op" },
+    // A temp folder of its own: a build deletes Lume's restore image there.
+    env: {
+      PATH: "/usr/bin",
+      HOME: "/home/op",
+      TMPDIR: mkdtempSync(path.join(tmpdir(), "amika-hostd-lume-")),
+    },
     out: (line: string) => out.push(line),
     platform: hostPlatformFor("darwin", { arch: () => "arm64" } as never),
     findLume: () => LUME,
@@ -138,6 +143,24 @@ describe("buildMacosImage", () => {
     });
     // build.sh calls `lume` by name.
     expect(env.PATH?.split(path.delimiter)[0]).toBe(path.dirname(LUME));
+  });
+
+  it("deletes the restore image Lume downloaded, once the base VM is made", async () => {
+    const { deps } = mac();
+    const ipsw = path.join(deps.env.TMPDIR, "latest.ipsw");
+    writeFileSync(ipsw, "");
+    await buildMacosImage("amika-macos-coder", {}, deps);
+    expect(existsSync(ipsw)).toBe(false);
+  });
+
+  it("keeps the restore image when the base VM was not made", async () => {
+    const { deps } = mac({ exit: 1 });
+    const ipsw = path.join(deps.env.TMPDIR, "latest.ipsw");
+    writeFileSync(ipsw, "");
+    await expect(
+      buildMacosImage("amika-macos-coder", {}, deps),
+    ).rejects.toThrow();
+    expect(existsSync(ipsw)).toBe(true);
   });
 
   it("reuses a base VM that is already there", async () => {

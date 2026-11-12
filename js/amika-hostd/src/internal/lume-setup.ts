@@ -10,8 +10,8 @@
  * (`MACOS_IMAGE_COST`).
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
-import { userInfo } from "node:os";
+import { accessSync, constants, existsSync, rmSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LumeCli } from "@amika/sandbox/lume";
@@ -27,12 +27,12 @@ export const LUME_VERSION = "0.6.1";
 export const MACOS_BASE_VM = "amika-macos-base";
 
 /**
- * What building a macOS image costs, for the warning before it starts. The
- * restore image is about 20 GB; the base VM, the image and Lume's copy of the
- * restore image take most of the rest.
+ * What building a macOS image costs, for the warning before it starts: the
+ * restore image (about 20 GB, deleted once the base VM is made), the base VM
+ * (about 21 GB), and the template, an APFS clone of it (about 9 GB more).
  */
 export const MACOS_IMAGE_COST =
-  "This downloads a macOS restore image from Apple (about 20 GB), needs about 60 GB of free disk, and takes 30 minutes or more.";
+  "This downloads a macOS restore image from Apple (about 20 GB), needs about 50 GB of free disk while it builds and 30 GB after, and takes 30 minutes or more.";
 
 /**
  * Lume's opt-out from its usage telemetry, set for every `lume` hostd runs
@@ -292,6 +292,14 @@ export async function buildMacosImage(
       throw new DaemonError(
         `\`lume create\` failed (exit ${code}) making the base VM ${MACOS_BASE_VM}; its output is above`,
       );
+    }
+    // Lume keeps the restore image it downloaded, about 20 GB, in the temp
+    // folder. The base VM is kept, so a rebuild needs no restore image. A
+    // file the operator named is theirs; a failed create keeps it for a retry.
+    if (ipsw === "latest") {
+      const download = path.join(deps.env.TMPDIR || tmpdir(), "latest.ipsw");
+      rmSync(download, { force: true });
+      deps.out(`Deleted the restore image ${download}.`);
     }
   }
   const amikad = await (deps.installAmikad ?? ensureAmikad)(config, {
