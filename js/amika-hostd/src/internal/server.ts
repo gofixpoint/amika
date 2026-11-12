@@ -69,6 +69,7 @@ export function buildHandlers(
     servicesFile,
     hiddenMachines,
     pullingImages,
+    buildingLumeImages,
     smolvmLogFile,
     snapshots,
     machine = unknownMachine,
@@ -77,6 +78,7 @@ export function buildHandlers(
     hiddenMachines?: () => ReadonlySet<string>;
     /** Images pre-pull is caching now (see `AppDeps`). */
     pullingImages?: () => ReadonlySet<string>;
+    buildingLumeImages?: () => ReadonlySet<string>;
     /** The log of the smolvm this daemon started (see `AppConfig`). */
     smolvmLogFile?: string;
     snapshots?: SnapshotOptions;
@@ -113,6 +115,7 @@ export function buildHandlers(
       registry,
       hiddenMachines,
       pullingImages,
+      buildingLumeImages,
       snapshots: snapshotSupport(runtime, snapshots),
     },
   );
@@ -136,6 +139,7 @@ export function startServer(
     servicesFile,
     hiddenMachines,
     pullingImages,
+    buildingLumeImages,
     smolvmLogFile,
     snapshots,
     machine,
@@ -149,6 +153,7 @@ export function startServer(
     hiddenMachines?: () => ReadonlySet<string>;
     /** Images pre-pull is caching now (see `AppDeps`). */
     pullingImages?: () => ReadonlySet<string>;
+    buildingLumeImages?: () => ReadonlySet<string>;
     /** The log of the smolvm this daemon started (see `AppConfig`). */
     smolvmLogFile?: string;
     /**
@@ -163,6 +168,7 @@ export function startServer(
     servicesFile,
     hiddenMachines,
     pullingImages,
+    buildingLumeImages,
     smolvmLogFile,
     snapshots,
     machine,

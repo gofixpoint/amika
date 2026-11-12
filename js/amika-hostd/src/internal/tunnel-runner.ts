@@ -47,6 +47,7 @@ export interface StartTunnelOptions {
   servicesFile?: string;
   hiddenMachines?: () => ReadonlySet<string>;
   pullingImages?: () => ReadonlySet<string>;
+  buildingLumeImages?: () => ReadonlySet<string>;
   smolvmLogFile?: string;
   snapshots?: SnapshotOptions;
   /** This machine, which the `bare_metal` runtime reports. */
@@ -81,6 +82,7 @@ export function startTunnel(
     servicesFile: options.servicesFile,
     hiddenMachines: options.hiddenMachines,
     pullingImages: options.pullingImages,
+    buildingLumeImages: options.buildingLumeImages,
     smolvmLogFile: options.smolvmLogFile,
     snapshots: options.snapshots,
     machine: options.machine,

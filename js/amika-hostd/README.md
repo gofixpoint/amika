@@ -155,6 +155,28 @@ Either way amika-hostd installs `amikad` into its own data directory (no
 `sudo`) and reports the CPUs, memory and disk it detects. Create the rig
 with `amika rig create --host <host> --runtime bare_metal`.
 
+## macOS rigs (Lume)
+
+On an Apple Silicon Mac, the `lume` runtime runs macOS rigs as VMs, through
+[Lume](https://github.com/trycua/cua/tree/main/libs/lume). Each rig is a clone
+of a macOS image built on that Mac. Building it is large: it downloads a
+macOS restore image from Apple (about 20 GB), needs about 60 GB of free disk,
+and takes 30 minutes or more. So Lume is off unless you turn it on with:
+
+```bash
+amika-hostd capabilities update --enable lume
+```
+
+amika-hostd installs Lume into `~/.local/bin` if it is missing (no
+`sudo`) and adds the `macos-coder` preset. The daemon then builds its image,
+`amika-macos-coder`, in the background, as it downloads Linux rig images:
+the command does not wait for it. Until it is built, a macOS rig is refused, saying
+Lume has not finished setting up; the daemon's log shows the progress. A
+failed build is logged, and the next `amika-hostd up` or `reload` picks up
+where it stopped. Then create a rig with
+`amika rig create --host <host> --runtime lume`. macOS runs at most two macOS
+VMs at a time, and Lume rigs have no snapshots.
+
 ## Configuration
 
 The config file from step 2 sets the hostname, how Amika reaches the host, the
