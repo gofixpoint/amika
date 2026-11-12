@@ -6,13 +6,23 @@ uses the same version pins (`sandbox-image/versions.env`).
 
 ## Build
 
-You need an Apple Silicon Mac with Lume, and a base VM from Lume's
+amika-hostd builds this image itself once Lume is turned on (with
+`amika-hostd capabilities update --enable lume`): the
+daemon runs the steps below in the background, from a copy of this
+directory its release ships. Build it by hand to work on the image.
+
+You need an Apple Silicon Mac with Lume 0.6.1 (the release this build is
+tested with), and a base VM from Lume's
 unattended install:
 
 ```bash
-lume create --ipsw <file> --unattended tahoe <base-vm>
+lume create --ipsw <file> --unattended <preset> <base-vm>
 macos-image/build.sh <base-vm> <image-vm>
 ```
+
+The preset is the macOS version the restore image installs: `tahoe` for
+macOS 26, `sequoia` for 15 (amika-hostd picks it from the Mac's own version,
+which `--ipsw latest` installs).
 
 The build clones the base VM, runs each file in `steps/` in the clone as
 root over SSH, and stops the clone. The clone is the image, in Lume's default
@@ -27,7 +37,7 @@ storage. The base VM does not change.
   else this checkout's `sandbox-image/versions.env`.
 - `NODE` names a Node.js binary to read Lume's JSON output with. Without it
   the build uses `python3`, which a Mac has only with the Xcode Command Line
-  Tools.
+  Tools. amika-hostd sets it to its own Node.
 
 A failed build deletes its clone. The build refuses an image name that is
 already in Lume, so it never deletes a VM it did not make.

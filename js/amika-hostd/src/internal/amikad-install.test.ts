@@ -147,6 +147,26 @@ describe("ensureAmikad", () => {
     );
   });
 
+  it("stops the download once the daemon stops", async () => {
+    const h = harness({});
+    const stopping = new AbortController();
+    const fetcher = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(init.signal?.reason),
+          );
+        }),
+    );
+    const installing = ensureAmikad(
+      {},
+      { ...h.deps, fetch: fetcher, signal: stopping.signal },
+    );
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    stopping.abort();
+    await expect(installing).rejects.toThrow(/cannot download .*checksums.txt/);
+  });
+
   it("uses amikad_path as it is, downloading nothing", async () => {
     const { bytes, checksums } = release();
     const h = harness({

@@ -76,14 +76,21 @@ restart, so rigs keep running and the tunnel and SSH sessions stay up
 1. It prints the plan. Turning on Lume adds `storage_dir` (in hostd's data
    directory) and, unless a preset already uses Lume, the `macos-coder`
    preset with template `amika-macos-coder`. With no `[runtimes]` table it
-   also lists smol, so smol stays on.
+   also lists smol, so smol stays on. When Lume is asked for, each template
+   a Lume preset boots that Lume does not have is a step of its own, with
+   what building it costs (`MACOS_IMAGE_COST`), even when Lume is already
+   on. The daemon builds it in the background
+   ([Building the template](runtime.md#building-the-template)); this command
+   does not wait for it.
 2. It installs Lume `0.6.1` with Lume's own installer, into `~/.local/bin`
-   with no `sudo`, only when Lume is turned on and not found. Turning on
+   with no `sudo`, when Lume is asked for and not found. Turning on
    `bare_metal` first checks the machine as setup does (an `sshd` binary,
    and sshd's StrictModes on amikad's state directory), and refuses with
    nothing changed; then it installs amikad into hostd's data directory.
 3. It writes the file, and reloads a running daemon as `reload` does,
-   which then sends Amika the new capabilities.
+   which then sends Amika the new capabilities. With a template to build it
+   reloads a running daemon even when the file does not change, since a
+   reload starts the build.
 
 It refuses to turn off a runtime with rigs, as recorded in `machines.json`.
 `--dry-run` prints the plan and changes nothing; `--yes` applies it without

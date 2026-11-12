@@ -1,6 +1,5 @@
 /** Parse `amika-hostd` commands and run them against injectable effects. */
-import { execFile, spawn } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { execFile } from "node:child_process";
 import { isIPv6 } from "node:net";
 import { userInfo } from "node:os";
 import { parseArgs } from "node:util";
@@ -53,6 +52,14 @@ import {
   type RuntimeRouter,
 } from "./runtime-router.js";
 import { lumeRuntime } from "./lume-runtime.js";
+import {
+  buildMacosImagesInBackground,
+  findLume,
+  installLume,
+  LUME_VERSION,
+  MACOS_IMAGE_COST,
+  missingMacosImages,
+} from "./lume-setup.js";
 import {
   checkReload,
   readReloadResult,
@@ -252,9 +259,16 @@ export interface CliDeps {
   /** The smol runtime over smolvm; tests inject a fake. */
   smolRuntime?: (config: ProviderRuntimeConfig) => MachineRuntime;
   /** Installs Lume for `capabilities update`; tests inject a fake. */
-  installLume?: (deps: CliDeps) => Promise<void>;
+  installLume?: typeof installLume;
   /** Finds the `lume` binary; defaults to `findLume`. */
-  findLume?: (env: NodeJS.ProcessEnv) => string | undefined;
+  findLume?: typeof findLume;
+  /** The Lume templates not built yet; tests inject a fake. */
+  missingMacosImages?: typeof missingMacosImages;
+  /**
+   * Builds the missing Lume templates in the daemon's background; defaults
+   * to `buildMacosImagesInBackground`, tests inject a fake.
+   */
+  buildMacosImages?: typeof buildMacosImagesInBackground;
   /** Tunnel enrolment; defaults to the control plane and the record file. */
   enrol?: EnrolForTunnelDeps["enrol"];
   write?: EnrolForTunnelDeps["write"];
@@ -354,10 +368,13 @@ export async function runCli(
               daemonPaths(deps.env).prepullFile,
             )
           : [];
+        // Before the daemon starts, which begins building them.
+        const unbuilt = on.lume ? await unbuiltLumeImages(config, deps) : [];
         // Start the daemon first, so the operator can expose it (and check the
         // tunnel reaches it) before giving Amika its public URL.
         const finish = (port: number | undefined) => {
           announcePrepull(pending, deps, { foreground: parsed.fg });
+          announceLumeBuild(unbuilt, deps, { foreground: parsed.fg });
           return completeRegistration(config, host, port, deps);
         };
         if (parsed.fg) {
@@ -549,13 +566,11 @@ function printReloadResult(result: ReloadResult, deps: CliDeps) {
   }
 }
 
-/** Lume's release that milestone 0 of spec 028 tested. */
-const LUME_VERSION = "0.6.1";
-
 /**
  * Turn runtimes on or off (`runtime-update.ts`): show the plan, install what
- * a runtime needs, write `[runtimes.*]`, and reload the running daemon. A
- * second run with the same flags changes nothing.
+ * a runtime needs, plan the background build of the macOS image Lume boots,
+ * write `[runtimes.*]`, and reload the running daemon. A second run with the
+ * same flags changes nothing.
  */
 async function updateCapabilities(
   deps: CliDeps,
@@ -592,10 +607,20 @@ async function updateCapabilities(
       );
     }
   }
-  const installsLume =
+  // Lume asked for: what it needs is installed, and its missing images
+  // planned, even when the file already has it on, so this also restarts a
+  // failed build.
+  const wantsLume =
     options.enable.includes("lume") &&
-    next.runtimes.runtimes.lume !== undefined &&
-    (deps.findLume ?? findLume)(deps.env) === undefined;
+    next.runtimes.runtimes.lume !== undefined;
+  const installsLume =
+    wantsLume && (deps.findLume ?? findLume)(deps.env) === undefined;
+  const images = wantsLume
+    ? await (deps.missingMacosImages ?? missingMacosImages)(
+        Object.values(presetImages(next.runtimes, "lume")),
+        deps,
+      )
+    : [];
   const turnsOnBareMetal = update.steps.includes("Turn on bare_metal");
   // Checked before the plan is shown: a machine that cannot be a rig
   // (no sshd, a home sshd's StrictModes refuses) is refused unchanged.
@@ -606,6 +631,10 @@ async function updateCapabilities(
           `Install Lume ${LUME_VERSION} with its installer, into ~/.local/bin (downloads from GitHub; no sudo)`,
         ]
       : []),
+    ...images.map(
+      (image: string) =>
+        `Build the macOS image ${image} in amika-hostd's background, refusing macOS rigs until it is done. ${MACOS_IMAGE_COST}`,
+    ),
     ...(turnsOnBareMetal
       ? [
           `Install amikad into ${hostdDataDir(deps.env)}, for SSH to this machine (no sudo)`,
@@ -617,7 +646,8 @@ async function updateCapabilities(
     config: file.path,
     changes: update.steps,
     install,
-    reload: update.steps.length > 0 && pid !== undefined,
+    // A reload also starts a running daemon's build of a missing image.
+    reload: (update.steps.length > 0 || images.length > 0) && pid !== undefined,
   };
   if (plan.changes.length === 0 && install.length === 0) {
     if (options.json) deps.out(JSON.stringify({ plan, applied: false }));
@@ -651,62 +681,20 @@ async function updateCapabilities(
   }
   if (installsLume) await (deps.installLume ?? installLume)(deps);
   if (turnsOnBareMetal) await prepareBareMetal(next, deps);
-  (deps.writeConfigFile ?? writePrivateFile)(file.path, update.contents);
+  if (plan.changes.length > 0) {
+    (deps.writeConfigFile ?? writePrivateFile)(file.path, update.contents);
+  }
   const result = plan.reload
     ? await signalReload(pid!, paths, deps)
     : undefined;
   if (options.json) {
     deps.out(JSON.stringify({ plan, applied: true, reload: result }));
   } else {
-    deps.out(`Wrote ${file.path}.`);
+    if (plan.changes.length > 0) deps.out(`Wrote ${file.path}.`);
     if (result) printReloadResult(result, deps);
   }
   if (result?.ok) await reportToAmika(deps);
   return result === undefined || result.ok ? 0 : 1;
-}
-
-/** Where `lume` is: on `PATH`, else where Lume's installer puts it. */
-export function findLume(env: NodeJS.ProcessEnv): string | undefined {
-  const dirs = [
-    ...(env.PATH ?? "").split(path.delimiter).filter(Boolean),
-    path.join(env.HOME || userInfo().homedir, ".local", "bin"),
-  ];
-  for (const dir of dirs) {
-    const candidate = path.join(dir, "lume");
-    try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Not here.
-    }
-  }
-  return undefined;
-}
-
-/** Run Lume's installer for `LUME_VERSION`, its output on stderr. */
-async function installLume(deps: CliDeps): Promise<void> {
-  const script = `https://raw.githubusercontent.com/trycua/cua/lume-v${LUME_VERSION}/libs/lume/scripts/install.sh`;
-  deps.out(`Installing Lume ${LUME_VERSION}...`);
-  const code = await new Promise<number | null>((resolve, reject) => {
-    const child = spawn(
-      "/bin/bash",
-      [
-        "-c",
-        `set -o pipefail; curl -fsSL ${script} | bash -s -- --no-background-service`,
-      ],
-      {
-        env: { ...deps.env, LUME_VERSION },
-        stdio: ["ignore", process.stderr, process.stderr],
-      },
-    );
-    child.once("error", reject);
-    child.once("close", resolve);
-  });
-  if (code !== 0 || findLume(deps.env) === undefined) {
-    throw new DaemonError(
-      `Lume's installer failed (exit ${code}); nothing else was changed`,
-    );
-  }
 }
 
 /**
@@ -1943,11 +1931,14 @@ async function serveInForeground(
   let server:
     | { port?: number; connectionId?: string; close: () => Promise<void> }
     | undefined;
+  /** The background build of Lume's missing templates, while it runs. */
+  let buildingLume: Promise<void> | undefined;
   const prepull: PrepullProgress = {
     // Every throwaway machine name the pre-pull uses. Each is random, so
     // hiding them all, deleted or not, never hides a rig.
     used: new Set(),
     pulling: new Set(),
+    buildingLume: new Set(),
   };
   const stopAll = async () => {
     // However the daemon stops, not only on a signal, so the pre-pull never
@@ -1958,6 +1949,11 @@ async function serveInForeground(
       await server?.close();
     } finally {
       try {
+        // The build was told to stop above; its commands clean up as they
+        // exit (build.sh deletes a half-built template), and that must be
+        // done before the daemon is, or a quick restart would find the
+        // half-built template and take it for a finished one.
+        await buildingLume;
         await routed?.shutdown();
         await stopSmolvm(runtime, deps);
       } finally {
@@ -2014,16 +2010,67 @@ async function serveInForeground(
       await (deps.notifyReady ?? notifyParent)({ port: server.port });
     }
     await routed?.resume();
+    // As the pre-pull below, but for Lume: build each macOS template its
+    // presets boot that Lume lacks, after startup and after each reload
+    // (which may have turned Lume on), one build at a time.
+    /** Stops the running build: the daemon stopping, or Lume turned off. */
+    let lumeBuild: AbortController | undefined;
+    /** A reload came during a build, so look again once it is done. */
+    let rescanLume = false;
+    const buildLumeImages = () => {
+      if (!serving.runtimes.runtimes.lume) {
+        // A reload turned Lume off: its build has no use any more.
+        lumeBuild?.abort();
+        return;
+      }
+      if (interrupted.signal.aborted) return;
+      if (buildingLume) {
+        // The reload may have added or changed a preset.
+        rescanLume = true;
+        return;
+      }
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      interrupted.signal.addEventListener("abort", stop, { once: true });
+      lumeBuild = controller;
+      buildingLume = (deps.buildMacosImages ?? buildMacosImagesInBackground)({
+        templates: Object.values(presetImages(serving.runtimes, "lume")),
+        config: serving,
+        env: deps.env,
+        out: deps.out,
+        err: deps.err,
+        platform: platformOf(deps),
+        findLume: deps.findLume,
+        signal: controller.signal,
+        building: prepull.buildingLume,
+      })
+        .catch((error: unknown) => {
+          // Never let the background build take the daemon down with it.
+          deps.err(
+            `amika-hostd: building Lume's macOS images stopped: ${errorMessage(error)}`,
+          );
+        })
+        .finally(() => {
+          interrupted.signal.removeEventListener("abort", stop);
+          buildingLume = undefined;
+          lumeBuild = undefined;
+          if (rescanLume) {
+            rescanLume = false;
+            buildLumeImages();
+          }
+        });
+    };
     if (routed && deps.reloadSignal) {
       const reloader = routed;
       let reloading = Promise.resolve();
       stopReloads = deps.reloadSignal(() => {
         // One at a time, in the order the signals came.
-        reloading = reloading.then(() =>
-          reloadRuntimes(serving, reloader, paths, deps),
-        );
+        reloading = reloading
+          .then(() => reloadRuntimes(serving, reloader, paths, deps))
+          .then(buildLumeImages);
       });
     }
+    buildLumeImages();
     // Only a daemon running its own smolvm fills that smolvm's image cache.
     if (runtime) {
       (deps.prepull ?? prepullOn)(runtime.apiUrl, {
@@ -2133,6 +2180,46 @@ function announcePrepull(
 }
 
 /**
+ * The Lume templates the daemon will build in the background, for `up` to
+ * announce. Lume failing to say is only a missing announcement: the daemon
+ * checks again, and logs why.
+ */
+async function unbuiltLumeImages(
+  config: HostdConfig,
+  deps: CliDeps,
+): Promise<string[]> {
+  try {
+    return await (deps.missingMacosImages ?? missingMacosImages)(
+      Object.values(presetImages(config.runtimes, "lume")),
+      deps,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Tell the operator the daemon is building Lume's macOS images, as `announcePrepull` does for smol's. */
+function announceLumeBuild(
+  templates: string[],
+  deps: CliDeps,
+  { foreground }: { foreground: boolean },
+) {
+  if (templates.length === 0) return;
+  deps.out("");
+  deps.out(
+    `Building the macOS image Lume rigs boot in the background: ${templates.join(", ")}`,
+  );
+  deps.out(
+    `${MACOS_IMAGE_COST} Until it is built, a macOS rig is refused, saying Lume has not finished setting up.`,
+  );
+  deps.out(
+    foreground
+      ? "Progress is reported below."
+      : `Progress: ${daemonPaths(deps.env).logFile}`,
+  );
+}
+
+/**
  * smolvm caches an image only for rigs with at least its 20 GiB template
  * disk, so a smaller size downloads its image on every create.
  */
@@ -2182,11 +2269,14 @@ async function startSmolvm(
 
 /**
  * What the daemon's pre-pull is doing, for the app to read: the throwaway
- * machine names it has used, and the images it is caching right now.
+ * machine names it has used, the images it is caching right now, and the
+ * Lume templates it is building.
  */
 interface PrepullProgress {
   used: Set<string>;
   pulling: Set<string>;
+  /** The Lume templates the daemon is building or has yet to build. */
+  buildingLume: Set<string>;
 }
 
 async function listen(
@@ -2248,6 +2338,7 @@ function handlerOptions(
     hiddenMachines: () =>
       new Set([...prepull.used, ...prepullMachines(paths.prepullFile)]),
     pullingImages: () => prepull.pulling,
+    buildingLumeImages: () => prepull.buildingLume,
     // Only a daemon that started smolvm knows where its log is.
     smolvmLogFile: packing.smolvm ? paths.smolvmLogFile : undefined,
   };

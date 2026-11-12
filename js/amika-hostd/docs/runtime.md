@@ -108,7 +108,11 @@ provider (`@amika/sandbox/lume`), when `[runtimes.lume]` is on. A Lume
 preset's `image` names a template VM in Lume's default storage, such as one
 `macos-image/build.sh` made. Each rig is a clone of it in `storage_dir`, and
 each VM's management key and known hosts are in `lume/` in the state
-directory. hostd turns off Lume's telemetry when Lume is on.
+directory. hostd turns off Lume's telemetry when Lume is on. The `lume` it
+runs before the daemon starts (Lume's installer, which runs the new binary
+once to record an installation event, `lume get`, and each step of the
+image build) gets `LUME_TELEMETRY_ENABLED=false` (`LUME_NO_TELEMETRY`), so
+turning Lume on sends nothing even when the daemon never starts.
 
 - Create takes `cpus` and `memoryMb` together. The disk is the template's;
   a size with less disk is refused (`400`). The create's `env` is kept with
@@ -128,6 +132,62 @@ directory. hostd turns off Lume's telemetry when Lume is on.
 
 `lume-runtime.integration.test.ts` checks this on a real VM
 (`TEST_LUME_IMAGE`, `TEST_LUME_DIR`).
+
+### Building the template
+
+The daemon builds each template a Lume preset boots that Lume's default
+storage does not have (`buildMacosImagesInBackground` in
+`src/internal/lume-setup.ts`), in the background, as it pre-pulls smol's
+images: after it starts, and after each reload, which may have turned Lume
+on, one build at a time. `capabilities update` only turns Lume on;
+`up` announces the build, with what it costs and where its progress is
+logged. While a template is being built (`buildingLumeImages`, a set apart
+from the images pre-pull is downloading, so the two never hold up each
+other), a create of a Lume rig of it is refused at once
+(`503`, `Retry-After: 300`, "Lume has not finished setting up on this
+host"); Linux rigs are not held up. hostd downloads no image; it builds one:
+
+1. `lume create --ipsw <restore image> --unattended <preset> amika-macos-base`
+   makes the base VM, unless it is already there. The restore image is the
+   newest one Lume supports, which is this Mac's own major macOS version,
+   unless `AMIKA_HOSTD_MACOS_IPSW` names a file or URL. The preset follows
+   this Mac's version (`sw_vers -productVersion`, `unattendedPreset`):
+   `sequoia` for macOS 15, `tahoe` for 26, and for a newer version the newest
+   preset Lume 0.6.1 has, `tahoe`, which its offline setup barely depends
+   on. Those are Lume 0.6.1's presets, and the build is tested with that
+   release, so it refuses to start with any other: hostd installs 0.6.1,
+   but uses a `lume` already on the Mac, and says how to install 0.6.1
+   when that is another version.
+2. `macos-image/build.sh amika-macos-base <template>` clones the base VM and
+   installs Amika's tools in the clone, with the amikad release hostd
+   installs for bare metal (`ensureAmikad`, as `AMIKAD_BIN`), the version
+   pins shipped beside the script (`VERSIONS_ENV`), and hostd's own Node to
+   read Lume's JSON with (`NODE`), so the build needs no `python3`, which a
+   Mac without the Command Line Tools lacks. hostd finds the script
+   in `macos-image/` beside the bundle in a release, else in the checkout it
+   runs from (`findMacosImageFiles`).
+
+Each step's output goes to the daemon's log. A failed build is logged, and
+until the next `up` or `reload` tries again a create fails on the missing
+template, with a message that points at the log. A step whose result exists
+is skipped, so the next try resumes where a failed one stopped. The base VM
+is kept for later builds; build.sh deletes a half-built template itself.
+Every template a Lume preset boots is refused from before the daemon asks
+Lume which it has, so a create during that check gets the `503` too, not a
+`400` for a template not found; those Lume has are released once it
+answers, and every missing one stays refused until its own build is done,
+not only the one being built. Stopping the daemon stops the build: its
+checks of Lume (`lume get`, `lume --version`) and amikad's download are
+cut short, and each build command runs in a process group of its own,
+which gets `SIGTERM`, so a `lume clone` that build.sh is waiting on stops
+with it. The daemon waits for the commands to exit, so build.sh has
+deleted a half-built template (it marks the clone for deletion before
+starting it) before the daemon is gone, and a quick restart cannot take
+it for a finished one.
+A reload that turns Lume off stops the build too; a reload during a build that leaves Lume on
+is looked at again once the build is done, so a preset it added is built
+too. The installer and the build run without Amika's API key and secret
+key in their environment.
 
 ## Machine runtime
 

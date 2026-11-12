@@ -175,7 +175,7 @@ export function lumeRuntime({
           throw new RuntimeError(
             400,
             `no Lume template ${image}`,
-            `Lume template ${image} is not on this host`,
+            `Lume template ${image} is not on this host; amika-hostd builds it in the background on \`up\` and \`reload\`, and its log says why a build failed`,
           );
         }
         const templateDisk = Math.round(template.diskSize.total / GIB);

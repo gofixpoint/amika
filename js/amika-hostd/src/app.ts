@@ -117,6 +117,14 @@ export interface AppDeps {
    * the request deadline behind the download.
    */
   pullingImages?: () => ReadonlySet<string>;
+  /**
+   * The Lume templates the daemon is building, or has yet to build
+   * (`lume-setup.ts`): a create of a Lume rig of one is refused (`503`),
+   * since the template does not exist yet. Apart from `pullingImages`, so
+   * a smol image and a Lume template that share a name never hold up each
+   * other.
+   */
+  buildingLumeImages?: () => ReadonlySet<string>;
 }
 
 /** Build routes without opening a socket; the runtime is injectable. */
@@ -137,6 +145,7 @@ export function createApp(
     fetch: fetcher = fetch,
     hiddenMachines = () => new Set(),
     pullingImages = () => new Set(),
+    buildingLumeImages = () => new Set(),
   }: AppDeps = {},
 ) {
   const timeoutMs = z.number().int().positive().parse(requestTimeoutMs);
@@ -426,10 +435,31 @@ export function createApp(
               snapshotSource,
               configPath,
             );
+      // A Lume template the daemon is still building (`lume-setup.ts`) does
+      // not exist yet; the caller is better told why, and when to try again.
+      if (
+        source.runtime === "lume" &&
+        source.image !== undefined &&
+        buildingLumeImages().has(source.image)
+      ) {
+        return Response.json(
+          {
+            error: `Lume has not finished setting up on this host: the macOS image ${JSON.stringify(source.image)} is still being built; try again once it is ready`,
+          },
+          {
+            status: 503,
+            headers: { "Retry-After": String(LUME_BUILDING_RETRY_AFTER_S) },
+          },
+        );
+      }
       // smolvm would answer only once the download is done, which can
       // outlast the deadline; the caller is better told now, and when to
       // try again.
-      if (source.image !== undefined && pullingImages().has(source.image)) {
+      if (
+        source.runtime === "smol" &&
+        source.image !== undefined &&
+        pullingImages().has(source.image)
+      ) {
         return Response.json(
           {
             error: `image ${JSON.stringify(source.image)} is still downloading on this host; try again once it is cached`,
@@ -546,6 +576,12 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
  * image of several GB takes minutes, so sooner would only be refused again.
  */
 export const PULLING_RETRY_AFTER_S = 60;
+
+/**
+ * How long a caller refused because Lume's macOS image is still being built
+ * should wait: the build takes half an hour or more.
+ */
+export const LUME_BUILDING_RETRY_AFTER_S = 300;
 
 /** The versioned API this daemon serves. */
 export const API_VERSION = "v0beta1";
