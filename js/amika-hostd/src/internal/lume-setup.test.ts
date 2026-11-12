@@ -1,4 +1,10 @@
-import { existsSync, mkdtempSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -405,6 +411,33 @@ describe("Amika's secrets", () => {
     expect(env.HOME).toBe("/home/op");
     for (const name of Object.keys(SECRETS))
       expect(env).not.toHaveProperty(name);
+  });
+
+  it("never reach the Lume version check", async () => {
+    // A stand-in lume that records the environment it gets.
+    const dir = mkdtempSync(path.join(tmpdir(), "amika-hostd-lume-"));
+    const fake = path.join(dir, "lume");
+    writeFileSync(
+      fake,
+      `#!/bin/sh\nenv > "${path.join(dir, "env")}"\necho 0.6.1\n`,
+    );
+    chmodSync(fake, 0o755);
+    const { deps } = mac();
+    const { lumeVersion: _unused, ...withoutFake } = deps;
+    await buildMacosImage(
+      "amika-macos-coder",
+      {},
+      {
+        ...withoutFake,
+        findLume: () => fake,
+        env: { ...deps.env, ...SECRETS },
+      },
+    );
+    const seen = readFileSync(path.join(dir, "env"), "utf8");
+    for (const name of Object.keys(SECRETS)) {
+      expect(seen).not.toMatch(new RegExp(`^${name}=`, "m"));
+    }
+    expect(seen).toMatch(/^LUME_TELEMETRY_ENABLED=false$/m);
   });
 
   it("never reach the build's commands", async () => {

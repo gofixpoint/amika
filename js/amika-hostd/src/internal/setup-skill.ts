@@ -22,7 +22,7 @@ export interface SkillContext {
 
 /** How step 4 describes each runtime to the agent. */
 const RUNTIME_NOTES: Record<RuntimeName, string> = {
-  smol: "- **smol**: Linux VMs. Always on; do not ask about it.",
+  smol: "- **smol**: Linux VMs. On by default, and kept as the config has it: do not ask about it, and leave it off on a host whose config turns it off (a bare-metal-only host).",
   lume: `- **lume**: macOS VMs. Off by default. Turning it on installs Lume and
   builds a macOS image on this Mac. ${MACOS_IMAGE_COST} Tell the operator
   this before asking, and turn it on only if they say yes to it.`,

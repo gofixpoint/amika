@@ -55,12 +55,18 @@ export function unattendedPreset(macosVersion: string): string {
 }
 
 /** What `lume --version` prints, such as `0.6.1`. */
-async function readLumeVersion(lume: string): Promise<string> {
+async function readLumeVersion(
+  lume: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       lume,
       ["--version"],
-      { env: { ...process.env, ...LUME_NO_TELEMETRY }, timeout: 30_000 },
+      {
+        env: { ...withoutAmikaSecrets(env), ...LUME_NO_TELEMETRY },
+        timeout: 30_000,
+      },
       (error, stdout) => {
         if (error) reject(error);
         else resolve(stdout.trim().split("\n").at(-1)?.trim() ?? "");
@@ -236,7 +242,7 @@ export async function buildMacosImage(
   // The build, and the presets `unattendedPreset` names, are tested with
   // one Lume release; hostd installs it, but uses a Lume already there.
   const found = await reported(`Reading ${lume}'s version`, () =>
-    (deps.lumeVersion ?? readLumeVersion)(lume),
+    deps.lumeVersion ? deps.lumeVersion(lume) : readLumeVersion(lume, deps.env),
   );
   if (found !== LUME_VERSION) {
     throw new DaemonError(
