@@ -12,24 +12,32 @@ const LINUX: RuntimeName[] = ["smol", "bare_metal"];
 const on = (...names: RuntimeName[]) => new Set(names);
 
 describe("chooseRuntimes", () => {
-  it("asks about each runtime this machine can run but smol, offering what is on", async () => {
+  it("asks about each runtime this machine can run, offering what is on", async () => {
     const ask = vi.fn(async (_question: string, current: boolean) => current);
     expect(await chooseRuntimes(MAC, on("smol"), ask)).toEqual({
       enable: [],
       disable: [],
     });
     expect(ask.mock.calls).toEqual([
+      [RUNTIME_QUESTIONS.smol, true],
       [RUNTIME_QUESTIONS.lume, false],
       [RUNTIME_QUESTIONS.bare_metal, false],
     ]);
   });
 
-  it("keeps smol as it is, turning it off only when given", async () => {
-    const no = async () => false;
+  it("turns smol off on a no, or when given", async () => {
+    const no = async (q: string) => q !== RUNTIME_QUESTIONS.bare_metal;
     expect(await chooseRuntimes(MAC, on("smol", "lume"), no)).toEqual({
       enable: [],
-      disable: ["lume"],
+      disable: [],
     });
+    expect(
+      await chooseRuntimes(
+        MAC,
+        on("smol"),
+        async (q) => q === RUNTIME_QUESTIONS.bare_metal,
+      ),
+    ).toEqual({ enable: ["bare_metal"], disable: ["smol"] });
     expect(
       await chooseRuntimes(LINUX, on("smol"), undefined, {
         enable: ["bare_metal"],
@@ -44,11 +52,12 @@ describe("chooseRuntimes", () => {
       enable: ["bare_metal"],
       disable: [],
     });
-    expect(ask).toHaveBeenCalledOnce();
+    expect(ask).toHaveBeenCalledTimes(2);
   });
 
   it("turns on and off what the answers say", async () => {
     const answers: Record<string, boolean> = {
+      [RUNTIME_QUESTIONS.smol]: true,
       [RUNTIME_QUESTIONS.lume]: true,
       [RUNTIME_QUESTIONS.bare_metal]: false,
     };
@@ -70,6 +79,7 @@ describe("chooseRuntimes", () => {
       }),
     ).toEqual({ enable: ["lume"], disable: [] });
     expect(ask.mock.calls.map(([q]) => q)).toEqual([
+      RUNTIME_QUESTIONS.smol,
       RUNTIME_QUESTIONS.bare_metal,
     ]);
   });

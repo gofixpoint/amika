@@ -14,7 +14,7 @@ import {
   setHostUrl as setHostUrlInAmika,
   type RegisteredHost,
 } from "./amika-api.js";
-import { amikadBinary, ensureAmikad } from "./amikad-install.js";
+import { amikadBinary } from "./amikad-install.js";
 import {
   bareMetalRuntime,
   type BareMetalRuntime,
@@ -55,8 +55,6 @@ import { lumeRuntime } from "./lume-runtime.js";
 import {
   buildMacosImagesInBackground,
   findLume,
-  installLume,
-  LUME_VERSION,
   MACOS_IMAGE_COST,
   missingMacosImages,
 } from "./lume-setup.js";
@@ -122,12 +120,12 @@ import {
 } from "./prepull.js";
 import { versionText } from "./build-info.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
+import { runSetup, withoutInvalidSecret, type SetupDeps } from "./setup.js";
 import {
-  checkBareMetal,
-  runSetup,
-  withoutInvalidSecret,
-  type SetupDeps,
-} from "./setup.js";
+  planInstalls,
+  runInstalls,
+  type RuntimeInstallDeps,
+} from "./runtime-install.js";
 import { setupSkill, type SkillContext } from "./setup-skill.js";
 import {
   DEFAULT_SMOL_API_URL,
@@ -275,6 +273,14 @@ export interface CliDeps {
   installLume?: SetupDeps["installLume"];
   /** Finds the `lume` binary; defaults to `findLume`. */
   findLume?: SetupDeps["findLume"];
+  /** Finds smolvm; defaults to `findSmolvm`. */
+  findSmolvm?: RuntimeInstallDeps["findSmolvm"];
+  /** Installs smolvm; tests inject a fake. */
+  installSmolvm?: RuntimeInstallDeps["installSmolvm"];
+  /** The release's engine files beside the bundle; tests inject them. */
+  engineFiles?: RuntimeInstallDeps["engineFiles"];
+  /** Installs the smolmachines engine; tests inject a fake. */
+  installEngine?: RuntimeInstallDeps["installEngine"];
   /** The Lume templates not built yet; tests inject a fake. */
   missingMacosImages?: typeof missingMacosImages;
   /**
@@ -367,7 +373,14 @@ export async function runCli(
         // machine cannot run.
         checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
         const on = config.runtimes.runtimes;
-        if (on.bare_metal) await prepareBareMetal(config, deps);
+        // What setup installed, again: a new hostd can pin a newer amikad or
+        // engine than the last setup installed.
+        await runInstalls(
+          planInstalls(Object.keys(on) as RuntimeName[], config, {
+            ...deps,
+            platform: platformOf(deps),
+          }),
+        );
         // smolvm runs only for smol, so its warnings apply only then.
         if (on.smol) warnUncachedSizes(config, deps);
         // Alongside registration, so a slow smolvm never delays it.
@@ -637,43 +650,32 @@ async function updateCapabilities(
     change.disable.filter((name) => update.steps.includes(`Turn off ${name}`)),
     fileMachineIndex(paths.machineIndexFile).entries(),
   );
-  const lumeOn = next.runtimes.runtimes.lume !== undefined;
-  // Lume asked for, or kept on when asked: what it needs is installed even
-  // when the file already has it on, so this also restarts a failed build.
-  const wantsLume = lumeOn && (asked || change.enable.includes("lume"));
-  const installsLume =
-    wantsLume && (deps.findLume ?? findLume)(deps.env) === undefined;
-  const images = wantsLume
+  // A runtime asked for, or kept on when asked, gets what it needs even when
+  // the file already has it on, so this also repairs a broken install and
+  // restarts a failed macOS image build. Checked before the plan is shown:
+  // a machine that cannot run one is refused unchanged.
+  const on = Object.keys(next.runtimes.runtimes) as RuntimeName[];
+  const wanted = asked ? on : change.enable.filter((name) => on.includes(name));
+  const installs = planInstalls(wanted, next, { ...deps, platform });
+  const images = wanted.includes("lume")
     ? await (deps.missingMacosImages ?? missingMacosImages)(
         Object.values(presetImages(next.runtimes, "lume")),
         deps,
       )
     : [];
-  const turnsOnBareMetal = update.steps.includes("Turn on bare_metal");
-  // Checked before the plan is shown: a machine that cannot be a rig
-  // (no sshd, a home sshd's StrictModes refuses) is refused unchanged.
-  if (turnsOnBareMetal) checkBareMetal(deps);
   const install = [
-    ...(installsLume
-      ? [
-          `Install Lume ${LUME_VERSION} with its installer, into ~/.local/bin (downloads from GitHub; no sudo)`,
-        ]
-      : []),
+    ...installs.steps.map((step) => step.text),
     ...images.map(
       (image: string) =>
         `Build the macOS image ${image} in amika-hostd's background, refusing macOS rigs until it is done. ${MACOS_IMAGE_COST}`,
     ),
-    ...(turnsOnBareMetal
-      ? [
-          `Install amikad into ${hostdDataDir(deps.env)}, for SSH to this machine (no sudo)`,
-        ]
-      : []),
   ];
   const pid = readRunningPid(paths.pidFile, deps.isRunning ?? isDaemonProcess);
   const plan = {
     config: file.path,
     changes: update.steps,
     install,
+    warnings: installs.warnings,
     // A reload also starts a running daemon's build of a missing image.
     reload: (update.steps.length > 0 || images.length > 0) && pid !== undefined,
   };
@@ -690,6 +692,9 @@ async function updateCapabilities(
         ? "  - Reload the running amika-hostd"
         : "  - amika-hostd is not running; `amika-hostd up` applies it",
     );
+    for (const warning of plan.warnings) {
+      deps.err(`amika-hostd: warning: ${warning}`);
+    }
   }
   if (options.dryRun) {
     if (options.json) deps.out(JSON.stringify({ plan, applied: false }));
@@ -707,8 +712,7 @@ async function updateCapabilities(
       return 0;
     }
   }
-  if (installsLume) await (deps.installLume ?? installLume)(deps);
-  if (turnsOnBareMetal) await prepareBareMetal(next, deps);
+  await runInstalls(installs);
   if (plan.changes.length > 0) {
     (deps.writeConfigFile ?? writePrivateFile)(file.path, update.contents);
   }
@@ -1398,18 +1402,6 @@ function machineFacts(
 
 function platformOf(deps: Pick<CliDeps, "platform">): HostPlatform {
   return deps.platform ?? currentHostPlatform();
-}
-
-/**
- * Before the `bare_metal` runtime runs: make sure amikad is installed (a new
- * hostd may pin a newer one than the last install).
- */
-async function prepareBareMetal(config: HostdConfig, deps: CliDeps) {
-  await (deps.installAmikad ?? ensureAmikad)(config, {
-    env: deps.env,
-    platform: platformOf(deps),
-    out: deps.out,
-  });
 }
 
 /**

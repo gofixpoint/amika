@@ -6,13 +6,11 @@ set -eu
 # them.
 umask 022
 
-# amika-hostd ships as one bundled JavaScript file. It is installed into
-# HOSTD_HOME (default $XDG_DATA_HOME/amika-hostd), with a launcher on
-# INSTALL_DIR that runs it on a suitable node.
-# It needs smolvm on the same host: `amika-hostd up` starts `smolvm serve`,
-# and `amika-hostd down` stops it. It also installs the smolmachines SDK
-# (smolvm's engine, embedded) the release carries, plus this platform's
-# engine package from npm, checked against the release's engines.sha256.
+# This script installs only what amika-hostd needs to run: the bundle (one
+# JavaScript file) in HOSTD_HOME (default $XDG_DATA_HOME/amika-hostd), a
+# Node.js to run it, and a launcher on INSTALL_DIR. `amika-hostd setup`
+# installs what each runtime needs (smolvm, Lume, amikad) and writes the
+# config.
 
 INSTALL_DIR="${AMIKA_INSTALL_DIR:-/usr/local/bin}"
 GITHUB_REPO="gofixpoint/amika"
@@ -36,20 +34,6 @@ NODE_VERSION="${AMIKA_HOSTD_NODE_VERSION:-24.22.1}"
 NODE_VERSION="${NODE_VERSION#v}"
 NODE_DIST_URL="${AMIKA_HOSTD_NODE_DIST_URL:-https://nodejs.org/dist}"
 NODE_DIST_URL="${NODE_DIST_URL%/}"
-NPM_REGISTRY="${AMIKA_HOSTD_NPM_REGISTRY:-https://registry.npmjs.org}"
-NPM_REGISTRY="${NPM_REGISTRY%/}"
-# The smolmachines engine runs on Linux with glibc 2.34 or newer.
-GLIBC_MIN="2.34"
-SMOLVM_INSTALL_URL="https://smolmachines.com/install.sh"
-# The smolvm installed when none is found: the release hostd is tested with,
-# so a new smolvm release cannot reach a fresh install untested. "latest"
-# opts out of the pin.
-DEFAULT_SMOLVM_VERSION="1.32.3"
-SMOLVM_VERSION="${SMOLVM_VERSION:-}"
-SKIP_SMOLVM=false
-# A bare-metal host runs no VMs: its one rig is the machine itself, so it
-# needs neither smolvm nor KVM.
-BARE_METAL=false
 UNINSTALL=false
 PURGE=false
 ASSUME_YES=false
@@ -58,32 +42,20 @@ usage() {
   cat <<EOF
 install-amika-hostd.sh — install the amika-hostd BYOC host daemon
 
-Installs amika-hostd from its GitHub release, plus the Node.js ${NODE_MIN_MAJOR}+
-and smolvm it needs. It uses the system node if it is new enough, and otherwise
-downloads Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node. If smolvm is
-missing, it runs the official smolvm installer for smolvm ${DEFAULT_SMOLVM_VERSION}.
-It also installs the smolmachines engine (smolvm, embedded) for this platform.
+Installs amika-hostd from its GitHub release, and the Node.js ${NODE_MIN_MAJOR}+ it
+runs on. It uses the system node if it is new enough, and otherwise downloads
+Node.js ${NODE_VERSION} into ${HOSTD_HOME}/node. Then run \`amika-hostd setup\`:
+it asks which runtimes this host runs, and installs what each one needs.
 
-Supported hosts: Linux x86_64 or arm64 with glibc ${GLIBC_MIN}+, and macOS on
-Apple silicon.
+Supported hosts: Linux x86_64 or arm64, and macOS.
 
 Usage:
   sh install-amika-hostd.sh [--help] [--install-version VERSION] [--dry-run]
-                            [--smolvm-version VERSION] [--skip-smolvm]
-                            [--bare-metal]
   sh install-amika-hostd.sh --uninstall [--purge] [--yes] [--dry-run]
 
 Flags:
   --install-version     Install a specific version (default: ${DEFAULT_VERSION})
   --dry-run             Show what would be done without downloading or installing
-  --smolvm-version      Install this smolvm version if smolvm is missing
-                        (default: ${DEFAULT_SMOLVM_VERSION}; "latest" for the newest)
-  --skip-smolvm         Do not install smolvm
-  --bare-metal          Make this machine the host's only rig: skip smolvm,
-                        the smolmachines engine and the KVM and resize2fs
-                        checks, and seed a new config with only the
-                        bare_metal runtime ([runtimes.bare_metal]).
-                        \`amika-hostd setup\` installs amikad.
   --uninstall           Remove amika-hostd instead of installing it. Finds
                         amika-hostd on PATH (or in AMIKA_INSTALL_DIR if set),
                         asks you to confirm, stops the daemon, then deletes
@@ -107,9 +79,6 @@ Environment variables:
   AMIKA_HOSTD_NODE_VERSION   Node.js version to download when the system node
                              is missing or too old (default: ${NODE_VERSION});
                              must be a patched release ($(node_floors_text))
-  SMOLVM_VERSION             Same as --smolvm-version
-  AMIKA_HOSTD_NPM_REGISTRY   npm registry to fetch the engine package from
-                             (default: https://registry.npmjs.org)
   AMIKA_RELEASE_URL          Testing only: fetch the archive and checksums.txt
                              from this base URL (e.g. file:///path/to/dir)
                              instead of the GitHub release
@@ -118,7 +87,7 @@ Environment variables:
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/gofixpoint/amika/main/install-amika-hostd.sh | sh
-  sh install-amika-hostd.sh --install-version 0.1.0 --skip-smolvm
+  sh install-amika-hostd.sh --install-version 0.1.0
   AMIKA_INSTALL_DIR=~/.local/bin sh install-amika-hostd.sh
 EOF
 }
@@ -135,14 +104,6 @@ main() {
   fi
   check_node_version
   detect_platform
-  # A bare-metal host runs no VMs, so it needs no engine, and a platform the
-  # engine does not support (Intel macOS, musl Linux) can still be one.
-  if [ "$BARE_METAL" != "true" ]; then
-    engine_package
-  fi
-
-  SMOLVM_VERSION="${SMOLVM_VERSION:-$DEFAULT_SMOLVM_VERSION}"
-  SMOLVM_VERSION="${SMOLVM_VERSION#v}"
 
   VERSION="${INSTALL_VERSION:-$DEFAULT_VERSION}"
   VERSION="${VERSION#v}"
@@ -187,20 +148,6 @@ parse_args() {
         fi
         INSTALL_VERSION="$2"
         shift
-        ;;
-      --smolvm-version)
-        if [ "$#" -lt 2 ]; then
-          echo "Error: --smolvm-version requires a value" >&2
-          exit 1
-        fi
-        SMOLVM_VERSION="$2"
-        shift
-        ;;
-      --skip-smolvm)
-        SKIP_SMOLVM=true
-        ;;
-      --bare-metal)
-        BARE_METAL=true
         ;;
       --dry-run)
         DRY_RUN=true
@@ -523,89 +470,24 @@ install_hostd() {
   install -m 0644 "$BUNDLE_PATH" "${HOSTD_HOME}/amika-hostd.mjs"
   install -m 0644 "${ARCHIVE_DIR}/config.example.toml" \
     "${HOSTD_HOME}/config.example.toml"
-  # What `amika-hostd setup` runs to build the macOS image Lume rigs boot,
-  # replaced whole so a step a newer release dropped does not linger.
+  # What the daemon runs to build the macOS image Lume rigs boot, replaced
+  # whole so a step a newer release dropped does not linger.
   rm -rf "${HOSTD_HOME}/macos-image"
   if [ "$OS" = "darwin" ] && [ -d "${ARCHIVE_DIR}/macos-image" ]; then
     cp -R "${ARCHIVE_DIR}/macos-image" "${HOSTD_HOME}/macos-image"
   fi
-  if [ "$BARE_METAL" != "true" ]; then
-    install_engine
-  fi
+  # The smolmachines SDK and the engine checksums: setup downloads this
+  # platform's engine beside the SDK when smol is on.
+  install -m 0644 "${ARCHIVE_DIR}/engines.sha256" "${HOSTD_HOME}/engines.sha256"
+  mkdir -p "${HOSTD_HOME}/node_modules"
+  rm -rf "${HOSTD_HOME}/node_modules/smolmachines"
+  cp -R "${ARCHIVE_DIR}/node_modules/smolmachines" "${HOSTD_HOME}/node_modules/smolmachines"
 
   ensure_node
   write_launcher
   install_launcher
   echo "amika-hostd ${VERSION} installed to ${INSTALL_DIR}/amika-hostd"
-
-  seed_config
-  if [ "$BARE_METAL" = "true" ]; then
-    echo "Skipping smolvm and the VM checks (--bare-metal)"
-  else
-    ensure_smolvm
-    check_kvm
-    check_resize2fs
-  fi
   print_next_steps
-}
-
-# The npm package carrying this platform's engine (native addon, boot helper,
-# hypervisor libraries and guest rootfs). Sets ENGINE_PACKAGE, or exits on a
-# host the engine does not support, before anything is downloaded.
-engine_package() {
-  case "${OS}/${ARCH}" in
-    linux/amd64)  ENGINE_PACKAGE="smolmachines-linux-x64-gnu" ;;
-    linux/arm64)  ENGINE_PACKAGE="smolmachines-linux-arm64-gnu" ;;
-    darwin/arm64) ENGINE_PACKAGE="smolmachines-darwin-arm64" ;;
-    *)
-      echo "Error: amika-hostd's machine engine (smolmachines) does not support ${OS}/${ARCH}" >&2
-      exit 1
-      ;;
-  esac
-  [ "$OS" = "linux" ] || return 0
-  glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}' || true)"
-  if [ -z "$glibc" ]; then
-    echo "Error: amika-hostd's machine engine (smolmachines) needs glibc ${GLIBC_MIN} or newer; this host's C library is not glibc (musl?)" >&2
-    exit 1
-  fi
-  if ! version_at_least "$glibc" "$GLIBC_MIN"; then
-    echo "Error: amika-hostd's machine engine (smolmachines) needs glibc ${GLIBC_MIN} or newer; this host has ${glibc}" >&2
-    exit 1
-  fi
-}
-
-# Succeed if dotted version $1 is at least $2 (major.minor).
-version_at_least() {
-  have_major="${1%%.*}"; have_minor="${1#*.}"; have_minor="${have_minor%%.*}"
-  want_major="${2%%.*}"; want_minor="${2#*.}"; want_minor="${want_minor%%.*}"
-  [ "$have_major" -gt "$want_major" ] ||
-    { [ "$have_major" -eq "$want_major" ] && [ "$have_minor" -ge "$want_minor" ]; }
-}
-
-# Install the smolmachines SDK the release carries, then download this
-# platform's engine package from npm, verify it against the release's
-# engines.sha256 and unpack it beside the SDK, where the SDK looks for it.
-install_engine() {
-  ENGINE_ARCHIVE="$(awk -v prefix="${ENGINE_PACKAGE}-" 'index($2, prefix) == 1 {print $2}' "${ARCHIVE_DIR}/engines.sha256")"
-  if [ -z "$ENGINE_ARCHIVE" ]; then
-    echo "Error: this release has no ${ENGINE_PACKAGE} engine" >&2
-    exit 1
-  fi
-  engine_url="${NPM_REGISTRY}/${ENGINE_PACKAGE}/-/${ENGINE_ARCHIVE}"
-  echo "Downloading ${engine_url}..."
-  fetch_url "$engine_url" > "${TMPDIR_INSTALL}/${ENGINE_ARCHIVE}"
-  verify_checksum "${TMPDIR_INSTALL}/${ENGINE_ARCHIVE}" "$ENGINE_ARCHIVE" "${ARCHIVE_DIR}/engines.sha256"
-
-  staging="${HOSTD_HOME}/.node_modules-staging"
-  rm -rf "$staging"
-  mkdir -p "${staging}/${ENGINE_PACKAGE}"
-  cp -R "${ARCHIVE_DIR}/node_modules/smolmachines" "${staging}/smolmachines"
-  tar -xzf "${TMPDIR_INSTALL}/${ENGINE_ARCHIVE}" -C "${staging}/${ENGINE_PACKAGE}" --strip-components=1
-  # Replace the whole directory, so an engine from an earlier release or
-  # another platform never lingers.
-  rm -rf "${HOSTD_HOME}/node_modules"
-  mv "$staging" "${HOSTD_HOME}/node_modules"
-  echo "Installed the ${ENGINE_PACKAGE} engine (${ENGINE_ARCHIVE%.tgz})"
 }
 
 describe_plan() {
@@ -620,35 +502,7 @@ describe_plan() {
     echo "                ${NODE_BASE_URL}/${NODE_ARCHIVE}"
     echo "                into ${HOSTD_HOME}/node"
   fi
-  if [ "$BARE_METAL" = "true" ]; then
-    echo "  smolvm:       skipped (--bare-metal)"
-  elif [ "$SKIP_SMOLVM" = "true" ]; then
-    echo "  smolvm:       skipped (--skip-smolvm)"
-  elif find_smolvm; then
-    echo "  smolvm:       found at ${SMOLVM_PATH}"
-  else
-    echo "  smolvm:       not found; would run ${SMOLVM_INSTALL_URL} (version: ${SMOLVM_VERSION})"
-  fi
-  if [ "$BARE_METAL" = "true" ]; then
-    echo "  Engine:       skipped (--bare-metal)"
-  else
-    echo "  Engine:       ${ENGINE_PACKAGE}, the version the release pins, from"
-    echo "                ${NPM_REGISTRY}, into ${HOSTD_HOME}/node_modules"
-  fi
-  config_paths
-  if [ -e "$CONFIG_PATH" ]; then
-    echo "  Config:       keep existing ${CONFIG_PATH}"
-  elif [ -e "$SYSTEM_CONFIG_PATH" ]; then
-    echo "  Config:       keep existing ${SYSTEM_CONFIG_PATH}"
-  else
-    echo "  Config:       would seed ${CONFIG_PATH} from config.example.toml"
-  fi
-  if [ "$BARE_METAL" = "true" ]; then
-    echo "  Runtimes:     bare_metal only (no VMs; amika-hostd setup installs amikad)"
-  else
-    check_kvm
-    check_resize2fs
-  fi
+  echo "  Next:         amika-hostd setup installs what each runtime needs"
 }
 
 # Refuse to download a Node.js that is not a patched release. It runs before
@@ -845,194 +699,16 @@ config_paths() {
   SYSTEM_CONFIG_PATH="/etc/amika-hostd/config.toml"
 }
 
-# Copy the example config to the user config path, unless the daemon already
-# has a config to read. Never overwrites one.
-seed_config() {
-  config_paths
-  if [ -e "$CONFIG_PATH" ]; then
-    echo "Keeping existing config at ${CONFIG_PATH}"
-    upgrade_config
-    return 0
-  fi
-  if [ -e "$SYSTEM_CONFIG_PATH" ]; then
-    echo "Keeping existing config at ${SYSTEM_CONFIG_PATH}"
-    CONFIG_PATH="$SYSTEM_CONFIG_PATH"
-    upgrade_config
-    return 0
-  fi
-  mkdir -p "$(dirname "$CONFIG_PATH")"
-  # Fill in this machine's hostname only when it is one Amika accepts
-  # (src/internal/config.ts); otherwise leave the line for the operator.
-  host_name="$(hostname 2>/dev/null | tr '[:upper:]' '[:lower:]')"
-  host_line='# hostname = "my-host"'
-  if is_valid_hostname "$host_name"; then
-    host_line="hostname = \"${host_name}\""
-  else
-    host_name=""
-  fi
-  # `amika-hostd setup` keeps the secrets in the keychain by default, or adds
-  # the secret key to it with `secret_store = "file"`; keep it to the
-  # daemon's user either way.
-  (
-    umask 077
-    if [ "$BARE_METAL" = "true" ]; then
-      # Listing bare_metal alone turns smol off, so its preset images go
-      # too: they would only be warned about on every start.
-      sed -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
-        -e 's/^# \[runtimes\.bare_metal\]$/[runtimes.bare_metal]/' \
-        -e 's/^\[presets\./# [presets./' \
-        -e 's/^image = /# image = /' \
-        "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
-    else
-      sed -e "s/^# hostname = \"my-host\"\$/${host_line}/" \
-        "${HOSTD_HOME}/config.example.toml" > "$CONFIG_PATH"
-    fi
-  )
-  CONFIG_HOSTNAME="$host_name"
-  echo "Wrote a config to ${CONFIG_PATH}"
-}
-
-# Rewrite the kept config's old tables in the current format, as the new
-# daemon reads it. A warning, not a failed install: the operator can run the
-# command again.
-upgrade_config() {
-  "${INSTALL_DIR}/amika-hostd" config upgrade ||
-    echo "Warning: could not upgrade ${CONFIG_PATH}; run \`amika-hostd config upgrade\`" >&2
-}
-
-# Lowercase letters, digits, and hyphens in dot-separated labels of 1-63
-# characters that start and end with a letter or digit, at most 253 in total.
-is_valid_hostname() {
-  [ -n "$1" ] && [ "${#1}" -le 253 ] || return 1
-  printf '%s\n' "$1" | tr '.' '\n' |
-    grep -Evq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' && return 1
-  return 0
-}
-
-find_smolvm() {
-  SMOLVM_PATH="$(command -v smolvm 2>/dev/null || true)"
-  [ -n "$SMOLVM_PATH" ] && return 0
-  for candidate in "${HOME}/.smolvm/smolvm" "${HOME}/.local/bin/smolvm"; do
-    if [ -x "$candidate" ]; then
-      SMOLVM_PATH="$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-# Run the official smolvm installer (into ~/.smolvm, no sudo) if smolvm is
-# missing.
-ensure_smolvm() {
-  if [ "$SKIP_SMOLVM" = "true" ]; then
-    echo "Skipping smolvm (--skip-smolvm)"
-    return 0
-  fi
-  if find_smolvm; then
-    echo "Found smolvm at ${SMOLVM_PATH}"
-    return 0
-  fi
-
-  if ! command -v bash >/dev/null 2>&1; then
-    echo "Error: the smolvm installer needs bash. Install bash, or install smolvm yourself and re-run with --skip-smolvm:" >&2
-    echo "  curl -sSL ${SMOLVM_INSTALL_URL} | bash" >&2
-    exit 1
-  fi
-
-  echo "Installing smolvm (version: ${SMOLVM_VERSION})..."
-  fetch_url "$SMOLVM_INSTALL_URL" > "${TMPDIR_INSTALL}/smolvm-install.sh"
-  # With no --version, the smolvm installer picks its newest release.
-  if [ "$SMOLVM_VERSION" = "latest" ]; then
-    set --
-  else
-    set -- --version "$SMOLVM_VERSION"
-  fi
-  if ! bash "${TMPDIR_INSTALL}/smolvm-install.sh" "$@" </dev/null; then
-    echo "Error: the smolvm installer failed. amika-hostd is installed; install smolvm and re-run, or pass --skip-smolvm." >&2
-    exit 1
-  fi
-  if ! find_smolvm; then
-    echo "Error: smolvm was installed but not found at ~/.smolvm/smolvm or ~/.local/bin/smolvm" >&2
-    exit 1
-  fi
-}
-
-# smolvm runs VMs with KVM on Linux. A missing or inaccessible /dev/kvm is
-# worth a warning, not a failed install: the host may be fixed afterwards.
-check_kvm() {
-  [ "$OS" = "linux" ] || return 0
-  if [ ! -e /dev/kvm ]; then
-    echo "" >&2
-    echo "Warning: /dev/kvm not found. smolvm needs KVM to run VMs on Linux." >&2
-    echo "  Enable hardware virtualization (in firmware, or nested virtualization" >&2
-    echo "  on a cloud VM) and load the module: sudo modprobe kvm_intel (or kvm_amd)" >&2
-  elif [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
-    echo "" >&2
-    echo "Warning: ${USER:-this user} cannot access /dev/kvm, which smolvm needs to run VMs." >&2
-    echo "  Fix it with: sudo usermod -aG kvm \$USER" >&2
-    echo "  then log out and back in." >&2
-  fi
-}
-
-# smolvm copies every disk from a 20 GiB template and shrinks it with
-# resize2fs when the rig asks for less, so such a rig fails to start without it.
-# Look where smolvm does (src/disk_utils.rs in smol-machines/smolvm): the
-# Homebrew and system sbin directories, then PATH. A warning, not a failed
-# install: e2fsprogs can be installed afterwards.
-check_resize2fs() {
-  for dir in /opt/homebrew/opt/e2fsprogs/sbin /usr/local/opt/e2fsprogs/sbin \
-    /opt/homebrew/sbin /usr/local/sbin /sbin /usr/sbin; do
-    [ -x "${dir}/resize2fs" ] && return 0
-  done
-  command -v resize2fs >/dev/null 2>&1 && return 0
-  echo "" >&2
-  echo "Warning: resize2fs not found. smolvm needs it to start a rig with a" >&2
-  echo "  disk under 20 GiB. Install e2fsprogs:" >&2
-  if [ "$OS" = "darwin" ]; then
-    echo "    brew install e2fsprogs" >&2
-  else
-    echo "    sudo apt-get install e2fsprogs (or your distribution's package)" >&2
-  fi
-}
-
 print_next_steps() {
   echo ""
   echo "Next steps:"
-  if [ -n "${CONFIG_HOSTNAME:-}" ]; then
-    echo "  1. Store your Amika API key, and confirm this host registers as"
-    echo "     ${CONFIG_HOSTNAME} (set in ${CONFIG_PATH}):"
-  else
-    echo "  1. Store your Amika API key, and set or confirm this host's hostname"
-    echo "     in ${CONFIG_PATH}:"
-  fi
+  echo "  1. Set up this host. Setup asks for its hostname and your Amika API"
+  echo "     key, asks which runtimes it runs (Linux VMs, macOS VMs, this"
+  echo "     machine itself), and installs what each one needs:"
   echo "       amika-hostd setup"
-  if [ "$OS" = "darwin" ] && [ "$(uname -m)" = "arm64" ]; then
-    echo "     It also asks whether this host runs macOS VMs (lume, a large"
-    echo "     download and build) and this machine itself (bare_metal)."
-  else
-    echo "     It also asks whether this host runs this machine itself"
-    echo "     (bare_metal)."
-  fi
-  if [ "$OS" = "linux" ] && { [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] ||
-    ! command -v secret-tool >/dev/null 2>&1; }; then
-    echo "     amika-hostd keeps its secrets in the desktop keyring through"
-    echo "     secret-tool, and this session has no desktop session or no"
-    echo "     secret-tool. Install secret-tool (libsecret-tools) on a desktop, or"
-    echo "     keep the secrets in files only you can read: first add"
-    echo "     secret_store = \"file\" to ${CONFIG_PATH}."
-  fi
-  if [ "$BARE_METAL" = "true" ]; then
-    echo "     It checks for an sshd binary and installs amikad into"
-    echo "     ${HOSTD_HOME}."
-    echo "  2. Start the daemon (it runs setup first if you skipped step 1):"
-    echo "       amika-hostd up"
-    echo "  To stop the daemon and SSH to this machine, run \`amika-hostd down\`."
-  else
-    echo "  2. Start the daemon, which starts smolvm with it (and runs setup first"
-    echo "     if you skipped step 1):"
-    echo "       amika-hostd up"
-    echo "  To stop the daemon and its VMs, run \`amika-hostd down\`."
-  fi
+  echo "  2. Start the daemon:"
+  echo "       amika-hostd up"
+  echo "  To stop it, run \`amika-hostd down\`."
   echo ""
   echo "If you're an AI agent, run \`amika-hostd setup --skill\` and follow the"
   echo "instructions it prints."
