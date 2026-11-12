@@ -19,10 +19,12 @@ root over SSH, and stops the clone. The clone is the image, in Lume's default
 storage. The base VM does not change.
 
 - `AMIKAD_BIN` sets the amikad binary. By default, the build makes it from
-  this checkout.
+  this checkout with Go. A copy outside a checkout, such as the one
+  amika-hostd's release ships, has no Go source, so there it must be set.
 - `STEPS="10-amika-user 60-amikad"` runs only those steps.
 - `VERSIONS_ENV` sets the version pins file. By default, the build reads
-  this checkout's `sandbox-image/versions.env`.
+  `versions.env` beside `build.sh` (amika-hostd's release ships one there),
+  else this checkout's `sandbox-image/versions.env`.
 - `NODE` names a Node.js binary to read Lume's JSON output with. Without it
   the build uses `python3`, which a Mac has only with the Xcode Command Line
   Tools.
