@@ -505,6 +505,101 @@ describe("Amika's secrets", () => {
   });
 });
 
+describe("buildMacosImage, when making the base VM does not finish", () => {
+  /**
+   * A Mac where `lume create` exits with `createExit`, leaving the base VM
+   * behind unless `leaves` is false; `lume delete` exits with `deleteExit`.
+   */
+  function failingCreate({
+    createExit = 1 as number | null,
+    leaves = true,
+    deleteExit = 0,
+  } = {}) {
+    const vms: string[] = [];
+    const { deps, out } = mac();
+    const run = vi.fn(
+      async (
+        _command: string,
+        args: readonly string[],
+        _env: NodeJS.ProcessEnv,
+        _signal?: AbortSignal,
+      ) => {
+        if (args[0] === "create") {
+          if (leaves) vms.push(MACOS_BASE_VM);
+          return createExit;
+        }
+        if (args[0] === "delete") {
+          if (deleteExit === 0) vms.splice(vms.indexOf(args[1]), 1);
+          return deleteExit;
+        }
+        return 0;
+      },
+    );
+    const hasLumeVm = vi.fn(
+      async (_lume: string, name: string, _signal?: AbortSignal) =>
+        vms.includes(name),
+    );
+    return { deps: { ...deps, run, hasLumeVm }, out, run, vms };
+  }
+
+  it("deletes the base VM a failed lume create left, so the next try makes it again", async () => {
+    const { deps, run, vms, out } = failingCreate();
+    await expect(
+      buildMacosImage("amika-macos-coder", {}, deps),
+    ).rejects.toThrow(
+      `\`lume create\` failed (exit 1) making the base VM ${MACOS_BASE_VM}; its output is above. Deleted the half-made base VM ${MACOS_BASE_VM}.`,
+    );
+    expect(run.mock.calls.map(([, args]) => args.slice(0, 2))).toEqual([
+      ["create", "--ipsw"],
+      ["delete", MACOS_BASE_VM],
+    ]);
+    expect(vms).toEqual([]);
+    expect(out).toContain(`Deleting the half-made base VM ${MACOS_BASE_VM}...`);
+    expect(deps.installAmikad).not.toHaveBeenCalled();
+  });
+
+  it("deletes it when the daemon stops during lume create, on a deadline of its own", async () => {
+    const stopping = new AbortController();
+    const { deps, run, vms } = failingCreate({ createExit: 143 });
+    run.mockImplementationOnce(async (_command, _args, _env, signal) => {
+      vms.push(MACOS_BASE_VM);
+      stopping.abort();
+      expect(signal).toBe(stopping.signal);
+      return 143;
+    });
+    await expect(
+      buildMacosImage(
+        "amika-macos-coder",
+        {},
+        { ...deps, signal: stopping.signal },
+      ),
+    ).rejects.toThrow(/Deleted the half-made base VM/);
+    const [, args, , signal] = run.mock.calls[1];
+    expect(args).toEqual(["delete", MACOS_BASE_VM, "--force"]);
+    // Not the stop's signal, which has already fired.
+    expect(signal).toBeDefined();
+    expect(signal?.aborted).toBe(false);
+    expect(vms).toEqual([]);
+  });
+
+  it("deletes nothing when lume create left no base VM", async () => {
+    const { deps, run } = failingCreate({ leaves: false });
+    await expect(
+      buildMacosImage("amika-macos-coder", {}, deps),
+    ).rejects.toThrow(`No base VM ${MACOS_BASE_VM} was left behind.`);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it("names the command that deletes it when lume delete fails", async () => {
+    const { deps } = failingCreate({ deleteExit: 1 });
+    await expect(
+      buildMacosImage("amika-macos-coder", {}, deps),
+    ).rejects.toThrow(
+      `Could not delete the half-made base VM ${MACOS_BASE_VM} (\`lume delete\` exit 1); delete it with \`lume delete ${MACOS_BASE_VM} --force\` before the next try.`,
+    );
+  });
+});
+
 describe("buildMacosImage, stopped", () => {
   it("passes the stop to Lume's checks and amikad's download", async () => {
     const stopping = new AbortController();
