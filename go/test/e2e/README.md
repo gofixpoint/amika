@@ -88,7 +88,7 @@ deployed API spec (see the schema section below).
 Every remote sandbox creation uses the same provider. It defaults to E2B;
 set `E2E_SANDBOX_PROVIDER` through the Make target or pass
 `-sandbox-provider` to the entry package to select `daytona`, `freestyle`,
-or `vercel`. Cases receive the selection as `{{sandbox_provider}}`.
+`instabox`, or `vercel`. Cases receive the selection as `{{sandbox_provider}}`.
 
 Each run writes to `go/test/e2e/.runs/<run-id>/<case-name>/`:
 

@@ -107,6 +107,21 @@ describe("sandboxProviderConfigsFromEnv", () => {
     }).vercel;
     expect(vercel).toEqual({ apiKey: "vt", teamId: "team", projectId: "proj" });
   });
+
+  it("gates Instabox on INSTABOX_ENABLED=true and requires its key", () => {
+    expect(sandboxProviderConfigsFromEnv(BASE).instabox).toBeNull();
+    expect(() =>
+      sandboxProviderConfigsFromEnv({ ...BASE, INSTABOX_ENABLED: "true" }),
+    ).toThrow(/INSTABOX_API_KEY/);
+    expect(
+      sandboxProviderConfigsFromEnv({
+        ...BASE,
+        INSTABOX_ENABLED: "true",
+        INSTABOX_API_KEY: "ibk",
+        INSTABOX_API_URL: "https://ib.example",
+      }).instabox,
+    ).toEqual({ apiKey: "ibk", apiUrl: "https://ib.example" });
+  });
 });
 
 describe("Smol environment configuration", () => {
