@@ -63,7 +63,7 @@ The same forms work wherever a flag such as --rig names a rig.`,
 		"Skip git repo auto-detection; create a rig without mounting any repo.")
 	sandboxCreateCmd.Flags().String("host", "", "Run the rig on one of your organization's own hosts, by hostname or id (see \"amika host list\"). Omit it to run on Amika Cloud.")
 	sandboxCreateCmd.Flags().String("size", "", "Rig size, e.g. \"m\" or \"a1.medium\"; the API validates it and lists what your provider offers (default \"m\"). With --host, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB.")
-	sandboxCreateCmd.Flags().String("snapshot", "", "Fork the rig from a captured snapshot slug")
+	sandboxCreateCmd.Flags().String("snapshot", "", "Fork the rig from a captured snapshot slug. amika/<preset> (e.g. amika/coder-plus-docker) boots that preset's base image and skips the repository's default snapshot.")
 	sandboxCreateCmd.Flags().String("runtime", "", "With --host, the host runtime to run the rig on (\"smol\" for Linux VMs, \"lume\" for macOS VMs, \"bare_metal\" for the host machine itself). Omit it to use the preset's default runtime on that host, or the host's only runtime.")
 	sandboxCreateCmd.Flags().StringArray("env", nil, "Set environment variable (KEY=VALUE)")
 	sandboxCreateCmd.Flags().StringArray("secret", nil, "Inject a remote secret (env:FOO=SECRET_NAME or env:SECRET_NAME)")

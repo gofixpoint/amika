@@ -90,6 +90,10 @@ export interface CreateRigRequest {
    *   - a slug  -> boot from that snapshot
    *   - `null`  -> explicitly opt out of the repo-level default snapshot
    *   - omitted -> keep the full default chain (repo default, else preset/size)
+   *
+   * `amika/<preset>` (e.g. `amika/coder-plus-docker`) boots that preset's
+   * base image and skips every default, including a repository's custom
+   * image. `preset` may be omitted, and must match when given.
    */
   snapshot?: string | null;
   /** Setup-script contents to run in the rig. The SDK does not read a local script file. */

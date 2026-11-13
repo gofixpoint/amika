@@ -170,6 +170,9 @@ amika sandbox create dev-sandbox \
 # Fork from a captured snapshot
 amika sandbox create dev-sandbox --snapshot amika-mono-base
 
+# Boot a preset's clean base image, skipping the repository's default snapshot
+amika sandbox create dev-sandbox --snapshot amika/coder-plus-docker
+
 # Run it on one of your organization's own hosts, at one of that host's sizes
 amika sandbox create dev-sandbox --host alpha.lan --size small
 ```
@@ -191,7 +194,7 @@ amika sandbox create dev-sandbox --host alpha.lan --size small
 | `--branch <name>`       |                      | Check out this branch, or create it if it doesn't exist. Requires a git repo (auto-detected or via `--git`)                          |
 | `--new-branch <name>`  |                      | Create a new branch (errors if it already exists). Starts from `--branch` if set, otherwise from the base branch. Requires a git repo (auto-detected or via `--git`)  |
 | `--secret <spec>`       |                      | Inject a remote secret (`env:FOO=SECRET_NAME` or `env:SECRET_NAME`). Repeatable. See [secrets.md](secrets.md)                        |
-| `--snapshot <slug>`     |                      | Fork the new sandbox from a captured snapshot slug (capture with `amika snapshot create`)                                            |
+| `--snapshot <slug>`     |                      | Fork the new sandbox from a captured snapshot slug (capture with `amika snapshot create`). `amika/<preset>`, e.g. `amika/coder-plus-docker`, boots that preset's base image and skips the repository and organization default snapshots and the repository's custom image |
 | `--github-auth-mode <mode>` |                  | GitHub auth mode for the rig runtime: `pat`, `app_token`, or `app-token`. Unset uses the server default                          |
 | `--agent-credential <KIND=NAME>` |             | Pin an agent credential by name (e.g. `claude=personal-oauth`). Repeatable per kind                                                  |
 | `--agent-credential-type <KIND=TYPE>` |        | Pin an agent credential by type (`oauth` or `api-key`). Repeatable per kind                                                          |
