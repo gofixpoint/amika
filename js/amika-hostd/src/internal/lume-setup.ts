@@ -462,7 +462,9 @@ function keepRestoreImage(
 ): void {
   const download = path.join(env.TMPDIR || tmpdir(), "latest.ipsw");
   try {
-    if (!existsSync(download) || statSync(download).mtimeMs < since) return;
+    // Some file systems stamp files from a coarse clock, a little behind.
+    const written = since - 2_000;
+    if (!existsSync(download) || statSync(download).mtimeMs < written) return;
     const dir = path.dirname(kept);
     mkdirSync(dir, { recursive: true });
     try {

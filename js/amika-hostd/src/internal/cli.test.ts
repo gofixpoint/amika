@@ -2993,6 +2993,7 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
 describe("the bare_metal runtime", () => {
   const PLATFORM = hostPlatformFor("linux", {
     ...SMOL_READY,
+    isExecutable: (file) => file === "/usr/sbin/sshd",
     availableParallelism: () => 8,
     totalmem: () => 16 * 1024 ** 3,
     statfs: () => ({ bsize: 4096, blocks: (500 * 1024 ** 3) / 4096 }),
@@ -3022,6 +3023,7 @@ describe("the bare_metal runtime", () => {
       ...h.deps,
       platform: PLATFORM,
       sshUser: () => "jakub",
+      strictModesViolation: vi.fn(() => undefined),
       installAmikad,
     };
     return { ...h, deps, installAmikad, state };
