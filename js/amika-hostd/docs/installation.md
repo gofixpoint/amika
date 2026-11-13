@@ -46,7 +46,8 @@ The script asks no questions. It does these steps:
    GitHub release, and check it against `checksums.txt`.
 2. Copy the bundle, `config.example.toml`, the smolmachines SDK and
    `engines.sha256` into the data directory. On macOS, also copy
-   `macos-image/`. Each is replaced whole.
+   `macos-image/`. Each is replaced whole. Delete a smolmachines engine
+   whose version is not the new SDK's. `setup` installs the matching one.
 3. Choose the Node.js the launcher runs:
    - Use the system `node` when it is 22 or newer. Its owner keeps it
      patched.
@@ -70,7 +71,8 @@ the launcher to a system node installed since. `--dry-run` prints the plan.
    ask for confirmation.
 2. Ask whether to remove the config and state directories, and whether to
    remove the keychain secrets. `--purge` answers yes to both.
-3. Run `amika-hostd uninstall --yes` on the terminal.
+3. Run `amika-hostd uninstall` on the terminal. It asks about the Lume
+   rigs. With `--yes`, run `amika-hostd uninstall --yes`.
 4. Delete the launcher and the data directory.
 5. Delete the secrets, the config and the state directory, as answered.
 6. Print what it never removes: `/etc/amika-hostd` and the host's
@@ -81,7 +83,8 @@ runtimes installed:
 
 1. Stop the daemon, as `down` does.
 2. Delete the Lume rigs in `machines.json`. `--yes` answers this question.
-   Then delete `storage_dir` when it is hostd's default, or empty. An
+   Then delete `storage_dir` when it is hostd's default, or empty. If a
+   `lume delete` fails, or Lume is missing, keep `storage_dir`. An
    operator's `storage_dir` can be a whole volume, so a folder that still
    holds other files stays.
 3. Delete the base VM and the templates the Lume presets name, only when

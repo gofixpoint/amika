@@ -20,7 +20,10 @@ const SSHD_LOCATIONS = ["/usr/sbin/sshd", "/usr/local/sbin/sshd", "/sbin/sshd"];
 const GLIBC_MIN = [2, 34] as const;
 
 export function linuxPlatform(deps: PlatformDeps = {}): HostPlatform {
-  const enginePackage = () => {
+  // Read once: the glibc check blocks, and reload asks on every run.
+  let engine: { name: string | undefined } | undefined;
+  const enginePackage = () => (engine ??= { name: findEnginePackage() }).name;
+  const findEnginePackage = () => {
     const arch = ENGINE_ARCH[(deps.arch ?? os.arch)()];
     const glibc = (deps.glibcVersion ?? runningGlibc)();
     if (arch === undefined || glibc === undefined) return undefined;
@@ -90,6 +93,11 @@ function kvmAccess(): "missing" | "denied" | "ok" {
 
 /** The glibc this Node runs on; undefined on musl, which reports none. */
 function runningGlibc(): string | undefined {
+  // The network part of the report looks up every open socket. Node 22.13+
+  // reads this; its types lack it.
+  if (process.report) {
+    (process.report as { excludeNetwork?: boolean }).excludeNetwork = true;
+  }
   const report = process.report?.getReport() as
     | { header?: { glibcVersionRuntime?: string } }
     | undefined;

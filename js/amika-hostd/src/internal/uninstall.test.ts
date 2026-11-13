@@ -91,6 +91,43 @@ describe("uninstall", () => {
     expect(h.out).toContain("Not deleted, as other tools can use them:");
   });
 
+  it("keeps hostd's own storage_dir when a rig was not deleted", async () => {
+    const h = harness(["", "", ""]);
+    const config = lumeConfig(path.join(h.home, "data", "lume"));
+    mkdirSync(path.join(h.home, "data", "lume"), { recursive: true });
+    const deps = {
+      ...h.deps,
+      env: { ...h.deps.env, AMIKA_HOSTD_HOME: path.join(h.home, "data") },
+      run: vi.fn(async (_lume: string, args: readonly string[]) =>
+        args[0] === "delete" ? 1 : 0,
+      ),
+    };
+    await uninstall(
+      config,
+      index(["mac-1", "lume"]),
+      { yes: true, dryRun: false },
+      deps,
+    );
+    expect(h.deps.remove).not.toHaveBeenCalled();
+    expect(h.out).toContainEqual(
+      expect.stringMatching(/^Could not delete the Lume rigs mac-1\. Kept /),
+    );
+  });
+
+  it("keeps the rigs and storage_dir without Lume", async () => {
+    const h = harness();
+    await uninstall(
+      h.config,
+      index(["mac-1", "lume"]),
+      { yes: true, dryRun: false },
+      { ...h.deps, findLume: () => undefined },
+    );
+    expect(h.deps.remove).not.toHaveBeenCalledWith(h.storageDir);
+    expect(h.out).toContainEqual(
+      expect.stringMatching(/mac-1: Lume is not installed/),
+    );
+  });
+
   it("keeps an operator's storage_dir that still holds other files", async () => {
     const h = harness(["", ""]);
     writeFileSync(path.join(h.storageDir, "not-a-rig"), "");

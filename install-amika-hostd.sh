@@ -343,12 +343,14 @@ uninstall_hostd() {
   fi
 
   # Before the config and state go: it reads them to find the Lume rigs. Its
-  # typed-phrase questions need the terminal, which stdin may not be when
-  # this script is piped from curl.
+  # questions need the terminal, which stdin may not be when this script is
+  # piped from curl. It asks about the Lume rigs itself, unless --yes.
+  yes_flag=""
+  [ "$ASSUME_YES" = "true" ] && yes_flag="--yes"
   if { : </dev/tty; } 2>/dev/null; then
-    "$DEST_PATH" uninstall --yes </dev/tty || hostd_uninstall_failed
+    "$DEST_PATH" uninstall $yes_flag </dev/tty || hostd_uninstall_failed
   else
-    "$DEST_PATH" uninstall --yes </dev/null || hostd_uninstall_failed
+    "$DEST_PATH" uninstall $yes_flag </dev/null || hostd_uninstall_failed
   fi
 
   if [ -w "$(dirname "$DEST_PATH")" ]; then
@@ -432,6 +434,25 @@ download_and_extract() {
   done
 }
 
+# The version in package.json $1, or nothing.
+package_version() {
+  grep -o '"version": *"[^"]*"' "$1" 2>/dev/null | head -n 1 |
+    sed 's/.*"\([^"]*\)"$/\1/'
+}
+
+# Remove a smolmachines engine an earlier release's setup installed, when its
+# version is not the new SDK's: setup installs the matching one again.
+remove_stale_engines() {
+  sdk_version="$(package_version "${HOSTD_HOME}/node_modules/smolmachines/package.json")"
+  for engine in "${HOSTD_HOME}"/node_modules/smolmachines-*; do
+    [ -d "$engine" ] || continue
+    if [ "$(package_version "${engine}/package.json")" != "$sdk_version" ]; then
+      rm -rf "$engine"
+      echo "Removed ${engine}, from an earlier release. Run \`amika-hostd setup\` to install the matching engine."
+    fi
+  done
+}
+
 install_hostd() {
   mkdir -p "$HOSTD_HOME"
   install -m 0644 "$BUNDLE_PATH" "${HOSTD_HOME}/amika-hostd.mjs"
@@ -449,6 +470,7 @@ install_hostd() {
   mkdir -p "${HOSTD_HOME}/node_modules"
   rm -rf "${HOSTD_HOME}/node_modules/smolmachines"
   cp -R "${ARCHIVE_DIR}/node_modules/smolmachines" "${HOSTD_HOME}/node_modules/smolmachines"
+  remove_stale_engines
 
   ensure_node
   write_launcher
