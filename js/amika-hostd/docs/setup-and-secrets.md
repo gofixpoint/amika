@@ -48,7 +48,8 @@ Setup then asks which runtimes the host runs
   - turn off a runtime that has rigs in `machines.json`
 
 Setup writes the answers as `capabilities update` does (`updateRuntimes`).
-Turning on Lume adds its `storage_dir` and the `macos-coder` preset. A
+Turning on Lume adds its `storage_dir`, its sizes (`MACOS_SIZES`) and the
+`macos-coder` preset. A
 config without smol gets no default `[sizes]` or `[presets.*]`.
 
 Then setup installs what each runtime that is on needs

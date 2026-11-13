@@ -29,6 +29,7 @@ import type { HostPlatform } from "../platforms/index.js";
 import { ensureAmikad } from "./amikad-install.js";
 import { ConfigError, ENV_NAMES } from "./config.js";
 import { DaemonError } from "./daemon.js";
+import { MACOS_DISK_GIB } from "./runtime-update.js";
 
 /** Lume's release that milestone 0 of spec 028 tested. */
 export const LUME_VERSION = "0.6.1";
@@ -309,10 +310,24 @@ export async function buildMacosImage(
       `Installing macOS into the base VM ${MACOS_BASE_VM}, from ${ipsw === "latest" ? "the newest restore image Lume supports" : ipsw}, with the ${preset} setup preset (this Mac runs macOS ${version})...`,
     );
     const started = Date.now();
-    const code = await run(
-      lume,
-      ["create", "--ipsw", ipsw, "--unattended", preset, MACOS_BASE_VM],
-      env,
+    // Lume reads `GB` as GiB. Its progress lines are thinned out
+    // (`runShowingProgress`): the download alone prints one per percent.
+    const code = await reported("Starting lume", () =>
+      (deps.run ?? runShowingProgress)(
+        lume,
+        [
+          "create",
+          "--ipsw",
+          ipsw,
+          "--disk-size",
+          `${MACOS_DISK_GIB}GB`,
+          "--unattended",
+          preset,
+          MACOS_BASE_VM,
+        ],
+        env,
+        deps.signal,
+      ),
     );
     // After a failed create too, so a retry needs no download.
     if (ipsw === "latest" && kept !== undefined) {
@@ -572,4 +587,105 @@ export function runToStderr(
       resolve(code);
     });
   });
+}
+
+/**
+ * Like `runToStderr`, for a command that prints progress such as `lume
+ * create`: its lines reach stderr as it prints them, with its progress lines
+ * thinned out (`progressFilter`). It runs under `script(1)`, in a terminal:
+ * with its output in a pipe or the daemon's log, Lume buffers it, and an
+ * hour of download reached the log in one burst.
+ */
+export function runShowingProgress(
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  /**
+   * Sends `script` `SIGTERM` once this aborts, which closes the terminal,
+   * so the command gets `SIGHUP`.
+   */
+  signal?: AbortSignal,
+  write: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    // With no input, script sends the terminal an end of file, which it
+    // echoes as `^D` and two backspaces.
+    const child = spawn(
+      "/usr/bin/script",
+      ["-q", "/dev/null", command, ...args],
+      {
+        env,
+        stdio: ["ignore", "pipe", process.stderr],
+      },
+    );
+    const show = progressFilter(write);
+    let partial = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      const lines = (partial + chunk).split("\n");
+      partial = lines.pop() ?? "";
+      for (const line of lines) show(cleanLine(line));
+    });
+    const stop = () => child.kill("SIGTERM");
+    if (signal?.aborted) stop();
+    else signal?.addEventListener("abort", stop, { once: true });
+    const settle = () => signal?.removeEventListener("abort", stop);
+    child.once("error", (error) => {
+      settle();
+      reject(error);
+    });
+    child.once("close", (code) => {
+      settle();
+      if (partial !== "") show(cleanLine(partial));
+      resolve(code);
+    });
+  });
+}
+
+/** A terminal's line as the log takes it: no `^D` echo, no carriage return. */
+function cleanLine(line: string): string {
+  const echo = "^D\b\b";
+  return (line.startsWith(echo) ? line.slice(echo.length) : line).replace(
+    /\r$/,
+    "",
+  );
+}
+
+/** Lume's progress lines: `Downloading IPSW Progress: 57%`, `Installing macOS progress=31%`. */
+const PROGRESS_LINE = /\b([A-Z][\w ]*?)\s+progress\s*[:=]\s*(\d+)%/i;
+
+/**
+ * `write`, passing each line on, but of each kind of progress line (Lume's
+ * download, then its install) only the first, the last at 100%, and one
+ * each time progress has gained `step` percent or `intervalMs` has passed
+ * since the last one shown, whichever comes first.
+ */
+export function progressFilter(
+  write: (line: string) => void,
+  {
+    step = 5,
+    intervalMs = 2 * 60_000,
+    now = Date.now,
+  }: { step?: number; intervalMs?: number; now?: () => number } = {},
+): (line: string) => void {
+  const shown = new Map<string, { percent: number; at: number }>();
+  return (line) => {
+    const match = PROGRESS_LINE.exec(line);
+    if (!match) {
+      write(line);
+      return;
+    }
+    const kind = match[1].toLowerCase();
+    const percent = Number(match[2]);
+    const last = shown.get(kind);
+    if (
+      last === undefined ||
+      percent >= last.percent + step ||
+      now() - last.at >= intervalMs ||
+      (percent >= 100 && last.percent < 100)
+    ) {
+      shown.set(kind, { percent, at: now() });
+      write(line);
+    }
+  };
 }

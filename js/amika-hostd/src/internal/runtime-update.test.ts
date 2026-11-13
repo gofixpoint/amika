@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveConfig } from "./config.js";
 import { checkReload } from "./reload.js";
-import { updateRuntimes } from "./runtime-update.js";
+import { MACOS_SIZES, updateRuntimes } from "./runtime-update.js";
 
 const STORAGE = "/home/me/.local/share/amika-hostd/lume";
 const PRESETS = `hostname = "builder"
@@ -73,7 +73,7 @@ storage_dir = "/srv/lume"
     );
   });
 
-  it("turns lume on, keeps smol on, and adds the macOS preset", () => {
+  it("turns lume on, keeps smol on, and adds the macOS sizes and preset", () => {
     const { contents, steps } = updateRuntimes(
       PRESETS,
       { enable: ["lume"], disable: [] },
@@ -81,6 +81,7 @@ storage_dir = "/srv/lume"
     );
     expect(steps).toEqual([
       "Turn on lume",
+      "Add sizes macos-small, macos-medium, macos-large on lume, with 100 GiB of disk each",
       "Add preset macos-coder on lume, booting template amika-macos-coder",
     ]);
     expect(contents).toBe(`${PRESETS}
@@ -89,12 +90,53 @@ storage_dir = "/srv/lume"
 [runtimes.lume]
 storage_dir = "${STORAGE}"
 
+[runtimes.lume.sizes.macos-small]
+vcpus = 4
+memory_gib = 8
+disk_gib = 100
+
+[runtimes.lume.sizes.macos-medium]
+vcpus = 6
+memory_gib = 12
+disk_gib = 100
+
+[runtimes.lume.sizes.macos-large]
+vcpus = 8
+memory_gib = 16
+disk_gib = 100
+
 [presets.macos-coder.runtimes.lume]
 image = "amika-macos-coder"
 `);
     const resolved = config(contents).runtimes;
     expect(Object.keys(resolved.runtimes)).toEqual(["smol", "lume"]);
     expect(Object.keys(resolved.presets)).toEqual(["coder", "macos-coder"]);
+    // Lume's own sizes replace [sizes] for Lume rigs only.
+    expect(resolved.runtimes.lume?.sizes).toEqual(MACOS_SIZES);
+    expect(resolved.runtimes.smol?.sizes).not.toHaveProperty("macos-small");
+  });
+
+  it("keeps the Lume sizes a file already has", () => {
+    const own = `${PRESETS}
+[runtimes.lume]
+enabled = false
+storage_dir = "${STORAGE}"
+
+[runtimes.lume.sizes.big]
+vcpus = 8
+memory_gib = 16
+disk_gib = 100
+`;
+    const { contents, steps } = updateRuntimes(
+      own,
+      { enable: ["lume"], disable: [] },
+      STORAGE,
+    );
+    expect(steps).not.toContainEqual(expect.stringMatching(/^Add sizes/));
+    expect(contents).not.toContain("macos-small");
+    expect(
+      Object.keys(config(contents).runtimes.runtimes.lume?.sizes ?? {}),
+    ).toEqual(["big"]);
   });
 
   it("makes no change when it runs again with the same flags", () => {
