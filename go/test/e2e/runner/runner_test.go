@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // -----------------------------------------------------------------------
@@ -588,7 +589,7 @@ func TestLedgerAppendPersistsToDisk(t *testing.T) {
 	}
 }
 
-func TestLedgerRemovePersistsToDisk(t *testing.T) {
+func TestLedgerReleaseKeepsHistoryOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	ledgerPath := filepath.Join(dir, "ledger.json")
 	l, err := NewLedger(ledgerPath)
@@ -604,23 +605,32 @@ func TestLedgerRemovePersistsToDisk(t *testing.T) {
 		}
 	}
 
-	removed, err := l.Remove("sandbox", "sb-1")
-	if err != nil {
-		t.Fatalf("Remove: %v", err)
+	released, err := l.Release("sandbox", "sb-1", Release{ByStep: "consume", Verified: VerifiedGone})
+	if err != nil || !released {
+		t.Fatalf("Release = %v, %v; want true, nil", released, err)
 	}
-	if !removed {
-		t.Fatal("expected matching resource to be removed")
+	if released, err := l.Release("sandbox", "sb-1", Release{}); err != nil || released {
+		t.Fatalf("releasing an already released entry = %v, %v; want false, nil", released, err)
 	}
-	if removed, err := l.Remove("sandbox", "missing"); err != nil || removed {
-		t.Fatalf("remove missing resource = %v, %v; want false, nil", removed, err)
+	if released, err := l.Release("sandbox", "missing", Release{}); err != nil || released {
+		t.Fatalf("release missing resource = %v, %v; want false, nil", released, err)
 	}
 
+	if pending := l.Entries(); len(pending) != 1 || pending[0].Name != "snap-1" {
+		t.Fatalf("expected only snap-1 pending, got %+v", pending)
+	}
+	if rel := l.Released(); len(rel) != 1 || rel[0].Name != "sb-1" || rel[0].Released.ByStep != "consume" {
+		t.Fatalf("expected sb-1 released by consume, got %+v", rel)
+	}
 	onDisk, err := LoadLedgerEntries(ledgerPath)
 	if err != nil {
 		t.Fatalf("LoadLedgerEntries: %v", err)
 	}
-	if len(onDisk) != 1 || onDisk[0].Name != "snap-1" {
-		t.Fatalf("unexpected on-disk entries after remove: %+v", onDisk)
+	if len(onDisk) != 2 || onDisk[0].Released == nil || onDisk[1].Released != nil {
+		t.Fatalf("expected both entries on disk, sb-1 marked released: %+v", onDisk)
+	}
+	if pending := PendingEntries(onDisk); len(pending) != 1 || pending[0].Name != "snap-1" {
+		t.Fatalf("expected the sweep to see only snap-1, got %+v", pending)
 	}
 }
 
@@ -712,6 +722,341 @@ func TestCleanupRunsInReverseOrderAndContinuesOnFailure(t *testing.T) {
 	}
 	if results[2].Err != nil {
 		t.Fatalf("expected 'first' cleanup to still run and succeed despite 'second' failing, got %v", results[2].Err)
+	}
+}
+
+// TestCleanupVerifiesDeletion covers both check forms and every outcome. A
+// resource is "gone" only on a positive answer: a lookup that fails with the
+// not-found text, or a listing whose values do not include the name. Any
+// other failure is "unchecked", never "gone".
+func TestCleanupVerifiesDeletion(t *testing.T) {
+	bin := stubScript(t)
+	fast := VerifyPolicy{Timeout: 10 * time.Millisecond, Interval: time.Millisecond}
+	deleteOK := []string{"0", "", ""}
+
+	lookup := func(exit, stderr string) *VerifyGone {
+		return &VerifyGone{Cmd: []string{exit, "", stderr}, NotFound: "HTTP 404"}
+	}
+	listing := func(exit, stdout, stderr string) *VerifyGone {
+		return &VerifyGone{Cmd: []string{exit, stdout, stderr}, AbsentFrom: "$.items[*].name"}
+	}
+
+	entries := []Entry{
+		{Type: "sandbox", Name: "looked-up-gone", CleanupArgv: deleteOK, VerifyGone: lookup("1", "remote get sandbox: HTTP 404: not found")},
+		{Type: "sandbox", Name: "looked-up-present", CleanupArgv: deleteOK, VerifyGone: lookup("0", "")},
+		{Type: "sandbox", Name: "looked-up-outage", CleanupArgv: deleteOK, VerifyGone: lookup("1", "HTTP 401: bad key")},
+		{Type: "snapshot", Name: "listed-gone", CleanupArgv: deleteOK, VerifyGone: listing("0", `{"items":[{"name":"other"},{"name":"listed-gone-2"}]}`, "")},
+		{Type: "snapshot", Name: "listed-present", CleanupArgv: deleteOK, VerifyGone: listing("0", `{"items":[{"name":"listed-present"}]}`, "")},
+		{Type: "snapshot", Name: "listing-broke", CleanupArgv: deleteOK, VerifyGone: listing("1", "", "list broke")},
+		{Type: "snapshot", Name: "listing-not-json", CleanupArgv: deleteOK, VerifyGone: listing("0", "No snapshots found.", "")},
+		{Type: "sandbox", Name: "blind", CleanupArgv: deleteOK},
+		{Type: "sandbox", Name: "undeletable", CleanupArgv: []string{"1", "", "boom"}, VerifyGone: lookup("0", "")},
+	}
+	byName := map[string]CleanupResult{}
+	for _, res := range CleanupVerified(bin, entries, nil, fast) {
+		byName[res.Entry.Name] = res
+	}
+
+	want := map[string]struct {
+		verified string
+		failed   bool
+	}{
+		"looked-up-gone":    {VerifiedGone, false},
+		"looked-up-present": {VerifiedStillPresent, true},
+		"looked-up-outage":  {VerifiedUnchecked, true},
+		"listed-gone":       {VerifiedGone, false},
+		"listed-present":    {VerifiedStillPresent, true},
+		"listing-broke":     {VerifiedUnchecked, true},
+		"listing-not-json":  {VerifiedUnchecked, true},
+		"blind":             {VerifiedUnsupported, false},
+		"undeletable":       {VerifiedUnchecked, true},
+	}
+	for name, w := range want {
+		res := byName[name]
+		if res.Verified != w.verified || (res.Err != nil) != w.failed {
+			t.Errorf("%s: verified=%q err=%v, want verified=%q failed=%v", name, res.Verified, res.Err, w.verified, w.failed)
+		}
+	}
+	if err := byName["looked-up-outage"].Err; err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+		t.Errorf("an outage must be reported with the lookup's stderr, got %v", err)
+	}
+}
+
+// TestCleanupAcceptsAFailedDeleteOfAnAlreadyGoneResource covers a case that
+// deletes a resource itself and leaves it registered: cleanup's second delete
+// gets a 404, and that must count as deleted when the resource is verified
+// gone, but not when it is still there or the check cannot answer.
+func TestCleanupAcceptsAFailedDeleteOfAnAlreadyGoneResource(t *testing.T) {
+	bin := stubScript(t)
+	fast := VerifyPolicy{Timeout: 10 * time.Millisecond, Interval: time.Millisecond}
+	deleteFails := []string{"1", "", "remote delete sandbox: HTTP 404: not found"}
+	lookup := func(exit, stderr string) *VerifyGone {
+		return &VerifyGone{Cmd: []string{exit, "", stderr}, NotFound: "HTTP 404"}
+	}
+	entries := []Entry{
+		{Type: "sandbox", Name: "already-gone", CleanupArgv: deleteFails, VerifyGone: lookup("1", "HTTP 404")},
+		{Type: "sandbox", Name: "still-there", CleanupArgv: deleteFails, VerifyGone: lookup("0", "")},
+		{Type: "sandbox", Name: "unknown", CleanupArgv: deleteFails, VerifyGone: lookup("1", "HTTP 502")},
+		{Type: "sandbox", Name: "no-check", CleanupArgv: deleteFails},
+	}
+	byName := map[string]CleanupResult{}
+	for _, res := range CleanupVerified(bin, entries, nil, fast) {
+		byName[res.Entry.Name] = res
+	}
+
+	if res := byName["already-gone"]; res.Err != nil || res.Verified != VerifiedGone || !strings.Contains(res.DeleteError, "HTTP 404") {
+		t.Errorf("already-gone: want verified gone with the delete error kept, got %+v", res)
+	}
+	for _, name := range []string{"still-there", "unknown", "no-check"} {
+		if res := byName[name]; res.Err == nil || res.Verified != VerifiedUnchecked {
+			t.Errorf("%s: want the failed delete kept as unchecked, got verified=%q err=%v", name, res.Verified, res.Err)
+		}
+	}
+}
+
+// A hanging lookup or delete must not consume the older resource's budget.
+func TestCleanupSharesDeadlineAcrossResources(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	for _, phase := range []string{"delete", "verify"} {
+		t.Run(phase, func(t *testing.T) {
+			dir := t.TempDir()
+			log := filepath.Join(dir, "calls")
+			script := filepath.Join(dir, "cleanup.sh")
+			writeFile(t, script, "#!/bin/sh\necho \"$1 $2\" >> \"$CALLS\"\nif [ \"$2\" = newest ] && [ \"$1\" = \"$HANG\" ]; then exec sleep 30; fi\nif [ \"$1\" = verify ]; then echo 'HTTP 404' >&2; exit 1; fi\n")
+			if err := os.Chmod(script, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			entries := []Entry{}
+			for _, name := range []string{"oldest", "newest"} {
+				entries = append(entries, Entry{Type: "sandbox", Name: name, CleanupArgv: []string{"delete", name}, VerifyGone: &VerifyGone{Cmd: []string{"verify", name}, NotFound: "HTTP 404"}})
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			env := append(os.Environ(), "CALLS="+log, "HANG="+phase)
+			results := cleanupVerifiedContext(ctx, script, entries, env, DefaultVerifyPolicy)
+			if results[0].Err == nil || results[0].Verified == VerifiedGone {
+				t.Fatalf("hanging resource must fail closed: %+v", results[0])
+			}
+			if results[1].Err != nil || results[1].Verified != VerifiedGone {
+				t.Fatalf("older resource must still be deleted and verified: %+v", results[1])
+			}
+			calls, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(calls), "delete oldest") {
+				t.Fatalf("older delete missing: %s", calls)
+			}
+		})
+	}
+}
+
+func TestCleanupDeadlineInterruptsPollingSleep(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	entry := Entry{Type: "sandbox", Name: "still-there", CleanupArgv: []string{"0", "", ""}, VerifyGone: &VerifyGone{Cmd: []string{"0", "", ""}, NotFound: "HTTP 404"}}
+	started := time.Now()
+	results := cleanupVerifiedContext(ctx, stubScript(t), []Entry{entry}, nil, VerifyPolicy{Timeout: time.Minute, Interval: time.Minute})
+	if results[0].Err == nil || results[0].Verified == VerifiedGone {
+		t.Fatalf("expected a failed, unconfirmed deletion: %+v", results[0])
+	}
+	if time.Since(started) > 3*time.Second {
+		t.Fatal("polling sleep ignored the cleanup deadline")
+	}
+}
+
+func TestCollectJSONPath(t *testing.T) {
+	var doc any
+	if err := json.Unmarshal([]byte(`{"items":[{"name":"a"},{"name":"b"}]}`), &doc); err != nil {
+		t.Fatal(err)
+	}
+	got, err := CollectJSONPath("$.items[*].name", doc)
+	if err != nil {
+		t.Fatalf("CollectJSONPath: %v", err)
+	}
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("expected [a b], got %v", got)
+	}
+
+	var arr any
+	if err := json.Unmarshal([]byte(`[{"id":"k1"},{"id":"k2"}]`), &arr); err != nil {
+		t.Fatal(err)
+	}
+	got, err = CollectJSONPath("$[*].id", arr)
+	if err != nil || len(got) != 2 || got[1] != "k2" {
+		t.Fatalf("expected [k1 k2] from a root array, got %v, %v", got, err)
+	}
+
+	var empty any
+	if err := json.Unmarshal([]byte(`{"items":[]}`), &empty); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := CollectJSONPath("$.items[*].name", empty); err != nil || len(got) != 0 {
+		t.Fatalf("an empty listing is an empty collection, got %v, %v", got, err)
+	}
+
+	if _, err := CollectJSONPath("$.items.name", doc); err == nil {
+		t.Fatal("expected an error for a path without a wildcard")
+	}
+	if _, err := CollectJSONPath("$.items[*].name[*]", doc); err == nil {
+		t.Fatal("expected an error for two wildcards")
+	}
+	if _, err := CollectJSONPath("$.missing[*].name", doc); err == nil {
+		t.Fatal("expected an error when the container is missing")
+	}
+}
+
+// TestCollectJSONPathRejectsElementWithoutField covers the false "gone": a
+// misspelled field, or a listing whose shape changed, must not collect to an
+// empty set that reads as "the resource is absent".
+func TestCollectJSONPathRejectsElementWithoutField(t *testing.T) {
+	var doc any
+	if err := json.Unmarshal([]byte(`[{"name":"still-live"}]`), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := CollectJSONPath("$[*].id", doc); err == nil {
+		t.Fatalf("expected an error for an element with no id, got %v", got)
+	}
+
+	bin := stubScript(t)
+	fast := VerifyPolicy{Timeout: 10 * time.Millisecond, Interval: time.Millisecond}
+	entry := Entry{
+		Type:        "ssh-key",
+		Name:        "still-live",
+		CleanupArgv: []string{"0", "", ""},
+		VerifyGone:  &VerifyGone{Cmd: []string{"0", `[{"name":"still-live"}]`, ""}, AbsentFrom: "$[*].id"},
+	}
+	res := CleanupVerified(bin, []Entry{entry}, nil, fast)[0]
+	if res.Verified != VerifiedUnchecked || res.Err == nil {
+		t.Fatalf("expected unchecked with an error, got verified=%q err=%v", res.Verified, res.Err)
+	}
+}
+
+// TestLoadCaseChecksResourceTemplateNames catches a typo in a resource block
+// before anything runs, while allowing every name a block can really see.
+func TestLoadCaseChecksResourceTemplateNames(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.yaml")
+	writeFile(t, good, `name: good
+vars:
+  size: m
+steps:
+  - name: make a key
+    cmd: [x]
+    capture:
+      key_id: $.id
+  - name: make a rig
+    cmd: [x]
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [rig, delete, "{{sandbox_name}}", "{{key_id}}", "{{size}}", "{{run_id}}", "{{sandbox_provider}}"]
+      verify_gone:
+        cmd: [rig, get, "{{sandbox_name}}"]
+        not_found: "HTTP 404"
+`)
+	if _, err := LoadCase(good); err != nil {
+		t.Fatalf("expected the case to load, got %v", err)
+	}
+
+	for field, block := range map[string]string{
+		"verify":  "      cleanup: [rig, delete, sb-1]\n      verify_gone:\n        cmd: [rig, get, \"{{missing}}\"]\n        not_found: \"HTTP 404\"\n",
+		"cleanup": "      cleanup: [rig, delete, \"{{missing}}\"]\n",
+		"later":   "      cleanup: [rig, delete, \"{{later_capture}}\"]\n",
+	} {
+		path := filepath.Join(dir, field+".yaml")
+		writeFile(t, path, `name: `+field+`
+steps:
+  - name: create
+    cmd: [x]
+    resource:
+      type: sandbox
+      name: sb-1
+`+block+`  - name: afterwards
+    cmd: [x]
+    capture:
+      later_capture: $.id
+`)
+		_, err := LoadCase(path)
+		if err == nil || !strings.Contains(err.Error(), "which no earlier capture") {
+			t.Errorf("%s: expected an undefined-template error, got %v", field, err)
+		}
+	}
+}
+
+// TestRegisterKeepsResourceWhenVerifyTemplateFails covers a verify_gone that
+// cannot be templated at run time: the resource must still be registered, so
+// it is deleted, and its cleanup must count as unverified-and-failed.
+func TestRegisterKeepsResourceWhenVerifyTemplateFails(t *testing.T) {
+	bin := stubScript(t)
+	r, err := New(Options{BinPath: bin, RunDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	c := &Case{
+		Name: "verify template typo",
+		Steps: []Step{{
+			Name:    "create",
+			Cmd:     []string{"0", `{"name":"sb-1"}`, ""},
+			Expect:  Expectation{Exit: intPtr(0)},
+			Capture: map[string]string{"sandbox_name": "$.name"},
+			Resource: &Resource{
+				Type:       "sandbox",
+				Name:       "{{sandbox_name}}",
+				Cleanup:    []string{"0", "", ""},
+				VerifyGone: &VerifyGone{Cmd: []string{"1", "", "{{missing}}"}, NotFound: "HTTP 404"},
+			},
+		}},
+	}
+	if err := r.RunCase(context.Background(), c); err == nil || !strings.Contains(err.Error(), "registered without its verify_gone check") {
+		t.Fatalf("expected the step to fail after registering, got %v", err)
+	}
+	entries := r.Ledger().Entries()
+	if len(entries) != 1 || entries[0].Name != "sb-1" || entries[0].VerifyGoneError == "" {
+		t.Fatalf("expected sb-1 registered with its verify error, got %+v", entries)
+	}
+	res := Cleanup(bin, entries, nil)[0]
+	if res.Err == nil || res.Verified != VerifiedUnchecked {
+		t.Fatalf("expected the cleanup to count as a failure, got %+v", res)
+	}
+}
+
+func TestLoadCaseRejectsMalformedVerifyGone(t *testing.T) {
+	dir := t.TempDir()
+	cases := map[string]string{
+		"no-cmd": `
+      verify_gone:
+        not_found: "HTTP 404"`,
+		"neither": `
+      verify_gone:
+        cmd: [rig, get, sb-1]`,
+		"both": `
+      verify_gone:
+        cmd: [rig, get, sb-1]
+        not_found: "HTTP 404"
+        absent_from: "$[*].name"`,
+		"no-wildcard": `
+      verify_gone:
+        cmd: [rig, list, -o, json]
+        absent_from: "$.name"`,
+	}
+	for name, block := range cases {
+		path := filepath.Join(dir, name+".yaml")
+		writeFile(t, path, `name: `+name+`
+steps:
+  - name: create
+    cmd: [rig, create]
+    resource:
+      type: sandbox
+      name: sb-1
+      cleanup: [rig, delete, sb-1]`+block+"\n")
+		if _, err := LoadCase(path); err == nil {
+			t.Errorf("%s: expected LoadCase to reject the verify_gone block", name)
+		}
 	}
 }
 
@@ -862,7 +1207,11 @@ func TestRunnerReleasesResourceOnlyAfterAssertionsPass(t *testing.T) {
 			t.Fatalf("RunCase: %v", err)
 		}
 		if entries := r.Ledger().Entries(); len(entries) != 0 {
-			t.Fatalf("expected released resource to leave the ledger, got %+v", entries)
+			t.Fatalf("expected released resource to leave cleanup, got %+v", entries)
+		}
+		rel := r.Ledger().Released()
+		if len(rel) != 1 || rel[0].Released.ByStep != "confirm deletion" || rel[0].Released.Verified != VerifiedUnsupported {
+			t.Fatalf("expected the release kept as history, got %+v", rel)
 		}
 	})
 
@@ -903,6 +1252,111 @@ func TestRunnerReleasesResourceOnlyAfterAssertionsPass(t *testing.T) {
 	})
 }
 
+// TestReleaseVerifiesBeforeHandingBackFromCleanup covers a release whose
+// resource has a verify_gone check: it is released only when the check says
+// gone, and otherwise stays with cleanup and fails the step.
+func TestReleaseVerifiesBeforeHandingBackFromCleanup(t *testing.T) {
+	bin := stubScript(t)
+	fast := VerifyPolicy{Timeout: 10 * time.Millisecond, Interval: time.Millisecond}
+	run := func(lookupExit, lookupStderr string) (*Runner, error) {
+		r, err := New(Options{BinPath: bin, RunDir: t.TempDir(), VerifyPolicy: fast})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c := &Case{
+			Name: "release with verify",
+			Steps: []Step{
+				{
+					Name: "create",
+					Cmd:  []string{"0", "", ""},
+					Resource: &Resource{
+						Type:       "sandbox",
+						Name:       "sb-1",
+						Cleanup:    []string{"0", "", ""},
+						VerifyGone: &VerifyGone{Cmd: []string{lookupExit, "", lookupStderr}, NotFound: "HTTP 404"},
+					},
+				},
+				{
+					Name:            "consume",
+					Cmd:             []string{"0", "", ""},
+					ReleaseResource: &ResourceRef{Type: "sandbox", Name: "sb-1"},
+				},
+			},
+		}
+		return r, r.RunCase(context.Background(), c)
+	}
+
+	r, err := run("1", "HTTP 404")
+	if err != nil {
+		t.Fatalf("expected a verified release, got %v", err)
+	}
+	if rel := r.Ledger().Released(); len(rel) != 1 || rel[0].Released.Verified != VerifiedGone {
+		t.Fatalf("expected sb-1 released as verified gone, got %+v", rel)
+	}
+
+	r, err = run("0", "")
+	if err == nil || !strings.Contains(err.Error(), "kept for cleanup") {
+		t.Fatalf("expected the release to fail while sb-1 still exists, got %v", err)
+	}
+	if pending := r.Ledger().Entries(); len(pending) != 1 {
+		t.Fatalf("expected sb-1 kept for cleanup, got %+v", pending)
+	}
+}
+
+// TestKilledStepRegistersResourceWhenOptedIn covers a create command that
+// printed its resource and was then killed (a step timeout here; an
+// interrupt or the run deadline take the same path). With
+// register_on_failure the resource must still reach the ledger.
+func TestKilledStepRegistersResourceWhenOptedIn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a POSIX shell")
+	}
+	script := filepath.Join(t.TempDir(), "slow.sh")
+	writeFile(t, script, "#!/bin/sh\nprintf '%s' '{\"name\":\"sb-killed\"}'\nexec sleep 30\n")
+	if err := os.Chmod(script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(optIn bool) (*Runner, error) {
+		// Long enough for the script to print before it is killed, even when
+		// go test runs packages in parallel.
+		r, err := New(Options{BinPath: script, RunDir: t.TempDir(), StepTimeout: 2 * time.Second})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		c := &Case{Name: "killed create", Steps: []Step{{
+			Name:    "create",
+			Cmd:     []string{"rig", "create"},
+			Capture: map[string]string{"sandbox_name": "$.name"},
+			Resource: &Resource{
+				Type:              "sandbox",
+				Name:              "{{sandbox_name}}",
+				Cleanup:           []string{"rig", "delete", "{{sandbox_name}}"},
+				RegisterOnFailure: optIn,
+			},
+		}}}
+		return r, r.RunCase(context.Background(), c)
+	}
+
+	r, err := run(true)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected the step to time out, got %v", err)
+	}
+	if entries := r.Ledger().Entries(); len(entries) != 1 || entries[0].Name != "sb-killed" {
+		t.Fatalf("expected sb-killed registered from the partial output, got %+v", entries)
+	}
+
+	r, _ = run(false)
+	if entries := r.Ledger().Entries(); len(entries) != 0 {
+		t.Fatalf("expected nothing registered without register_on_failure, got %+v", entries)
+	}
+}
+
+func TestRunSlug(t *testing.T) {
+	if got := RunSlug("20261101T200601.962951000Z"); got != "20261101t200601962951000z" {
+		t.Fatalf("RunSlug = %q", got)
+	}
+}
+
 // TestRunnerRegistersResourceFromSameStepCapture covers the common real-world
 // shape: a single step creates a resource, captures its id/name from that same
 // command's own output, and registers cleanup referencing that capture. The
@@ -928,6 +1382,10 @@ func TestRunnerRegistersResourceFromSameStepCapture(t *testing.T) {
 					Type:    "sandbox",
 					Name:    "{{sandbox_name}}",
 					Cleanup: []string{"0", "deleted {{sandbox_name}}", ""},
+					VerifyGone: &VerifyGone{
+						Cmd:      []string{"1", "", "lookup of {{sandbox_name}}: HTTP 404"},
+						NotFound: "HTTP 404",
+					},
 				},
 			},
 		},
@@ -946,6 +1404,9 @@ func TestRunnerRegistersResourceFromSameStepCapture(t *testing.T) {
 	}
 	if len(entries[0].CleanupArgv) != 3 || entries[0].CleanupArgv[1] != "deleted sb-xyz" {
 		t.Fatalf("expected cleanup argv templated with the same-step capture, got %#v", entries[0].CleanupArgv)
+	}
+	if v := entries[0].VerifyGone; v == nil || len(v.Cmd) != 3 || v.Cmd[2] != "lookup of sb-xyz: HTTP 404" || v.NotFound != "HTTP 404" {
+		t.Fatalf("expected verify_gone cmd templated with the same-step capture, got %#v", entries[0].VerifyGone)
 	}
 }
 

@@ -28,9 +28,12 @@ steps:
       type: ssh-key
       name: "{{ssh_key_id}}"
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
+      verify_gone:
+        cmd: [secret, ssh-key, list, -o, json]
+        absent_from: "$[*].id"
 
   - name: create a medium coder sandbox from the selected provider base snapshot
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
+    cmd: [rig, create, "e2e-{{run_slug}}-coder", --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Rig
@@ -44,8 +47,12 @@ steps:
       sandbox_name: $.name
     resource:
       type: sandbox
-      name: "{{sandbox_name}}"
-      cleanup: [rig, delete, "{{sandbox_name}}", --remote, --force, -o, json]
+      register_on_failure: true
+      name: "e2e-{{run_slug}}-coder"
+      cleanup: [rig, delete, "e2e-{{run_slug}}-coder", --remote, --force, -o, json]
+      verify_gone:
+        cmd: [rig, get, "e2e-{{run_slug}}-coder", -o, json]
+        not_found: "HTTP 404"
 
   - name: verify the booted base snapshot contract
     cmd:
