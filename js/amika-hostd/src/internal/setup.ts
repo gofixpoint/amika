@@ -108,12 +108,13 @@ export const DEFAULT_PRESET_IMAGES: Record<string, string> = {
  * setup asks about each other one this machine can run.
  */
 export async function runSetup(
-  deps: SetupDeps,
+  operatorDeps: SetupDeps,
   {
     fromUp = false,
     runtimes: givenRuntimes,
   }: { fromUp?: boolean; runtimes?: RuntimeChange } = {},
 ): Promise<void> {
+  const { deps, nextStep } = withSteps(operatorDeps);
   // An old file's tables are rewritten first, so setup reads it, and writes
   // it back in the current format.
   const loaded = (deps.loadConfigFile ?? loadConfigFileFromDisk)(deps.env);
@@ -144,6 +145,7 @@ export async function runSetup(
       `Changing the hostname registers a new host in Amika on the next \`amika-hostd up\`; delete ${saved.hostname} in the Amika dashboard if you no longer need it.`,
     );
   }
+  nextStep();
 
   const secretHome = keychainSecret?.description ?? configPath;
   const secretFromEnv = envName(deps.env, "secretKey");
@@ -222,7 +224,9 @@ export async function runSetup(
     }
   }
 
+  nextStep();
   const apiKey = await askApiKey(deps, effective.apiUrl);
+  nextStep();
 
   // Which runtimes run, of those this machine can: each defaults to what the
   // file says, so a rerun that answers nothing changes nothing.
@@ -233,10 +237,15 @@ export async function runSetup(
   // refused: the operator never chose it.
   const given = givenRuntimes ?? { enable: [], disable: [] };
   const smolByDefault = !/^\s*\[\s*runtimes\./m.test(file?.contents ?? "");
+  const askRuntime = askYesNo(deps.prompt);
   const runtimeChange = await chooseRuntimes(
     platform.runtimes(),
     wasOn,
-    askYesNo(deps.prompt),
+    async (question, current) => {
+      const answer = await askRuntime(question, current);
+      nextStep();
+      return answer;
+    },
     smolByDefault &&
       !platform.runtimes().includes("smol") &&
       !given.enable.includes("smol") &&
@@ -525,6 +534,41 @@ function restoreSecret(
       ? `${error.message}; ${secretHome} has the old secret key again. If Amika's requests to this host start failing, ${again}.`
       : `${error.message}; ${secretHome} has the old secret key again, and nothing was sent to Amika.`,
   );
+}
+
+/**
+ * `deps` with a blank line between setup's steps: `nextStep` puts one before
+ * whatever comes next, a line of output or a question. The question carries
+ * it, so `setup --non-interactive`, whose questions print nothing, gets no
+ * run of blank lines.
+ */
+function withSteps(deps: SetupDeps): {
+  deps: SetupDeps;
+  nextStep: () => void;
+} {
+  let pending = false;
+  const spaced =
+    (prompt: Prompt): Prompt =>
+    (question) => {
+      const gap = pending ? "\n" : "";
+      pending = false;
+      return prompt(gap + question);
+    };
+  return {
+    deps: {
+      ...deps,
+      out: (line) => {
+        if (pending && line !== "") deps.out("");
+        pending = false;
+        deps.out(line);
+      },
+      prompt: spaced(deps.prompt),
+      promptSecret: spaced(deps.promptSecret),
+    },
+    nextStep: () => {
+      pending = true;
+    },
+  };
 }
 
 const RESTART =
