@@ -4,7 +4,7 @@
  *
  * Sockets are fed to `virtualServer` exactly as the tunnel feeds it, with
  * the two headers the gateway writes, so what is under test is the path a
- * browser at `web--demo.r.acme.o.amika.test` takes.
+ * browser at `s-web--demo--acme.amika.test` takes.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -24,7 +24,7 @@ import { virtualServer } from "./internal/tunnel-serving.js";
 
 const SECRET = "test-secret";
 const AMIKA = "https://app.amika.test";
-const NAME = "web--demo.r.acme.o.amika.test";
+const NAME = "s-web--demo--acme.amika.test";
 const ORIGIN = `https://${NAME}`;
 const NAMED = { "x-amika-rig": "demo", "x-amika-service": "web" };
 const NAVIGATE = { "sec-fetch-mode": "navigate", "sec-fetch-site": "none" };
@@ -293,7 +293,7 @@ describe("a rig's service at its own hostname", () => {
     // the caller sent it.
     const { send, upgradeTo } = await tunnelledHost();
     const amikad = {
-      host: "amikad--demo.r.acme.o.amika.test",
+      host: "s-amikad--demo--acme.amika.test",
       "x-amika-service": "amikad",
     };
 

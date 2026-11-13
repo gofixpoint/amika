@@ -1,7 +1,7 @@
 /**
  * Reading which rig and service a tunnelled request is for.
  *
- * A browser reaches a rig at `<service>--<rig>.r.<org>.o.<zone>`. The
+ * A browser reaches a rig at `s-<service>--<rig>--<org>.<zone>`. The
  * reverse proxy reads the rig and the service out of that name and signs
  * them, and the gateway checks the signature and writes them onto the
  * tunnel stream as two headers, after removing every `x-amika-` header the

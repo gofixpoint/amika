@@ -280,7 +280,7 @@ against the gateway's logs.
 
 ### A rig named by its hostname
 
-A browser reaches a rig's service at `<service>--<rig>.r.<org>.o.<zone>`.
+A browser reaches a rig's service at `s-<service>--<rig>--<org>.<zone>`.
 That hostname never reaches this daemon on its own: the request goes to
 the gateway's address. So the reverse proxy reads the rig and the service
 out of it and signs them, and the gateway, having checked the signature,
@@ -297,7 +297,7 @@ listening socket; a `WeakMap` entry only the tunnel's server writes
 cannot, so a listening daemon never names a request.
 
 A named request is that service's whatever its path. `/v0beta1/rigs` on
-`web--rig.r.org.o.<zone>` is the rig's own page, never this daemon's
+`s-web--rig--org.<zone>` is the rig's own page, never this daemon's
 machine list, so the app sends it to the service before any of its own
 routes can match. The exceptions are `/__amika/login` and
 `/__amika/callback`, which are how a browser logs in to that origin.
@@ -316,7 +316,7 @@ session for that origin and nothing else:
   its SSH WebSocket, `GET /v1/ssh-sessions` as an upgrade, without the
   host key, as at its service route. A tunnel host has no other address
   an SSH client can dial, and amikad checks the connect token before it
-  accepts the socket. Everything else at `amikad--<rig>` is `404`.
+  accepts the socket. Everything else at `s-amikad--<rig>--<org>` is `404`.
 
 The service is told its public address the way a reverse proxy tells an
 app behind it: `X-Forwarded-Host` (the signed name) and `X-Forwarded-Proto:
