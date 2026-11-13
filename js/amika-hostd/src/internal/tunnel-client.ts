@@ -96,7 +96,11 @@ export type TunnelEvent =
 
 export interface TunnelClientOptions extends Pick<
   TunnelSessionOptions,
-  "keepAliveIntervalMs" | "pingTimeoutMs" | "drainMs" | "onConnection"
+  | "keepAliveIntervalMs"
+  | "pingTimeoutMs"
+  | "maxMissedPings"
+  | "drainMs"
+  | "onConnection"
 > {
   /**
    * Where to attach, and with what. Read again before **every** dial, so a
@@ -394,6 +398,7 @@ export class TunnelClient {
     const attachment = new TunnelSession(dialed.ws, {
       keepAliveIntervalMs: this.options.keepAliveIntervalMs,
       pingTimeoutMs: this.options.pingTimeoutMs,
+      maxMissedPings: this.options.maxMissedPings,
       drainMs: this.options.drainMs,
       onConnection: this.options.onConnection,
     });
