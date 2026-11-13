@@ -53,6 +53,16 @@ export interface HostPlatform {
   /** The runtimes this machine can run rigs with; none on an unknown OS. */
   runtimes(): RuntimeName[];
   /**
+   * The npm package with this machine's smolmachines engine, or undefined
+   * where the engine does not run. smol is offered only where it does.
+   */
+  smolEnginePackage(): string | undefined;
+  /**
+   * What smolvm needs to run rigs that this machine lacks, each with its
+   * fix. Warnings only: the operator can fix them after setup.
+   */
+  smolWarnings(): string[];
+  /**
    * The system keychain hostd keeps secrets in, or undefined where it
    * supports none (Linux without a session bus, say).
    */

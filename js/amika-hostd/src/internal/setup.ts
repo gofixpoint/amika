@@ -14,10 +14,15 @@ import {
   registerHost as registerHostWithAmika,
   setHostSecret as setHostSecretInAmika,
 } from "./amika-api.js";
-import { ensureAmikad } from "./amikad-install.js";
+import { amikadBinary } from "./amikad-install.js";
 import { daemonPaths, hostdDataDir } from "./daemon.js";
-import { findLume, installLume } from "./lume-setup.js";
 import { askYesNo, chooseRuntimes } from "./runtime-choice.js";
+import {
+  checkBareMetal,
+  planInstalls,
+  runInstalls,
+  type RuntimeInstallDeps,
+} from "./runtime-install.js";
 import { fileMachineIndex } from "./runtime-router.js";
 import {
   refuseTurningOffWithRigs,
@@ -43,13 +48,11 @@ import { tomlKey, upgradeConfigFile } from "./config-upgrade.js";
 import { isValidApiKey, type Secrets } from "./credentials.js";
 import { writePrivateFile } from "./private-file.js";
 import type { Prompt } from "./prompt.js";
-import {
-  describeStrictModesViolation,
-  strictModesViolation,
-  type StrictModesViolation,
-} from "./strict-modes.js";
 
-export interface SetupDeps {
+export interface SetupDeps extends Omit<
+  RuntimeInstallDeps,
+  "env" | "out" | "platform"
+> {
   env: NodeJS.ProcessEnv;
   out: (line: string) => void;
   err: (line: string) => void;
@@ -73,26 +76,12 @@ export interface SetupDeps {
   platform?: HostPlatform;
   /** The account a bare-metal rig's SSH sessions log in as. */
   sshUser?: () => string;
-  /**
-   * Make sure the amikad the `bare_metal` runtime runs is installed and
-   * return its path; defaults to `ensureAmikad`.
-   */
-  installAmikad?: typeof ensureAmikad;
-  /**
-   * The directory above or at `dir` that sshd's StrictModes refuses, if any;
-   * defaults to checking this machine as the running account.
-   */
-  strictModesViolation?: (dir: string) => StrictModesViolation | undefined;
-  /** Finds the `lume` binary; defaults to `findLume`. */
-  findLume?: typeof findLume;
-  /** Installs Lume when it is turned on and missing; defaults to `installLume`. */
-  installLume?: typeof installLume;
 }
 
 /**
  * The sizes and preset images a config written from scratch gets, so a new
- * host can run rigs right away. They match `config.example.toml`, which the
- * installer seeds (`setup.test.ts` checks).
+ * host can run rigs right away. They match `config.example.toml`
+ * (`setup.test.ts` checks).
  */
 // tiny and small have 20 GiB disks, not the 10 and 16 GiB they had, because
 // smolvm caches an image only for a disk of at least its 20 GiB template
@@ -205,8 +194,7 @@ export async function runSetup(
     );
   } else {
     // Setup marks the file when it stores the secret key in the keychain
-    // (`secret_store = "keychain"`; the installer's seeded hostname is no
-    // sign of that). With the mark, the key should be there; it may be
+    // (`secret_store = "keychain"`). With the mark, the key should be there; it may be
     // there but locked, and not every keyring can say so (a locked KeePassXC
     // database hides its items), so ask before replacing it.
     if (
@@ -240,11 +228,21 @@ export async function runSetup(
   // file says, so a rerun that answers nothing changes nothing.
   const platform = deps.platform ?? currentHostPlatform();
   const wasOn = new Set(Object.keys(saved.runtimes.runtimes) as RuntimeName[]);
+  // A config that names no runtime has smol on by default. Where smol cannot
+  // run (no engine for this machine), that default is turned off, not
+  // refused: the operator never chose it.
+  const given = givenRuntimes ?? { enable: [], disable: [] };
+  const smolByDefault = !/^\s*\[\s*runtimes\./m.test(file?.contents ?? "");
   const runtimeChange = await chooseRuntimes(
     platform.runtimes(),
     wasOn,
     askYesNo(deps.prompt),
-    givenRuntimes,
+    smolByDefault &&
+      !platform.runtimes().includes("smol") &&
+      !given.enable.includes("smol") &&
+      !given.disable.includes("smol")
+      ? { ...given, disable: [...given.disable, "smol"] }
+      : given,
   );
   const runtimesOn = new Set(wasOn);
   for (const name of runtimeChange.enable) runtimesOn.add(name);
@@ -255,15 +253,14 @@ export async function runSetup(
       fileMachineIndex(daemonPaths(deps.env).machineIndexFile).entries(),
     );
   }
-  // Before anything is stored, so a machine that cannot be a rig, or a Lume
-  // that will not install, is refused with nothing changed.
-  if (runtimesOn.has("bare_metal")) await prepareBareMetal(saved, deps);
-  if (
-    runtimesOn.has("lume") &&
-    (deps.findLume ?? findLume)(deps.env) === undefined
-  ) {
-    await (deps.installLume ?? installLume)(deps);
+  // Before anything is stored, so a machine that cannot run a runtime, or
+  // an install that fails, is refused with nothing changed.
+  const installs = planInstalls(runtimesOn, saved, { ...deps, platform });
+  for (const warning of installs.warnings) {
+    deps.err(`amika-hostd: warning: ${warning}`);
   }
+  await runInstalls(installs);
+  if (runtimesOn.has("bare_metal")) describeBareMetal(saved, platform, deps);
 
   // The file names the store setup used whenever the file alone (its own
   // setting, else the default) would choose another, so a store chosen from
@@ -427,57 +424,14 @@ export async function runSetup(
   }
 }
 
-/**
- * What the `bare_metal` runtime needs: an OS that runs it, an `sshd` binary
- * for amikad to run, and a state directory sshd's StrictModes accepts.
- * Returns the `sshd` found. Run before anything changes, by setup and by
- * `capabilities update`, so a machine that cannot be a rig is refused with
- * nothing changed.
- */
-export function checkBareMetal(
-  deps: Pick<SetupDeps, "env" | "platform" | "strictModesViolation">,
-): string {
-  const platform = deps.platform ?? currentHostPlatform();
-  if (!platform.runtimes().includes("bare_metal")) {
-    throw new ConfigError(
-      `amika-hostd cannot make this machine a rig on ${platform.name}; nothing was changed`,
-    );
-  }
-  const sshd = platform.findSshd();
-  if (sshd === undefined) {
-    throw new ConfigError(
-      `The bare_metal runtime needs an sshd binary, and none was found: ${platform.sshdInstallHint}. Then try again; nothing was changed.`,
-    );
-  }
-  const { amikadStateDir } = daemonPaths(deps.env);
-  const violation = (
-    deps.strictModesViolation ??
-    ((dir) => strictModesViolation(dir, { uid: process.getuid?.() ?? -1 }))
-  )(amikadStateDir);
-  if (violation !== undefined) {
-    throw new ConfigError(
-      describeStrictModesViolation(violation, amikadStateDir),
-    );
-  }
-  return sshd;
-}
-
-/**
- * Check the `bare_metal` runtime (`checkBareMetal`), install amikad into
- * hostd's data directory (no system path, no `sudo`), and show what Amika
- * will be told about the machine.
- */
-async function prepareBareMetal(
+/** Show what Amika will be told about this machine as a bare-metal rig. */
+function describeBareMetal(
   config: { amikadPath?: string },
+  platform: HostPlatform,
   deps: SetupDeps,
-): Promise<void> {
-  const platform = deps.platform ?? currentHostPlatform();
-  const sshd = checkBareMetal(deps);
-  const amikad = await (deps.installAmikad ?? ensureAmikad)(config, {
-    env: deps.env,
-    platform,
-    out: deps.out,
-  });
+): void {
+  const sshd = checkBareMetal({ ...deps, platform });
+  const amikad = amikadBinary(config, deps.env);
   const { vcpus, memoryGib, diskGib, os, arch } = platform.detectResources();
   const user = (deps.sshUser ?? (() => userInfo().username))();
   deps.out(

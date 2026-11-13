@@ -10,8 +10,18 @@
  * (`MACOS_IMAGE_COST`).
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
-import { userInfo } from "node:os";
+import {
+  accessSync,
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { homedir, tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { LumeCli } from "@amika/sandbox/lume";
@@ -19,6 +29,7 @@ import type { HostPlatform } from "../platforms/index.js";
 import { ensureAmikad } from "./amikad-install.js";
 import { ConfigError, ENV_NAMES } from "./config.js";
 import { DaemonError } from "./daemon.js";
+import { MACOS_DISK_GIB } from "./runtime-update.js";
 
 /** Lume's release that milestone 0 of spec 028 tested. */
 export const LUME_VERSION = "0.6.1";
@@ -27,12 +38,23 @@ export const LUME_VERSION = "0.6.1";
 export const MACOS_BASE_VM = "amika-macos-base";
 
 /**
- * What building a macOS image costs, for the warning before it starts. The
- * restore image is about 20 GB; the base VM, the image and Lume's copy of the
- * restore image take most of the rest.
+ * What building a macOS image costs, for the warning before it starts: the
+ * restore image (about 20 GB, kept for a rebuild), the base VM (about
+ * 21 GB), and the template, an APFS clone of it (about 9 GB more).
  */
 export const MACOS_IMAGE_COST =
-  "This downloads a macOS restore image from Apple (about 20 GB), needs about 60 GB of free disk, and takes 30 minutes or more.";
+  "This downloads a macOS restore image from Apple (about 20 GB) and keeps it for a rebuild, needs about 50 GB of free disk, and takes 30 minutes or more.";
+
+/**
+ * Where hostd keeps Apple's restore image once Lume has downloaded it, so a
+ * new base VM needs no download. It is outside hostd's data folder, which
+ * the installer's `--uninstall` deletes; `amika-hostd uninstall` asks first.
+ */
+export function macosRestoreImageDir(env: NodeJS.ProcessEnv): string {
+  const cacheHome =
+    env.XDG_CACHE_HOME || path.join(env.HOME || homedir(), ".cache");
+  return path.join(cacheHome, "amika-hostd", "macos");
+}
 
 /**
  * Lume's opt-out from its usage telemetry, set for every `lume` hostd runs
@@ -219,8 +241,9 @@ export async function missingMacosImages(
  * VM from Apple's restore image unless it is already there, then run
  * `macos-image/build.sh` with the amikad release hostd installs. Each step
  * is skipped when its result exists, so a failed build is retried by
- * running this again. The restore image is Lume's newest supported one,
- * unless `AMIKA_HOSTD_MACOS_IPSW` names a file or URL.
+ * running this again. The restore image is the one `AMIKA_HOSTD_MACOS_IPSW`
+ * names, else the one hostd kept for this Mac's macOS version, else Lume's
+ * newest supported one, which hostd then keeps.
  */
 export async function buildMacosImage(
   template: string,
@@ -274,23 +297,49 @@ export async function buildMacosImage(
   };
   deps.out(`Building the macOS image ${template}. ${MACOS_IMAGE_COST}`);
   if (!(await has(lume, MACOS_BASE_VM))) {
-    const ipsw = deps.env.AMIKA_HOSTD_MACOS_IPSW?.trim() || "latest";
     const version = await reported(
       "Reading this Mac's macOS version",
       async () => (deps.macosVersion ?? hostMacosVersion)(),
     );
     const preset = unattendedPreset(version);
+    const kept = keptRestoreImage(deps.env, version);
+    const ipsw =
+      deps.env.AMIKA_HOSTD_MACOS_IPSW?.trim() ||
+      (kept !== undefined && existsSync(kept) ? kept : "latest");
     deps.out(
       `Installing macOS into the base VM ${MACOS_BASE_VM}, from ${ipsw === "latest" ? "the newest restore image Lume supports" : ipsw}, with the ${preset} setup preset (this Mac runs macOS ${version})...`,
     );
-    const code = await run(
-      lume,
-      ["create", "--ipsw", ipsw, "--unattended", preset, MACOS_BASE_VM],
-      env,
+    const started = Date.now();
+    // Lume reads `GB` as GiB. Its progress lines are thinned out
+    // (`runShowingProgress`): the download alone prints one per percent.
+    const code = await reported("Starting lume", () =>
+      (deps.run ?? runShowingProgress)(
+        lume,
+        [
+          "create",
+          "--ipsw",
+          ipsw,
+          "--disk-size",
+          `${MACOS_DISK_GIB}GB`,
+          "--unattended",
+          preset,
+          MACOS_BASE_VM,
+        ],
+        env,
+        deps.signal,
+      ),
     );
+    // After a failed create too, so a retry needs no download.
+    if (ipsw === "latest" && kept !== undefined) {
+      keepRestoreImage(deps.env, kept, started, deps.out);
+    }
     if (code !== 0) {
+      const retry =
+        ipsw === kept
+          ? `; if the restore image is bad, delete ${kept} to download it again`
+          : "";
       throw new DaemonError(
-        `\`lume create\` failed (exit ${code}) making the base VM ${MACOS_BASE_VM}; its output is above`,
+        `\`lume create\` failed (exit ${code}) making the base VM ${MACOS_BASE_VM}; its output is above${retry}`,
       );
     }
   }
@@ -318,6 +367,57 @@ export async function buildMacosImage(
     );
   }
   deps.out(`Built the macOS image ${template}.`);
+}
+
+/**
+ * The restore image hostd keeps for macOS `version`'s major version, since
+ * the unattended preset follows it; undefined for a version it cannot read.
+ */
+function keptRestoreImage(
+  env: NodeJS.ProcessEnv,
+  version: string,
+): string | undefined {
+  const major = Number.parseInt(version, 10);
+  if (!Number.isFinite(major)) return undefined;
+  return path.join(macosRestoreImageDir(env), `restore-macos${major}.ipsw`);
+}
+
+/**
+ * Move the restore image `lume create --ipsw latest` left in the temp folder
+ * to `kept`, and delete any other kept one. Only a file written since
+ * `since`: an older one can be another macOS version. Lume names the file
+ * only once its download is complete. A failure here does not fail the build.
+ */
+function keepRestoreImage(
+  env: NodeJS.ProcessEnv,
+  kept: string,
+  since: number,
+  out: (line: string) => void,
+): void {
+  const download = path.join(env.TMPDIR || tmpdir(), "latest.ipsw");
+  try {
+    if (!existsSync(download) || statSync(download).mtimeMs < since) return;
+    const dir = path.dirname(kept);
+    mkdirSync(dir, { recursive: true });
+    try {
+      renameSync(download, kept);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+      const partial = `${kept}.partial`;
+      copyFileSync(download, partial);
+      renameSync(partial, kept);
+      rmSync(download);
+    }
+    for (const name of readdirSync(dir)) {
+      const file = path.join(dir, name);
+      if (file !== kept) rmSync(file, { force: true });
+    }
+    out(`Kept the restore image in ${kept}, for a rebuild.`);
+  } catch (error) {
+    out(
+      `Could not keep the restore image ${download}: ${(error as Error).message}`,
+    );
+  }
 }
 
 /**
@@ -487,4 +587,105 @@ export function runToStderr(
       resolve(code);
     });
   });
+}
+
+/**
+ * Like `runToStderr`, for a command that prints progress such as `lume
+ * create`: its lines reach stderr as it prints them, with its progress lines
+ * thinned out (`progressFilter`). It runs under `script(1)`, in a terminal:
+ * with its output in a pipe or the daemon's log, Lume buffers it, and an
+ * hour of download reached the log in one burst.
+ */
+export function runShowingProgress(
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  /**
+   * Sends `script` `SIGTERM` once this aborts, which closes the terminal,
+   * so the command gets `SIGHUP`.
+   */
+  signal?: AbortSignal,
+  write: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
+): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    // With no input, script sends the terminal an end of file, which it
+    // echoes as `^D` and two backspaces.
+    const child = spawn(
+      "/usr/bin/script",
+      ["-q", "/dev/null", command, ...args],
+      {
+        env,
+        stdio: ["ignore", "pipe", process.stderr],
+      },
+    );
+    const show = progressFilter(write);
+    let partial = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      const lines = (partial + chunk).split("\n");
+      partial = lines.pop() ?? "";
+      for (const line of lines) show(cleanLine(line));
+    });
+    const stop = () => child.kill("SIGTERM");
+    if (signal?.aborted) stop();
+    else signal?.addEventListener("abort", stop, { once: true });
+    const settle = () => signal?.removeEventListener("abort", stop);
+    child.once("error", (error) => {
+      settle();
+      reject(error);
+    });
+    child.once("close", (code) => {
+      settle();
+      if (partial !== "") show(cleanLine(partial));
+      resolve(code);
+    });
+  });
+}
+
+/** A terminal's line as the log takes it: no `^D` echo, no carriage return. */
+function cleanLine(line: string): string {
+  const echo = "^D\b\b";
+  return (line.startsWith(echo) ? line.slice(echo.length) : line).replace(
+    /\r$/,
+    "",
+  );
+}
+
+/** Lume's progress lines: `Downloading IPSW Progress: 57%`, `Installing macOS progress=31%`. */
+const PROGRESS_LINE = /\b([A-Z][\w ]*?)\s+progress\s*[:=]\s*(\d+)%/i;
+
+/**
+ * `write`, passing each line on, but of each kind of progress line (Lume's
+ * download, then its install) only the first, the last at 100%, and one
+ * each time progress has gained `step` percent or `intervalMs` has passed
+ * since the last one shown, whichever comes first.
+ */
+export function progressFilter(
+  write: (line: string) => void,
+  {
+    step = 5,
+    intervalMs = 2 * 60_000,
+    now = Date.now,
+  }: { step?: number; intervalMs?: number; now?: () => number } = {},
+): (line: string) => void {
+  const shown = new Map<string, { percent: number; at: number }>();
+  return (line) => {
+    const match = PROGRESS_LINE.exec(line);
+    if (!match) {
+      write(line);
+      return;
+    }
+    const kind = match[1].toLowerCase();
+    const percent = Number(match[2]);
+    const last = shown.get(kind);
+    if (
+      last === undefined ||
+      percent >= last.percent + step ||
+      now() - last.at >= intervalMs ||
+      (percent >= 100 && last.percent < 100)
+    ) {
+      shown.set(kind, { percent, at: now() });
+      write(line);
+    }
+  };
 }

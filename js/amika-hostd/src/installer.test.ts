@@ -1,7 +1,8 @@
 /**
- * Drive install-amika-hostd.sh end to end against a local release, npm
- * registry and Node.js dist, with fake `node` binaries that report a chosen
- * version. Covers which node the installer accepts and what the launcher runs.
+ * Drive install-amika-hostd.sh end to end against a local release and
+ * Node.js dist, with fake `node` binaries that report a chosen version.
+ * Covers which node the installer accepts, what the launcher runs, and that
+ * the installer leaves the rest to `amika-hostd setup`.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -19,7 +20,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveConfig } from "./internal/config.js";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -31,28 +31,11 @@ const installer = path.join(repoRoot, "install-amika-hostd.sh");
 const hostdVersion = readFileSync(installer, "utf8").match(
   /^DEFAULT_VERSION="([^"]+)"$/m,
 )![1];
-const engineVersion = "1.22.2";
-
 /** The installer's names for this host, or undefined where it cannot run. */
-function hostPlatform():
-  | { os: string; nodeArch: string; engine: string }
-  | undefined {
+function hostPlatform(): { os: string; nodeArch: string } | undefined {
   const nodeArch = { x64: "x64", arm64: "arm64" }[process.arch as string];
-  if (process.platform === "linux" && nodeArch) {
-    const glibc = spawnSync("getconf", ["GNU_LIBC_VERSION"], {
-      encoding: "utf8",
-    });
-    if (glibc.status !== 0) return undefined;
-    return {
-      os: "linux",
-      nodeArch,
-      engine: `smolmachines-linux-${nodeArch}-gnu`,
-    };
-  }
-  if (process.platform === "darwin" && nodeArch === "arm64") {
-    return { os: "darwin", nodeArch, engine: "smolmachines-darwin-arm64" };
-  }
-  return undefined;
+  const os = { linux: "linux", darwin: "darwin" }[process.platform as string];
+  return os && nodeArch ? { os, nodeArch } : undefined;
 }
 
 const platform = hostPlatform();
@@ -88,11 +71,7 @@ const tools = [
 ];
 
 describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
-  const { os, nodeArch, engine } = platform ?? {
-    os: "",
-    nodeArch: "",
-    engine: "",
-  };
+  const { os, nodeArch } = platform ?? { os: "", nodeArch: "" };
   let root: string;
   let home: string;
   let hostdHome: string;
@@ -276,28 +255,49 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     expectLauncherRuns(privateNode(), "24.22.1");
   });
 
-  it("installs a bare-metal host without the VM engine it never runs", () => {
+  it("leaves the config and each runtime's installs to setup", () => {
     writeSystemNode("24.22.1");
-    rmSync(path.join(root, "registry"), { recursive: true });
-    const result = install({}, ["--bare-metal"]);
+    const result = install();
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).not.toContain("engine");
-    expect(existsSync(path.join(hostdHome, "node_modules"))).toBe(false);
-    expectLauncherRuns(systemNode(), "24.22.1");
-    // Only bare_metal is on, with no smol preset left to warn about.
-    const configPath = path.join(home, ".config/amika-hostd/config.toml");
-    const { runtimes } = resolveConfig({
-      file: { path: configPath, contents: readFileSync(configPath, "utf8") },
-    });
-    expect(Object.keys(runtimes.runtimes)).toEqual(["bare_metal"]);
-    expect(runtimes.warnings).toEqual([]);
+    expect(result.stdout).toContain("amika-hostd setup");
+    expect(existsSync(path.join(home, ".config/amika-hostd"))).toBe(false);
+    expect(existsSync(path.join(home, ".smolvm"))).toBe(false);
+    // What setup reads to install the engine for smol.
+    expect(existsSync(path.join(hostdHome, "engines.sha256"))).toBe(true);
+    expect(
+      existsSync(
+        path.join(hostdHome, "node_modules/smolmachines/package.json"),
+      ),
+    ).toBe(true);
   });
 
-  it("still needs the engine for a VM host", () => {
+  it("removes an engine from an earlier release, and keeps a matching one", () => {
     writeSystemNode("24.22.1");
-    rmSync(path.join(root, "registry"), { recursive: true });
-    expect(install().status).not.toBe(0);
+    const engine = (name: string, version: string) => {
+      const dir = path.join(hostdHome, "node_modules", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        path.join(dir, "package.json"),
+        `{\n  "name": "${name}",\n  "version": "${version}"\n}\n`,
+      );
+      return dir;
+    };
+    const stale = engine("smolmachines-linux-x64-gnu", "1.20.0");
+    const current = engine("smolmachines-darwin-arm64", "1.22.2");
+    const result = install();
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(current)).toBe(true);
   });
+
+  it.each(["--bare-metal", "--skip-smolvm"])(
+    "refuses %s, which setup replaces",
+    (flag) => {
+      const result = install({}, [flag]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`Unknown argument: ${flag}`);
+    },
+  );
 
   /** The installer failed before installing anything, naming the version. */
   function expectRefused(
@@ -314,7 +314,7 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
 
   function install(
     extraEnv: Record<string, string> = {},
-    flags: string[] = ["--skip-smolvm"],
+    flags: string[] = [],
   ) {
     return spawnSync("sh", [installer, ...flags], {
       encoding: "utf8",
@@ -324,7 +324,6 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
         TMPDIR: root,
         AMIKA_INSTALL_DIR: installDir,
         AMIKA_RELEASE_URL: `file://${path.join(root, "release")}`,
-        AMIKA_HOSTD_NPM_REGISTRY: `file://${path.join(root, "registry")}`,
         AMIKA_HOSTD_NODE_DIST_URL: `file://${nodeDist}`,
         ...extraEnv,
       },
@@ -372,24 +371,11 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     }
   }
 
-  /** A hostd release archive and the engine package it pins. */
+  /** A hostd release archive. */
   function writeRelease() {
     const base = `amika-hostd_${hostdVersion}`;
     const releaseDir = path.join(root, "release");
     const archiveDir = path.join(root, "release-src", base);
-    const engineArchive = `${engine}-${engineVersion}.tgz`;
-    const registryDir = path.join(root, "registry", engine, "-");
-
-    const engineSrc = path.join(root, "engine-src", "package");
-    mkdirSync(engineSrc, { recursive: true });
-    writeFileSync(path.join(engineSrc, "package.json"), "{}\n");
-    mkdirSync(registryDir, { recursive: true });
-    tarGz(
-      path.join(registryDir, engineArchive),
-      path.dirname(engineSrc),
-      "package",
-    );
-
     mkdirSync(path.join(archiveDir, "node_modules/smolmachines"), {
       recursive: true,
     });
@@ -400,11 +386,11 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     );
     writeFileSync(
       path.join(archiveDir, "node_modules/smolmachines/package.json"),
-      "{}\n",
+      '{"name":"smolmachines","version":"1.22.2"}\n',
     );
     writeFileSync(
       path.join(archiveDir, "engines.sha256"),
-      `${sha256(path.join(registryDir, engineArchive))}  ${engineArchive}\n`,
+      `${"0".repeat(64)}  smolmachines-darwin-arm64-1.22.2.tgz\n`,
     );
     mkdirSync(releaseDir, { recursive: true });
     tarGz(

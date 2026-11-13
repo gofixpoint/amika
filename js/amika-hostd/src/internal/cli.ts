@@ -14,7 +14,7 @@ import {
   setHostUrl as setHostUrlInAmika,
   type RegisteredHost,
 } from "./amika-api.js";
-import { amikadBinary, ensureAmikad } from "./amikad-install.js";
+import { amikadBinary } from "./amikad-install.js";
 import {
   bareMetalRuntime,
   type BareMetalRuntime,
@@ -55,8 +55,6 @@ import { lumeRuntime } from "./lume-runtime.js";
 import {
   buildMacosImagesInBackground,
   findLume,
-  installLume,
-  LUME_VERSION,
   MACOS_IMAGE_COST,
   missingMacosImages,
 } from "./lume-setup.js";
@@ -84,6 +82,7 @@ import {
   claimPidFile as claimPidFileOnDisk,
   daemonPaths,
   ensureNotRunning,
+  isAmikadRunning as isAmikadProcess,
   isDaemonProcess,
   isDaemonRunning,
   isSmolvmRunning as isSmolvmProcess,
@@ -92,6 +91,7 @@ import {
   type HandedSecrets,
   readRunningPid,
   hostdDataDir,
+  removePidFile,
   removeSmolvmFiles,
   removeStaleSmolvmFiles,
   startInBackground as spawnInBackground,
@@ -120,12 +120,13 @@ import {
 } from "./prepull.js";
 import { versionText } from "./build-info.js";
 import { PromptCancelled, type Prompt } from "./prompt.js";
+import { runSetup, withoutInvalidSecret, type SetupDeps } from "./setup.js";
+import { uninstall } from "./uninstall.js";
 import {
-  checkBareMetal,
-  runSetup,
-  withoutInvalidSecret,
-  type SetupDeps,
-} from "./setup.js";
+  planInstalls,
+  runInstalls,
+  type RuntimeInstallDeps,
+} from "./runtime-install.js";
 import { setupSkill, type SkillContext } from "./setup-skill.js";
 import {
   DEFAULT_SMOL_API_URL,
@@ -153,7 +154,7 @@ Commands:
                       it is not
   serve               Run the HTTP server in the foreground without registering
   config upgrade      Rewrite old tables in the config file in the current
-                      format (the installer runs it on an upgrade)
+                      format (setup does this too)
   capabilities get    Print the runtimes and presets this host offers Amika,
                       as the config file sets them
   capabilities update [--enable|--disable <runtime>]
@@ -166,6 +167,10 @@ Commands:
                       ngrok or Cloudflare Tunnel URL) to complete its
                       registration. A host whose address Amika assigns takes
                       none
+  uninstall           Stop the daemon, then delete what its runtimes installed:
+                      Lume rigs, and, when you type to confirm, the macOS
+                      images and smolvm. install-amika-hostd.sh --uninstall
+                      runs it, then removes amika-hostd itself
   version             Print version information
 
 Options:
@@ -181,8 +186,10 @@ Options:
                  without asking: smol, lume or bare_metal. Repeatable
   --fg           (up) Stay in the foreground instead of backgrounding
   --json         (capabilities, reload) Print JSON, for scripts and agents
-  --dry-run      (capabilities update) Print the plan and change nothing
-  --yes          (capabilities update) Apply the plan without asking
+  --dry-run      (capabilities update, uninstall) Print the plan and change
+                 nothing
+  --yes          (capabilities update, uninstall) Apply the plan without
+                 asking. It never answers a typed-phrase question
   --smolvm       (serve) Also start smolvm, and stop it on exit, as \`up\` does
   --port <port>  Port a listening daemon binds (AMIKA_HOSTD_PORT, TOML port;
                  default 3020)
@@ -224,6 +231,7 @@ export interface CliDeps {
   ) => Promise<void>;
   stopProcess?: typeof stopProcessByPid;
   isSmolvmRunning?: (pid: number) => boolean;
+  isAmikadRunning?: (pid: number) => boolean;
   claimPidFile?: typeof claimPidFileOnDisk;
   notifyReady?: typeof notifyParent;
   isRunning?: (pid: number) => boolean;
@@ -272,6 +280,14 @@ export interface CliDeps {
   installLume?: SetupDeps["installLume"];
   /** Finds the `lume` binary; defaults to `findLume`. */
   findLume?: SetupDeps["findLume"];
+  /** Finds smolvm; defaults to `findSmolvm`. */
+  findSmolvm?: RuntimeInstallDeps["findSmolvm"];
+  /** Installs smolvm; tests inject a fake. */
+  installSmolvm?: RuntimeInstallDeps["installSmolvm"];
+  /** The release's engine files beside the bundle; tests inject them. */
+  engineFiles?: RuntimeInstallDeps["engineFiles"];
+  /** Installs the smolmachines engine; tests inject a fake. */
+  installEngine?: RuntimeInstallDeps["installEngine"];
   /** The Lume templates not built yet; tests inject a fake. */
   missingMacosImages?: typeof missingMacosImages;
   /**
@@ -303,6 +319,9 @@ export async function runCli(
     }
     // Stopping and checking need only the pidfiles, not a valid configuration.
     if (parsed.command === "down") return await down(deps);
+    if (parsed.command === "uninstall") {
+      return await uninstallHost(deps, parsed);
+    }
     if (parsed.command === "status") return status(deps);
     if (parsed.command === "config-upgrade") return upgradeConfigOnDisk(deps);
     if (parsed.command === "capabilities-get") {
@@ -364,7 +383,17 @@ export async function runCli(
         // machine cannot run.
         checkRuntimesSupported(config.runtimes, platformOf(deps).runtimes());
         const on = config.runtimes.runtimes;
-        if (on.bare_metal) await prepareBareMetal(config, deps);
+        // What setup installed, again: a new hostd can pin a newer amikad
+        // than the last setup installed. Only what the daemon runs.
+        const installs = planInstalls(
+          Object.keys(on) as RuntimeName[],
+          config,
+          { ...deps, platform: platformOf(deps) },
+        );
+        await runInstalls({
+          ...installs,
+          steps: installs.steps.filter((step) => step.daemonUses),
+        });
         // smolvm runs only for smol, so its warnings apply only then.
         if (on.smol) warnUncachedSizes(config, deps);
         // Alongside registration, so a slow smolvm never delays it.
@@ -477,6 +506,7 @@ type ParsedCommand =
     }
   | { help: false; command: "up"; fg: boolean; flags: HostdFlags }
   | { help: false; command: "down" }
+  | { help: false; command: "uninstall"; yes: boolean; dryRun: boolean }
   | { help: false; command: "status" }
   | { help: false; command: "version" }
   | { help: false; command: "config-upgrade" }
@@ -634,43 +664,32 @@ async function updateCapabilities(
     change.disable.filter((name) => update.steps.includes(`Turn off ${name}`)),
     fileMachineIndex(paths.machineIndexFile).entries(),
   );
-  const lumeOn = next.runtimes.runtimes.lume !== undefined;
-  // Lume asked for, or kept on when asked: what it needs is installed even
-  // when the file already has it on, so this also restarts a failed build.
-  const wantsLume = lumeOn && (asked || change.enable.includes("lume"));
-  const installsLume =
-    wantsLume && (deps.findLume ?? findLume)(deps.env) === undefined;
-  const images = wantsLume
+  // A runtime asked for, or kept on when asked, gets what it needs even when
+  // the file already has it on, so this also repairs a broken install and
+  // restarts a failed macOS image build. Checked before the plan is shown:
+  // a machine that cannot run one is refused unchanged.
+  const on = Object.keys(next.runtimes.runtimes) as RuntimeName[];
+  const wanted = asked ? on : change.enable.filter((name) => on.includes(name));
+  const installs = planInstalls(wanted, next, { ...deps, platform });
+  const images = wanted.includes("lume")
     ? await (deps.missingMacosImages ?? missingMacosImages)(
         Object.values(presetImages(next.runtimes, "lume")),
         deps,
       )
     : [];
-  const turnsOnBareMetal = update.steps.includes("Turn on bare_metal");
-  // Checked before the plan is shown: a machine that cannot be a rig
-  // (no sshd, a home sshd's StrictModes refuses) is refused unchanged.
-  if (turnsOnBareMetal) checkBareMetal(deps);
   const install = [
-    ...(installsLume
-      ? [
-          `Install Lume ${LUME_VERSION} with its installer, into ~/.local/bin (downloads from GitHub; no sudo)`,
-        ]
-      : []),
+    ...installs.steps.map((step) => step.text),
     ...images.map(
       (image: string) =>
         `Build the macOS image ${image} in amika-hostd's background, refusing macOS rigs until it is done. ${MACOS_IMAGE_COST}`,
     ),
-    ...(turnsOnBareMetal
-      ? [
-          `Install amikad into ${hostdDataDir(deps.env)}, for SSH to this machine (no sudo)`,
-        ]
-      : []),
   ];
   const pid = readRunningPid(paths.pidFile, deps.isRunning ?? isDaemonProcess);
   const plan = {
     config: file.path,
     changes: update.steps,
     install,
+    warnings: installs.warnings,
     // A reload also starts a running daemon's build of a missing image.
     reload: (update.steps.length > 0 || images.length > 0) && pid !== undefined,
   };
@@ -687,6 +706,9 @@ async function updateCapabilities(
         ? "  - Reload the running amika-hostd"
         : "  - amika-hostd is not running; `amika-hostd up` applies it",
     );
+    for (const warning of plan.warnings) {
+      deps.err(`amika-hostd: warning: ${warning}`);
+    }
   }
   if (options.dryRun) {
     if (options.json) deps.out(JSON.stringify({ plan, applied: false }));
@@ -704,8 +726,7 @@ async function updateCapabilities(
       return 0;
     }
   }
-  if (installsLume) await (deps.installLume ?? installLume)(deps);
-  if (turnsOnBareMetal) await prepareBareMetal(next, deps);
+  await runInstalls(installs);
   if (plan.changes.length > 0) {
     (deps.writeConfigFile ?? writePrivateFile)(file.path, update.contents);
   }
@@ -990,7 +1011,11 @@ function hasSettings(config: HostdConfig): boolean {
   return REGISTRATION_SETTINGS.every((key) => config[key] !== undefined);
 }
 
-function parseCommand(args: readonly string[]): ParsedCommand {
+/**
+ * Parse argv into a command, throwing `UsageError` for anything the command
+ * does not take. Exported so a test checks the setup skill's commands.
+ */
+export function parseCommand(args: readonly string[]): ParsedCommand {
   let parsed;
   try {
     parsed = parseArgs({
@@ -1070,6 +1095,25 @@ function parseCommand(args: readonly string[]): ParsedCommand {
       ]);
       expectArguments(rest, 0);
       return { help: false, command, fg: values.fg ?? false, flags };
+    case "uninstall":
+      rejectOptions(command, values, [
+        ...SETUP_ONLY,
+        "json",
+        "enable",
+        "disable",
+        "fg",
+        "smolvm",
+        "port",
+        "host",
+        "secret-key-from-up",
+      ]);
+      expectArguments(rest, 0);
+      return {
+        help: false,
+        command,
+        yes: values.yes ?? false,
+        dryRun: values["dry-run"] ?? false,
+      };
     case "down":
     case "status":
     case "version":
@@ -1395,18 +1439,6 @@ function machineFacts(
 
 function platformOf(deps: Pick<CliDeps, "platform">): HostPlatform {
   return deps.platform ?? currentHostPlatform();
-}
-
-/**
- * Before the `bare_metal` runtime runs: make sure amikad is installed (a new
- * hostd may pin a newer one than the last install).
- */
-async function prepareBareMetal(config: HostdConfig, deps: CliDeps) {
-  await (deps.installAmikad ?? ensureAmikad)(config, {
-    env: deps.env,
-    platform: platformOf(deps),
-    out: deps.out,
-  });
 }
 
 /**
@@ -2167,6 +2199,7 @@ function bareMetalRuntimeFor(
     amikadStateDir: paths.amikadStateDir,
     amikad: amikadBinary(config, deps.env),
     logFile: paths.amikadLogFile,
+    pidFile: paths.amikadPidFile,
     resources: () => platform.detectResources(),
     err: deps.err,
   });
@@ -2391,6 +2424,9 @@ async function stopSmolvm(runtime: ManagedSmolvm | undefined, deps: CliDeps) {
 /** Long enough for the daemon's own shutdown, which includes smolvm's. */
 const DOWN_TIMEOUT_MS = SHUTDOWN_GRACE_MS + SMOLVM_STOP_TIMEOUT_MS + 5_000;
 
+/** How long `down` waits for a left-behind amikad, which stops its sshd. */
+const AMIKAD_STOP_TIMEOUT_MS = 10_000;
+
 /**
  * Stop the daemon, which stops its smolvm, and then any smolvm a daemon left
  * behind (one that was killed, or gave up waiting for smolvm to exit).
@@ -2425,15 +2461,54 @@ async function down(deps: CliDeps): Promise<number> {
     // Left by a run that never got to clean up (a reboot, say).
     removeStaleSmolvmFiles(paths);
   }
+  // A daemon that stops normally stops its amikad first; one that crashed
+  // leaves it running, with its sshd.
+  const isAmikad = deps.isAmikadRunning ?? isAmikadProcess;
+  const amikad = readRunningPid(paths.amikadPidFile, isAmikad);
+  if (amikad !== undefined) {
+    deps.out(`Stopping amikad (pid ${amikad})`);
+    if (
+      !(await stop(amikad, isAmikad, { timeoutMs: AMIKAD_STOP_TIMEOUT_MS }))
+    ) {
+      throw new DaemonError(
+        `amikad (pid ${amikad}) did not exit within ${AMIKAD_STOP_TIMEOUT_MS / 1000}s; see ${paths.amikadLogFile}`,
+      );
+    }
+    removePidFile(paths.amikadPidFile, amikad);
+  }
   const stopped = [
     ...(daemon === undefined ? [] : ["amika-hostd"]),
     ...(smolvm === undefined ? [] : ["smolvm"]),
+    ...(amikad === undefined ? [] : ["amikad"]),
   ];
   deps.out(
     stopped.length === 0
       ? "amika-hostd is not running"
       : `Stopped ${stopped.join(" and ")}`,
   );
+  return 0;
+}
+
+/**
+ * Stop the daemon, then delete what its runtimes installed (`uninstall.ts`).
+ * An unreadable config deletes only what needs none: smolvm.
+ */
+async function uninstallHost(
+  deps: CliDeps,
+  options: { yes: boolean; dryRun: boolean },
+): Promise<number> {
+  if (!options.dryRun) await down(deps);
+  let config: HostdConfig | undefined;
+  try {
+    config = resolveTolerant(deps);
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    deps.err(`amika-hostd: ${error.message}; skipping Lume`);
+  }
+  const index = (deps.machineIndex ?? fileMachineIndex)(
+    daemonPaths(deps.env).machineIndexFile,
+  );
+  await uninstall(config, index, options, deps);
   return 0;
 }
 

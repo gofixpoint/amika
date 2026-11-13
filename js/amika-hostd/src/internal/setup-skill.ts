@@ -20,9 +20,10 @@ export interface SkillContext {
   runtimes: readonly RuntimeName[];
 }
 
-/** How step 4 describes each runtime to the agent. */
+/** How step 3 describes each runtime to the agent. */
 const RUNTIME_NOTES: Record<RuntimeName, string> = {
-  smol: "- **smol**: Linux VMs. On by default, and kept as the config has it: do not ask about it, and leave it off on a host whose config turns it off (a bare-metal-only host).",
+  smol: `- **smol**: Linux VMs. On by default. Turning it on installs smolvm and
+  its engine (over 100 MB).`,
   lume: `- **lume**: macOS VMs. Off by default. Turning it on installs Lume and
   builds a macOS image on this Mac. ${MACOS_IMAGE_COST} Tell the operator
   this before asking, and turn it on only if they say yes to it.`,
@@ -47,7 +48,8 @@ description: Set up this machine as an Amika host with amika-hostd, without inte
 \`amika-hostd setup\` asks its questions in a terminal, so run
 \`amika-hostd setup --non-interactive\` instead. It asks nothing: it keeps
 whatever is already set up, generates this host's secret key if there is
-none, and writes the config with default rig sizes and images:
+none, installs what each runtime that is on needs, and writes the config
+with default rig sizes and images:
 
     ${configPath}
 
@@ -62,8 +64,8 @@ secret key, so never \`cat\` it; read only the lines you need:
 
     grep -E '^\\s*(hostname|transport)\\s*=' ${shellQuote(configPath)}
 
-If the config has a \`hostname\` (the installer fills in this machine's
-name), keep it: changing it registers a new host. Otherwise ask the operator
+If the config has a \`hostname\`, keep it: changing it registers a new
+host. Otherwise ask the operator
 what to call this host, suggesting this machine's own name, lowercased
 (\`hostname\`).
 
@@ -74,10 +76,10 @@ There are two transports:
 - **Tunnel**, the default: the daemon dials out to Amika's gateway and binds
   no port. Nothing is exposed and there is no URL to register, so it works
   behind a home router or a firewall that allows outbound HTTPS. It needs a
-  user-scoped API key (step 3).
+  user-scoped API key (step 4).
 - **Listen**: the daemon binds ${localUrl}, and the operator exposes that
   port to the internet over HTTPS themselves (ngrok, Cloudflare Tunnel, a
-  port forward), then registers the public URL with Amika (step 5).
+  port forward), then registers the public URL with Amika (step 6).
 
 \`AMIKA_HOSTD_TRANSPORT\`, if set, beats the config's \`transport\` line,
 which beats the default. Choose listen if any of these hold:
@@ -93,7 +95,41 @@ which beats the default. Choose listen if any of these hold:
 
 Otherwise use the tunnel, and do not ask.
 
-## 3. Run setup
+## 3. Choose what the host runs
+
+The host runs rigs on runtimes. This machine can run ${runtimes.map((name) => `\`${name}\``).join(", ") || "none"}.
+Ask the operator about each of them, one at a time, before setup installs
+anything. With no answer, keep what the config says (on a new host, only
+\`smol\` is on):
+
+${runtimes.map((name) => RUNTIME_NOTES[name]).join("\n")}
+
+Turn each runtime on or off with \`--enable <runtime>\` or
+\`--disable <runtime>\` on every setup command in step 4, written as
+\`<runtimes>\` there. To make this machine the host's only rig, pass
+\`--enable bare_metal --disable smol\`.
+
+To change the runtimes later, show the operator the plan first, then run the
+same flags with \`--yes\` once they agree:
+
+    amika-hostd capabilities update --enable bare_metal --dry-run --json
+    amika-hostd capabilities update --enable bare_metal --yes
+
+\`--disable <runtime>\` is refused while that runtime has rigs.
+${
+  runtimes.includes("lume")
+    ? `
+With Lume on, the daemon builds the macOS image in the background once it
+runs (after \`up\`, or the reload \`capabilities update\` sends a running
+daemon), and that takes 30 minutes or more. Nothing waits for it, but until
+it is built a macOS rig is refused, saying Lume has not finished setting up.
+Tell the operator, and point them at the daemon's log for its progress:
+${logFile}. A failed build is logged there, and the next \`up\` or
+\`amika-hostd reload\` tries again.
+`
+    : ""
+}
+## 4. Run setup
 
 Setup needs the operator's Amika API key the first time, and stores it. If
 \`AMIKA_API_KEY\` or \`AMIKA_HOSTD_API_KEY\` is already set in your
@@ -103,7 +139,7 @@ key on an earlier run, it keeps that one, and nothing needs passing either.
 
 So first run setup with nothing on its input:
 
-    amika-hostd setup --non-interactive --hostname <name> < /dev/null
+    amika-hostd setup --non-interactive --hostname <name> <runtimes> < /dev/null
 
 If that succeeds, setup has a key; go on to "Set the transport" below. Only
 if it fails with "pipe the Amika API key into
@@ -149,7 +185,7 @@ leaves.
 
 Pipe the file straight into setup:
 
-    amika-hostd setup --non-interactive --hostname <name> < <dir>/api-key
+    amika-hostd setup --non-interactive --hostname <name> <runtimes> < <dir>/api-key
 
 Delete the directory once setup succeeds, or when you stop trying:
 
@@ -191,38 +227,6 @@ or not) with this one, or add it above the first \`[\` line:
 If \`AMIKA_HOSTD_TRANSPORT\` is set to \`tunnel\`, it overrides that line:
 tell the operator.
 
-## 4. Choose what the host runs
-
-The host runs rigs on runtimes. This machine can run ${runtimes.map((name) => `\`${name}\``).join(", ") || "none"}.
-Ask the operator about each of them but \`smol\`, one at a time. With no
-answer, keep what the config says (on a new host, only \`smol\` is on):
-
-${runtimes.map((name) => RUNTIME_NOTES[name]).join("\n")}
-
-Apply the answers with \`capabilities update\`, naming each runtime to turn
-on or off. Show the operator the plan first, then run the same flags with
-\`--yes\` once they agree:
-
-    amika-hostd capabilities update --enable bare_metal --dry-run --json
-    amika-hostd capabilities update --enable bare_metal --yes
-
-\`--disable <runtime>\` turns one off. It is refused while that runtime has
-rigs. To make this machine the host's only rig, also pass
-\`--disable smol\`. The same flags work on
-\`amika-hostd setup --non-interactive\`.
-${
-  runtimes.includes("lume")
-    ? `
-With Lume on, the daemon builds the macOS image in the background once it
-runs (after \`up\`, or the reload \`capabilities update\` sends a running
-daemon), and that takes 30 minutes or more. Nothing waits for it, but until
-it is built a macOS rig is refused, saying Lume has not finished setting up.
-Tell the operator, and point them at the daemon's log for its progress:
-${logFile}. A failed build is logged there, and the next \`up\` or
-\`amika-hostd reload\` tries again.
-`
-    : ""
-}
 ## 5. Start the daemon
 
     amika-hostd up
@@ -232,7 +236,7 @@ starts the daemon and smolvm in the background. A tunnelled host enrols
 with Amika's gateway and connects out to it. A listening host binds a port
 (${localUrl} by this host's config) and prints the local address; if it
 differs, use the printed one below. If \`up\` fails with "Missing required
-configuration", step 3 is not done; the message names what is missing.
+configuration", step 4 is not done; the message names what is missing.
 
 If it fails with:
 

@@ -20,6 +20,8 @@ export function unsupportedPlatform(name: NodeJS.Platform): HostPlatform {
     },
     keychain: () => undefined,
     runtimes: () => [],
+    smolEnginePackage: () => undefined,
+    smolWarnings: () => [],
     // `down` still confirms a pid before signalling it, as it always has.
     processCommand: (pid, field) => procCommand(pid) ?? psCommand(pid, field),
   };

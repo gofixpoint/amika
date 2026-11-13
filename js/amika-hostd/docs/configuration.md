@@ -31,10 +31,10 @@ and `serve --smolvm` start smolvm, by default the first free port from
 `http://127.0.0.1:23020`, see [smolvm](runtime.md#smolvm); plain `serve` forwards to a
 fixed `http://127.0.0.1:23020`) and `SMOL_REQUEST_TIMEOUT_MS` remain
 environment-only. `config.example.toml`
-is the template the installer seeds: every setting with a default is a live
-line, and only `hostname` and `secret_store` are commented. It holds no
-`secret_key`, since the secrets live in the keychain by default. Keep its comments short. `config.test.ts`
-resolves it as seeded, so keep it in step with the schema. Never include a secret or
+documents every setting: each setting with a default is a live line, and
+only `hostname` and `secret_store` are commented. It holds no `secret_key`,
+since the secrets live in the keychain by default. Keep its comments short.
+`config.test.ts` resolves it, so keep it in step with the schema. Never include a secret or
 file contents in a `ConfigError` message: operators see it verbatim.
 
 ## Bare metal
@@ -42,8 +42,8 @@ file contents in a `ConfigError` message: operators see it verbatim.
 `[runtimes.bare_metal]` makes this machine one rig, beside or instead of the
 VM runtimes. It takes only `enabled`: no `max_running` (it runs one rig) and
 no sizes (the rig is the machine, at its own size), and no preset names it,
-since it boots no image. `install-amika-hostd.sh --bare-metal` seeds a config
-with only this table, and `capabilities update --enable bare_metal` adds it.
+since it boots no image. Setup and `capabilities update --enable bare_metal`
+add it.
 A host without smol starts no smolvm, checks no smolvm version and pre-pulls
 no images. The old `host_type` key fails startup, naming the table.
 `amikad_path` names the amikad binary the runtime runs instead of the release
@@ -85,7 +85,7 @@ with a warning, and so is a preset with no runtime on.
 The old `[preset_images]` table fails startup. `amika-hostd config upgrade`
 rewrites it as `[presets.*]` tables.
 
-The seeded config tracks `:latest`, which every image release moves. A host
+The default config tracks `:latest`, which every image release moves. A host
 that needs a fixed version pins the release's 12-character commit SHA instead.
 smolvm's image cache (below) is keyed by the digest a reference points to, so
 a moved tag is pulled again rather than served stale.
