@@ -2726,8 +2726,8 @@ image = "ghcr.io/gofixpoint/amika-coder:latest"
     expect(await runCli(["up"], deps)).toBe(0);
     expect(deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
-      `${RUNTIME_QUESTIONS.smol} [Y/n] `,
-      `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
+      `\n${RUNTIME_QUESTIONS.smol} [Y/n] `,
+      `\n${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
     ]);
     expect(deps.keychainSecret.value).toBe(SECRET);
     expect(files[CONFIG_PATH]).toMatch(/^secret_store = "keychain"$/m);

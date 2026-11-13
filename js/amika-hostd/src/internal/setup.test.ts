@@ -26,10 +26,13 @@ import {
 import type { StrictModesViolation } from "./strict-modes.js";
 import { RUNTIME_QUESTIONS } from "./runtime-choice.js";
 
-/** The runtime questions setup asks on Linux, with smol on by default. */
+/**
+ * The runtime questions setup asks on Linux, with smol on by default. Each
+ * question that starts a step of setup follows a blank line.
+ */
 const LINUX_RUNTIME_PROMPTS = [
-  `${RUNTIME_QUESTIONS.smol} [Y/n] `,
-  `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
+  `\n${RUNTIME_QUESTIONS.smol} [Y/n] `,
+  `\n${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
 ];
 
 /** The presets a config with the default preset images resolves to. */
@@ -226,8 +229,8 @@ describe("runSetup", () => {
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
-      "Regenerate the secret key Amika uses to reach this host? [y/N] ",
-      "Update the stored Amika API key? [y/N] ",
+      "\nRegenerate the secret key Amika uses to reach this host? [y/N] ",
+      "\nUpdate the stored Amika API key? [y/N] ",
       ...LINUX_RUNTIME_PROMPTS,
     ]);
     expect(h.written[PATH]).toBe(file);
@@ -245,6 +248,45 @@ describe("runSetup", () => {
     });
     await runSetup(h.deps);
     expect(h.store.value).toBe("amk_new");
+  });
+
+  it("separates each step from the next with a blank line", async () => {
+    const h = harness({
+      answers: ["", "", "y", "", ""],
+      secrets: ["amk_new"],
+      file: CONFIGURED,
+      storedKey: "amk_old",
+    });
+    // As a terminal shows it: each question, with its answer, on its own line.
+    const shown = (answer: (question: string) => Promise<string | undefined>) =>
+      vi.fn(async (question: string) => {
+        const reply = await answer(question);
+        h.out.push(...`${question}${reply ?? ""}`.split("\n"));
+        return reply;
+      });
+    await runSetup({
+      ...h.deps,
+      prompt: shown(h.deps.prompt),
+      promptSecret: shown(h.deps.promptSecret),
+    });
+    expect(h.out.slice(0, h.out.indexOf(`Wrote ${PATH}:`))).toEqual([
+      `Setting up amika-hostd in ${PATH}`,
+      "",
+      "Hostname [builder]: ",
+      "",
+      "Regenerate the secret key Amika uses to reach this host? [y/N] ",
+      "",
+      "Update the stored Amika API key? [y/N] y",
+      "Create an Amika API key at https://app.amika.dev/settings/api-keys and paste it below.",
+      "Amika API key (input is hidden): amk_new",
+      "",
+      `${RUNTIME_QUESTIONS.smol} [Y/n] `,
+      "",
+      `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
+      "",
+      "Stored the API key in the test store.",
+      "",
+    ]);
   });
 
   it("says a new hostname registers a new host", async () => {
@@ -475,7 +517,7 @@ describe("regenerating the secret key", () => {
       expect(
         h.deps.prompt.mock.calls.map(([question]) => question),
       ).not.toContain(
-        "Regenerate the secret key Amika uses to reach this host? [y/N] ",
+        "\nRegenerate the secret key Amika uses to reach this host? [y/N] ",
       );
       expect(h.out).toContain(
         `Not offering to regenerate the secret key while ${name} is set; unset it to regenerate it.`,
@@ -655,7 +697,7 @@ describe("runSetup with the keychain store", () => {
     expect(h.deps.prompt.mock.calls.map(([question]) => question)).toEqual([
       "Hostname [builder]: ",
       "Generate a new secret key? [y/N] ",
-      "Update the stored Amika API key? [y/N] ",
+      "\nUpdate the stored Amika API key? [y/N] ",
       ...LINUX_RUNTIME_PROMPTS,
     ]);
     expect(h.out).toContain(
@@ -1102,7 +1144,7 @@ describe("runSetup: the bare_metal runtime", () => {
     await runSetup(h.deps);
     expect(h.deps.prompt.mock.calls.map(([q]) => q)).toEqual([
       "Hostname [jakubs-macbook-pro]: ",
-      `${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
+      `\n${RUNTIME_QUESTIONS.bare_metal} [y/N] `,
     ]);
     expect(Object.keys(h.config().runtimes.runtimes)).toEqual(["bare_metal"]);
   });
@@ -1192,7 +1234,7 @@ describe("runSetup: choosing runtimes", () => {
     ...SMOL_READY,
     arch: () => "arm64",
   } as never);
-  const LUME_PROMPT = `${RUNTIME_QUESTIONS.lume} [y/N] `;
+  const LUME_PROMPT = `\n${RUNTIME_QUESTIONS.lume} [y/N] `;
 
   /** Setup on an Apple Silicon Mac, with Lume's installer faked. */
   function macHarness(
@@ -1245,7 +1287,7 @@ describe("runSetup: choosing runtimes", () => {
     });
     const questions = h.deps.prompt.mock.calls.map(([q]) => q);
     expect(questions).not.toContain(LUME_PROMPT);
-    expect(questions).toContain(`${RUNTIME_QUESTIONS.bare_metal} [y/N] `);
+    expect(questions).toContain(`\n${RUNTIME_QUESTIONS.bare_metal} [y/N] `);
     expect(Object.keys(h.config().runtimes.runtimes)).toEqual(["lume"]);
   });
 
