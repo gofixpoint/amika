@@ -421,7 +421,6 @@ func stubWSLSeams(t *testing.T) (*[]wslbridge.Target, *[][]string) {
 			SSHDir:        t.TempDir(),
 			SSHDirWindows: `C:\Users\testuser\.ssh`,
 			Distro:        "Ubuntu",
-			User:          "testuser",
 		}, nil
 	}
 	wslEditorExe = func(string) (string, error) {
@@ -454,7 +453,7 @@ func TestOpenSandboxInEditorMirrorsToWindowsUnderWSL(t *testing.T) {
 	if len(*mirrored) != 1 {
 		t.Fatalf("mirror calls = %d, want 1", len(*mirrored))
 	}
-	if (*mirrored)[0].User != "testuser" {
+	if (*mirrored)[0].SSHDirWindows != `C:\Users\testuser\.ssh` {
 		t.Fatalf("mirrored target = %+v", (*mirrored)[0])
 	}
 	if len(*launched) != 1 {

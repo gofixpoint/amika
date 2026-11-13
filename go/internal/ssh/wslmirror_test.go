@@ -50,8 +50,18 @@ func windowsTestTarget(dir string) wslbridge.Target {
 		SSHDir:        dir,
 		SSHDirWindows: `C:\Users\testuser\.ssh`,
 		Distro:        "Ubuntu",
-		User:          "testuser",
 	}
+}
+
+const testUserSID = "S-1-5-21-1004336348-1177238915-682003330-1001"
+
+// stubWindowsUserSID answers the Windows user SID lookup without a Windows
+// side, for tests whose mirror copies an identity.
+func stubWindowsUserSID(t *testing.T) {
+	t.Helper()
+	prev := windowsUserSID
+	windowsUserSID = func() (string, error) { return testUserSID, nil }
+	t.Cleanup(func() { windowsUserSID = prev })
 }
 
 // sessionTestState builds a fully valid state: one provider-native host plus
@@ -198,6 +208,7 @@ func TestMirrorToWindows(t *testing.T) {
 		return nil
 	}
 	t.Cleanup(func() { runIcacls = prevIcacls })
+	stubWindowsUserSID(t)
 
 	winSSH := filepath.Join(t.TempDir(), "winssh")
 	target := windowsTestTarget(winSSH)
@@ -241,7 +252,7 @@ func TestMirrorToWindows(t *testing.T) {
 	if len(icaclsCalls) != 1 {
 		t.Fatalf("icacls calls = %v, want one", icaclsCalls)
 	}
-	want := [2]string{`C:\Users\testuser\.ssh\amika_id_ed25519`, "testuser"}
+	want := [2]string{`C:\Users\testuser\.ssh\amika_id_ed25519`, "*" + testUserSID}
 	if icaclsCalls[0] != want {
 		t.Fatalf("icacls = %v, want %v", icaclsCalls[0], want)
 	}
@@ -272,6 +283,7 @@ func TestMirrorToWindowsWaitsForKeyRotationSnapshot(t *testing.T) {
 	previousIcacls := runIcacls
 	runIcacls = func(string, string) error { return nil }
 	t.Cleanup(func() { runIcacls = previousIcacls })
+	stubWindowsUserSID(t)
 	target := windowsTestTarget(filepath.Join(t.TempDir(), "winssh"))
 
 	rotationLocked := make(chan struct{})
@@ -331,6 +343,7 @@ func TestMirrorToWindowsWaitsForKnownHostsMutation(t *testing.T) {
 	previousIcacls := runIcacls
 	runIcacls = func(string, string) error { return nil }
 	t.Cleanup(func() { runIcacls = previousIcacls })
+	stubWindowsUserSID(t)
 	target := windowsTestTarget(filepath.Join(t.TempDir(), "winssh"))
 
 	mutationLocked := make(chan struct{})
@@ -396,6 +409,7 @@ func TestMirrorToWindowsCopiesImportedIdentity(t *testing.T) {
 	prevIcacls := runIcacls
 	runIcacls = func(string, string) error { return nil }
 	t.Cleanup(func() { runIcacls = prevIcacls })
+	stubWindowsUserSID(t)
 
 	winSSH := filepath.Join(t.TempDir(), "winssh")
 	if err := MirrorToWindows(paths, windowsTestTarget(winSSH)); err != nil {
