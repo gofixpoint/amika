@@ -271,6 +271,25 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     ).toBe(true);
   });
 
+  it("removes an engine from an earlier release, and keeps a matching one", () => {
+    writeSystemNode("24.22.1");
+    const engine = (name: string, version: string) => {
+      const dir = path.join(hostdHome, "node_modules", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        path.join(dir, "package.json"),
+        `{\n  "name": "${name}",\n  "version": "${version}"\n}\n`,
+      );
+      return dir;
+    };
+    const stale = engine("smolmachines-linux-x64-gnu", "1.20.0");
+    const current = engine("smolmachines-darwin-arm64", "1.22.2");
+    const result = install();
+    expect(result.status, result.stderr).toBe(0);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(current)).toBe(true);
+  });
+
   it.each(["--bare-metal", "--skip-smolvm"])(
     "refuses %s, which setup replaces",
     (flag) => {
@@ -367,7 +386,7 @@ describe.skipIf(!platform)("install-amika-hostd.sh Node.js selection", () => {
     );
     writeFileSync(
       path.join(archiveDir, "node_modules/smolmachines/package.json"),
-      "{}\n",
+      '{"name":"smolmachines","version":"1.22.2"}\n',
     );
     writeFileSync(
       path.join(archiveDir, "engines.sha256"),

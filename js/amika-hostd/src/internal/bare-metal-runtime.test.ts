@@ -523,6 +523,41 @@ describe("bareMetalRuntime: amikad serve", () => {
     expect(Number(readFileSync(h.options.pidFile, "utf8"))).toBe(servePid);
   });
 
+  it("kills a left-behind amikad that ignores SIGTERM", async () => {
+    const h = harness();
+    const leftover = spawn("sh", [
+      "-c",
+      'trap "" TERM; echo ready; exec sleep 30',
+    ]);
+    const exited = new Promise((resolve) => leftover.once("exit", resolve));
+    // Only once the trap is set: a SIGTERM before it would stop the shell.
+    await new Promise((resolve) => leftover.stdout.once("data", resolve));
+    writeFileSync(h.options.pidFile, `${leftover.pid}\n`);
+    const runtime = bareMetalRuntime({
+      ...h.options,
+      supervisor: {
+        ...h.options.supervisor,
+        stopTimeoutMs: 200,
+        isLeftover: (pid) =>
+          pid === leftover.pid &&
+          leftover.exitCode === null &&
+          leftover.signalCode === null,
+      },
+    });
+    opened.push(runtime);
+    await runtime.create({
+      name: "rig",
+      image: "ignored",
+      network: true,
+      services: [{ name: "amikad", port: 60999 }],
+    });
+    await runtime.exec("rig", {
+      command: sh("amikad serve --beta-no-relay --bg"),
+    });
+    await exited;
+    expect(leftover.signalCode).toBe("SIGKILL");
+  });
+
   it("resumes a running rig's bridge only once it was provisioned", async () => {
     const h = harness();
     await created(h);

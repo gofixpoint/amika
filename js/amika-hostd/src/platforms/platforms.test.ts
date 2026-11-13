@@ -155,6 +155,17 @@ describe("runtimes", () => {
   );
 });
 
+describe("the glibc check", () => {
+  it("runs once per platform, as it blocks", () => {
+    const glibcVersion = vi.fn(() => "2.39");
+    const platform = hostPlatformFor("linux", fakeOs({ glibcVersion }));
+    platform.runtimes();
+    platform.runtimes();
+    platform.smolEnginePackage();
+    expect(glibcVersion).toHaveBeenCalledOnce();
+  });
+});
+
 describe("smolWarnings", () => {
   it("names a missing /dev/kvm and resize2fs on Linux", () => {
     const linux = hostPlatformFor(

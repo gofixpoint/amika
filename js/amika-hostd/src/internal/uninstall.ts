@@ -84,17 +84,27 @@ export async function uninstall(
     if (options.dryRun) {
       deps.out(`Would delete ${what}`);
     } else if (await confirm(`Delete ${what}?`, options, deps)) {
+      // `lume stop` fails on a rig already stopped; `lume delete` decides.
+      const kept: string[] = [];
       for (const rig of rigs) {
-        if (lume === undefined) break;
-        await runLume(["stop", rig, "--storage", storageDir, "--force"]);
-        await runLume(["delete", rig, "--storage", storageDir, "--force"]);
+        if (lume !== undefined) {
+          await runLume(["stop", rig, "--storage", storageDir, "--force"]);
+          const args = ["delete", rig, "--storage", storageDir, "--force"];
+          if ((await runLume(args)) === 0) continue;
+        }
+        kept.push(rig);
       }
       // An operator's storage_dir can be a whole volume: delete it only once
       // the rigs are gone and it is empty. hostd's default is its own.
       const own =
         path.resolve(storageDir) ===
         path.resolve(hostdDataDir(deps.env), "lume");
-      if (!existsSync(storageDir)) {
+      if (kept.length > 0) {
+        const why = lume === undefined ? ": Lume is not installed" : "";
+        deps.out(
+          `Could not delete the Lume rigs ${kept.join(", ")}${why}. Kept ${storageDir}`,
+        );
+      } else if (!existsSync(storageDir)) {
         // Nothing left to delete.
       } else if (own || readdirSync(storageDir).length === 0) {
         remove(storageDir);
@@ -126,8 +136,19 @@ export async function uninstall(
           deps,
         )
       ) {
-        for (const image of images) await runLume(["delete", image, "--force"]);
-        deps.out(`Deleted the Lume VMs ${images.join(", ")}`);
+        const failed: string[] = [];
+        for (const image of images) {
+          if ((await runLume(["delete", image, "--force"])) !== 0) {
+            failed.push(image);
+          }
+        }
+        const deleted = images.filter((image) => !failed.includes(image));
+        if (deleted.length > 0) {
+          deps.out(`Deleted the Lume VMs ${deleted.join(", ")}`);
+        }
+        if (failed.length > 0) {
+          deps.out(`Could not delete the Lume VMs ${failed.join(", ")}`);
+        }
       }
     }
   }

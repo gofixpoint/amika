@@ -94,7 +94,8 @@ export function amikadSupervisor({
     },
     async start() {
       await stopChild();
-      await stopLeftover();
+      const stuck = await stopLeftover();
+      if (stuck !== undefined) return { ok: false, reason: stuck };
       wanted = true;
       crashes = 0;
       const started = launch();
@@ -200,17 +201,37 @@ export function amikadSupervisor({
 
   /**
    * Stop an amikad a crashed daemon left running, which still holds the
-   * rig's ports, before starting a new one over its pid file.
+   * rig's ports, before starting a new one over its pid file: `SIGTERM`,
+   * then `SIGKILL`. Returns why it could not, keeping the pid file.
    */
-  async function stopLeftover(): Promise<void> {
-    if (pidFile === undefined) return;
+  async function stopLeftover(): Promise<string | undefined> {
+    if (pidFile === undefined) return undefined;
     const leftover = readRunningPid(pidFile, isLeftover);
-    if (leftover === undefined || leftover === child?.pid) return;
+    if (leftover === undefined || leftover === child?.pid) return undefined;
     err(
       `amika-hostd: stopping amikad (pid ${leftover}) left by an earlier run`,
     );
-    await stopProcess(leftover, isLeftover, { timeoutMs: stopTimeoutMs });
+    const stopped =
+      (await stopProcess(leftover, isLeftover, { timeoutMs: stopTimeoutMs })) ||
+      (await killLeftover(leftover));
+    if (!stopped) {
+      return `amikad (pid ${leftover}), left by an earlier run, did not exit; stop it, then try again`;
+    }
     removePidFile(pidFile, leftover);
+    return undefined;
+  }
+
+  /** `SIGKILL` `pid`, and whether it is gone within a second. */
+  async function killLeftover(pid: number): Promise<boolean> {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      return !isLeftover(pid);
+    }
+    for (let tries = 0; tries < 10 && isLeftover(pid); tries++) {
+      await sleep(100);
+    }
+    return !isLeftover(pid);
   }
 
   async function stopChild(): Promise<void> {
