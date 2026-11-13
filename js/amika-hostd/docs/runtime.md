@@ -147,10 +147,21 @@ other), a create of a Lume rig of it is refused at once
 (`503`, `Retry-After: 300`, "Lume has not finished setting up on this
 host"); Linux rigs are not held up. hostd downloads no image; it builds one:
 
-1. `lume create --ipsw <restore image> --unattended <preset> amika-macos-base`
-   makes the base VM, unless it is already there. The restore image is the
-   newest one Lume supports, which is this Mac's own major macOS version,
-   unless `AMIKA_HOSTD_MACOS_IPSW` names a file or URL. The preset follows
+1. `lume create --ipsw <restore image> --disk-size 100GB --unattended <preset>
+amika-macos-base` makes the base VM, unless it is already there. Its disk
+   (`MACOS_DISK_GIB`, and Lume's `GB` is GiB) is every template's and rig's,
+   since Lume never resizes a rig's disk, so each of Lume's sizes
+   (`MACOS_SIZES`) has exactly that disk. The image uses about 31 GB of it. The restore image is the
+   one `AMIKA_HOSTD_MACOS_IPSW` names, as a file or URL. Else it is the one
+   hostd kept for this Mac's major macOS version,
+   `~/.cache/amika-hostd/macos/restore-macos<major>.ipsw`. Else it is the
+   newest one Lume supports (`latest`), which is this Mac's own major
+   version. Lume downloads that one to `$TMPDIR/latest.ipsw`. After the
+   create, even a failed one, the build moves it to the cache folder, so a
+   retry or a later base VM needs no download, and deletes any other kept
+   image. It moves only a file written during this create. The cache folder
+   is outside the data dir, which the installer's `--uninstall` deletes.
+   The preset follows
    this Mac's version (`sw_vers -productVersion`, `unattendedPreset`):
    `sequoia` for macOS 15, `tahoe` for 26, and for a newer version the newest
    preset Lume 0.6.1 has, `tahoe`, which its offline setup barely depends
@@ -167,7 +178,12 @@ host"); Linux rigs are not held up. hostd downloads no image; it builds one:
    in `macos-image/` beside the bundle in a release, else in the checkout it
    runs from (`findMacosImageFiles`).
 
-Each step's output goes to the daemon's log. A failed build is logged, and
+Each step's output goes to the daemon's log. `lume create` runs in a
+terminal (`script(1)`, `runShowingProgress`), since Lume buffers its output
+in a file, and an hour of download reached the log in one burst. Of its
+progress lines, which come one per percent, the log gets the first, 100%, and
+one each time progress gains 5% or 2 minutes pass, whichever comes first
+(`progressFilter`). A failed build is logged, and
 until the next `up` or `reload` tries again a create fails on the missing
 template, with a message that points at the log. A step whose result exists
 is skipped, so the next try resumes where a failed one stopped. The base VM

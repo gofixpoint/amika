@@ -28,8 +28,52 @@ export interface SshdDeps {
   isExecutable?: (file: string) => boolean;
 }
 
+/** What the smol checks read from the OS. */
+export interface SmolDeps {
+  /** The glibc version (`2.39`), or undefined for another C library. */
+  glibcVersion?: () => string | undefined;
+  /** `/dev/kvm`: missing, present but not usable by this user, or usable. */
+  kvm?: () => "missing" | "denied" | "ok";
+  /** Whether smolvm can find `resize2fs`. */
+  hasResize2fs?: () => boolean;
+}
+
 /** Everything a Unix platform reads from the OS, injectable for tests. */
-export type PlatformDeps = ResourceDeps & SshdDeps;
+export type PlatformDeps = ResourceDeps & SshdDeps & SmolDeps;
+
+/**
+ * Where smolvm looks for `resize2fs` before `PATH` (`src/disk_utils.rs` in
+ * smol-machines/smolvm).
+ */
+const RESIZE2FS_LOCATIONS = [
+  "/opt/homebrew/opt/e2fsprogs/sbin",
+  "/usr/local/opt/e2fsprogs/sbin",
+  "/opt/homebrew/sbin",
+  "/usr/local/sbin",
+  "/sbin",
+  "/usr/sbin",
+].map((dir) => path.join(dir, "resize2fs"));
+
+/**
+ * A warning when smolvm cannot find `resize2fs`. smolvm copies each disk
+ * from a 20 GiB template and shrinks it with `resize2fs`, so without it a
+ * rig with a smaller disk does not start.
+ */
+export function resize2fsWarning(
+  installHint: string,
+  deps: SmolDeps = {},
+): string | undefined {
+  if ((deps.hasResize2fs ?? findsResize2fs)()) return undefined;
+  return `resize2fs was not found. smolvm needs it to start a rig with a disk under 20 GiB. Install e2fsprogs: ${installHint}.`;
+}
+
+function findsResize2fs(): boolean {
+  const fromPath = (process.env.PATH ?? "")
+    .split(path.delimiter)
+    .filter((dir) => path.isAbsolute(dir))
+    .map((dir) => path.join(dir, "resize2fs"));
+  return [...RESIZE2FS_LOCATIONS, ...fromPath].some(executableFile);
+}
 
 const GIB = 1024 ** 3;
 

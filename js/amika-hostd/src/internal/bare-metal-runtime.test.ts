@@ -3,6 +3,7 @@
  * that records how it was run and, for `serve`, answers `/healthz` on the
  * address hostd gives it.
  */
+import { spawn } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -103,6 +104,7 @@ function harness() {
     amikadStateDir: path.join(stateDir, "amikad"),
     amikad,
     logFile: path.join(stateDir, "log", "amikad.log"),
+    pidFile: path.join(stateDir, "amikad.pid"),
     resources: () => RESOURCES,
     now: () => new Date("2026-10-30T12:00:00Z"),
     supervisor: {
@@ -473,6 +475,87 @@ describe("bareMetalRuntime: amikad serve", () => {
     await h.runtime.exec("rig", { command: serve });
     await h.runtime.shutdown();
     expect(await healthz(amikadPort)).toBe(false);
+  });
+
+  it("records its pid while it runs, for `down`", async () => {
+    const h = harness();
+    await created(h);
+    await h.runtime.exec("rig", {
+      command: sh("amikad serve --beta-no-relay --bg"),
+    });
+    const servePid = Number(
+      readFileSync(path.join(h.bin, "serve.pid"), "utf8"),
+    );
+    expect(Number(readFileSync(h.options.pidFile, "utf8"))).toBe(servePid);
+    await h.runtime.shutdown();
+    await eventually(() => !existsSync(h.options.pidFile));
+  });
+
+  it("stops an amikad a crashed daemon left, before starting its own", async () => {
+    const h = harness();
+    const leftover = spawn("sleep", ["30"]);
+    const exited = new Promise((resolve) => leftover.once("exit", resolve));
+    writeFileSync(h.options.pidFile, `${leftover.pid}\n`);
+    const runtime = bareMetalRuntime({
+      ...h.options,
+      supervisor: {
+        ...h.options.supervisor,
+        isLeftover: (pid) =>
+          pid === leftover.pid &&
+          leftover.exitCode === null &&
+          leftover.signalCode === null,
+      },
+    });
+    opened.push(runtime);
+    await runtime.create({
+      name: "rig",
+      image: "ignored",
+      network: true,
+      services: [{ name: "amikad", port: 60999 }],
+    });
+    await runtime.exec("rig", {
+      command: sh("amikad serve --beta-no-relay --bg"),
+    });
+    await exited;
+    const servePid = Number(
+      readFileSync(path.join(h.bin, "serve.pid"), "utf8"),
+    );
+    expect(Number(readFileSync(h.options.pidFile, "utf8"))).toBe(servePid);
+  });
+
+  it("kills a left-behind amikad that ignores SIGTERM", async () => {
+    const h = harness();
+    const leftover = spawn("sh", [
+      "-c",
+      'trap "" TERM; echo ready; exec sleep 30',
+    ]);
+    const exited = new Promise((resolve) => leftover.once("exit", resolve));
+    // Only once the trap is set: a SIGTERM before it would stop the shell.
+    await new Promise((resolve) => leftover.stdout.once("data", resolve));
+    writeFileSync(h.options.pidFile, `${leftover.pid}\n`);
+    const runtime = bareMetalRuntime({
+      ...h.options,
+      supervisor: {
+        ...h.options.supervisor,
+        stopTimeoutMs: 200,
+        isLeftover: (pid) =>
+          pid === leftover.pid &&
+          leftover.exitCode === null &&
+          leftover.signalCode === null,
+      },
+    });
+    opened.push(runtime);
+    await runtime.create({
+      name: "rig",
+      image: "ignored",
+      network: true,
+      services: [{ name: "amikad", port: 60999 }],
+    });
+    await runtime.exec("rig", {
+      command: sh("amikad serve --beta-no-relay --bg"),
+    });
+    await exited;
+    expect(leftover.signalCode).toBe("SIGKILL");
   });
 
   it("resumes a running rig's bridge only once it was provisioned", async () => {

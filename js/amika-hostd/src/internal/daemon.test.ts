@@ -510,6 +510,7 @@ describe("daemonPaths", () => {
       bareMetalRigFile: "/state/amika-hostd/bare-metal-rig.json",
       amikadStateDir: "/state/amika-hostd/amikad",
       amikadLogFile: "/state/amika-hostd/log/amikad.log",
+      amikadPidFile: "/state/amika-hostd/amikad.pid",
     });
   });
 

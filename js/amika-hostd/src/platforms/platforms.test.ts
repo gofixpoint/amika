@@ -133,15 +133,67 @@ describe("amikadAsset", () => {
 
 describe("runtimes", () => {
   it.each([
-    ["darwin", "arm64", ["smol", "lume", "bare_metal"]],
-    ["darwin", "x64", ["smol", "bare_metal"]],
-    ["linux", "arm64", ["smol", "bare_metal"]],
-    ["linux", "x64", ["smol", "bare_metal"]],
-    ["freebsd", "x64", []],
-  ] as const)("offers on %s/%s %j", (os, arch, runtimes) => {
-    expect(
-      hostPlatformFor(os, fakeOs({ arch: () => arch })).runtimes(),
-    ).toEqual(runtimes);
+    ["darwin", "arm64", "2.39", ["smol", "lume", "bare_metal"]],
+    ["darwin", "x64", "2.39", ["bare_metal"]],
+    ["linux", "arm64", "2.39", ["smol", "bare_metal"]],
+    ["linux", "x64", "2.34", ["smol", "bare_metal"]],
+    ["linux", "x64", "2.31", ["bare_metal"]],
+    ["linux", "x64", undefined, ["bare_metal"]],
+    ["freebsd", "x64", "2.39", []],
+  ] as const)(
+    "offers on %s/%s with glibc %s %j",
+    (os, arch, glibc, runtimes) => {
+      const platform = hostPlatformFor(
+        os,
+        fakeOs({ arch: () => arch, glibcVersion: () => glibc }),
+      );
+      expect(platform.runtimes()).toEqual(runtimes);
+      expect(platform.smolEnginePackage() !== undefined).toBe(
+        runtimes.includes("smol" as never),
+      );
+    },
+  );
+});
+
+describe("the glibc check", () => {
+  it("runs once per platform, as it blocks", () => {
+    const glibcVersion = vi.fn(() => "2.39");
+    const platform = hostPlatformFor("linux", fakeOs({ glibcVersion }));
+    platform.runtimes();
+    platform.runtimes();
+    platform.smolEnginePackage();
+    expect(glibcVersion).toHaveBeenCalledOnce();
+  });
+});
+
+describe("smolWarnings", () => {
+  it("names a missing /dev/kvm and resize2fs on Linux", () => {
+    const linux = hostPlatformFor(
+      "linux",
+      fakeOs({ kvm: () => "missing", hasResize2fs: () => false }),
+    );
+    expect(linux.smolWarnings()).toEqual([
+      expect.stringMatching(/^\/dev\/kvm was not found/),
+      expect.stringMatching(/^resize2fs was not found.*apt-get/),
+    ]);
+  });
+
+  it("says nothing when smolvm has what it needs", () => {
+    const linux = hostPlatformFor(
+      "linux",
+      fakeOs({ kvm: () => "ok", hasResize2fs: () => true }),
+    );
+    expect(linux.smolWarnings()).toEqual([]);
+  });
+
+  it("checks only resize2fs on macOS", () => {
+    const mac = hostPlatformFor(
+      "darwin",
+      fakeOs({ hasResize2fs: () => false }),
+    );
+    expect(mac.smolWarnings()).toEqual([
+      expect.stringMatching(/^resize2fs was not found.*brew install/),
+    ]);
   });
 });
 

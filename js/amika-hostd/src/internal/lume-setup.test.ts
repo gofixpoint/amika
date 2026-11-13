@@ -1,8 +1,11 @@
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,7 +21,10 @@ import {
   findMacosImageFiles,
   installLume,
   MACOS_BASE_VM,
+  macosRestoreImageDir,
   missingMacosImages,
+  progressFilter,
+  runShowingProgress,
   type MacosImageDeps,
 } from "./lume-setup.js";
 
@@ -28,18 +34,35 @@ const FILES = {
   versionsEnv: "/opt/hostd/macos-image/versions.env",
 };
 
-/** A Mac whose Lume storage has `vms`; each command exits with `exit`. */
-function mac({ vms = [] as string[], exit = 0 } = {}) {
+/**
+ * A Mac whose Lume storage has `vms`; each command exits with `exit`. With
+ * `download`, `lume create --ipsw latest` leaves a restore image in TMPDIR,
+ * as Lume does.
+ */
+function mac({ vms = [] as string[], exit = 0, download = false } = {}) {
   const out: string[] = [];
+  const root = mkdtempSync(path.join(tmpdir(), "amika-hostd-lume-"));
+  const env = {
+    PATH: "/usr/bin",
+    HOME: "/home/op",
+    TMPDIR: path.join(root, "tmp"),
+    XDG_CACHE_HOME: path.join(root, "cache"),
+  };
+  mkdirSync(env.TMPDIR);
   const run = vi.fn(
     async (
       _command: string,
-      _args: readonly string[],
+      args: readonly string[],
       _env: NodeJS.ProcessEnv,
-    ) => exit as number | null,
+    ) => {
+      if (download && args[0] === "create" && args[2] === "latest") {
+        writeFileSync(path.join(env.TMPDIR, "latest.ipsw"), "ipsw");
+      }
+      return exit as number | null;
+    },
   );
   const deps = {
-    env: { PATH: "/usr/bin", HOME: "/home/op" },
+    env,
     out: (line: string) => out.push(line),
     platform: hostPlatformFor("darwin", { arch: () => "arm64" } as never),
     findLume: () => LUME,
@@ -120,7 +143,16 @@ describe("buildMacosImage", () => {
     expect(run.mock.calls.map(([command, args]) => [command, args])).toEqual([
       [
         LUME,
-        ["create", "--ipsw", "latest", "--unattended", "tahoe", MACOS_BASE_VM],
+        [
+          "create",
+          "--ipsw",
+          "latest",
+          "--disk-size",
+          "100GB",
+          "--unattended",
+          "tahoe",
+          MACOS_BASE_VM,
+        ],
       ],
       ["/bin/bash", [FILES.buildScript, MACOS_BASE_VM, "amika-macos-coder"]],
     ]);
@@ -140,6 +172,73 @@ describe("buildMacosImage", () => {
     expect(env.PATH?.split(path.delimiter)[0]).toBe(path.dirname(LUME));
   });
 
+  it("keeps the restore image Lume downloaded, for this Mac's macOS version", async () => {
+    const { deps } = mac({ download: true });
+    const dir = macosRestoreImageDir(deps.env);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "restore-macos15.ipsw"), "old");
+    await buildMacosImage("amika-macos-coder", {}, deps);
+    expect(existsSync(path.join(deps.env.TMPDIR, "latest.ipsw"))).toBe(false);
+    // The macOS 15 image is not used again on this macOS 26 Mac.
+    expect(readdirSync(dir)).toEqual(["restore-macos26.ipsw"]);
+  });
+
+  it("keeps the restore image after a failed create, for the retry", async () => {
+    const { deps } = mac({ download: true, exit: 1 });
+    await expect(
+      buildMacosImage("amika-macos-coder", {}, deps),
+    ).rejects.toThrow();
+    expect(
+      existsSync(
+        path.join(macosRestoreImageDir(deps.env), "restore-macos26.ipsw"),
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves a restore image in TMPDIR that this create did not write", async () => {
+    const { deps } = mac({ exit: 1 });
+    const old = path.join(deps.env.TMPDIR, "latest.ipsw");
+    writeFileSync(old, "old");
+    const yesterday = new Date(Date.now() - 86_400_000);
+    utimesSync(old, yesterday, yesterday);
+    await expect(
+      buildMacosImage("amika-macos-coder", {}, deps),
+    ).rejects.toThrow();
+    expect(existsSync(old)).toBe(true);
+    expect(existsSync(macosRestoreImageDir(deps.env))).toBe(false);
+  });
+
+  it("makes the base VM from the kept restore image for this macOS version", async () => {
+    const { deps, run } = mac();
+    const kept = path.join(
+      macosRestoreImageDir(deps.env),
+      "restore-macos26.ipsw",
+    );
+    mkdirSync(path.dirname(kept), { recursive: true });
+    writeFileSync(kept, "ipsw");
+    await buildMacosImage("amika-macos-coder", {}, deps);
+    expect(run.mock.calls[0][1]).toEqual([
+      "create",
+      "--ipsw",
+      kept,
+      "--disk-size",
+      "100GB",
+      "--unattended",
+      "tahoe",
+      MACOS_BASE_VM,
+    ]);
+    expect(existsSync(kept)).toBe(true);
+  });
+
+  it("downloads again when the kept restore image is another macOS version", async () => {
+    const { deps, run } = mac();
+    const dir = macosRestoreImageDir(deps.env);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "restore-macos15.ipsw"), "old");
+    await buildMacosImage("amika-macos-coder", {}, deps);
+    expect(run.mock.calls[0][1]).toContain("latest");
+  });
+
   it("reuses a base VM that is already there", async () => {
     const { deps, run } = mac({ vms: [MACOS_BASE_VM] });
     await buildMacosImage("amika-macos-coder", {}, deps);
@@ -147,8 +246,14 @@ describe("buildMacosImage", () => {
     expect(run.mock.calls[0][0]).toBe("/bin/bash");
   });
 
-  it("installs from the restore image AMIKA_HOSTD_MACOS_IPSW names", async () => {
-    const { deps, run } = mac();
+  it("installs from the restore image AMIKA_HOSTD_MACOS_IPSW names, and keeps no copy", async () => {
+    const { deps, run } = mac({ download: true });
+    const kept = path.join(
+      macosRestoreImageDir(deps.env),
+      "restore-macos26.ipsw",
+    );
+    mkdirSync(path.dirname(kept), { recursive: true });
+    writeFileSync(kept, "ipsw");
     await buildMacosImage(
       "amika-macos-coder",
       {},
@@ -158,6 +263,7 @@ describe("buildMacosImage", () => {
       },
     );
     expect(run.mock.calls[0][1]).toContain("/srv/macos-26.5.2.ipsw");
+    expect(readdirSync(path.dirname(kept))).toEqual(["restore-macos26.ipsw"]);
   });
 
   it("stops at a failed step, naming it", async () => {
@@ -379,6 +485,8 @@ describe("the unattended preset in the build", () => {
         "create",
         "--ipsw",
         "latest",
+        "--disk-size",
+        "100GB",
         "--unattended",
         preset,
         MACOS_BASE_VM,
@@ -690,3 +798,89 @@ function isRunning(pid: number): boolean {
     return false;
   }
 }
+
+describe("progressFilter", () => {
+  const download = (percent: number) =>
+    `[2026-11-12T22:29:28Z] INFO: Downloading IPSW Progress: ${percent}%`;
+  const install = (percent: number) =>
+    `[2026-11-12T23:02:31Z] INFO: Installing macOS progress=${percent}%`;
+
+  it("shows every other line, and progress every 5%", () => {
+    const shown: string[] = [];
+    const show = progressFilter((line) => shown.push(line), { now: () => 0 });
+    show("INFO: Creating VM");
+    for (let percent = 0; percent <= 12; percent++) show(download(percent));
+    show("INFO: Download completed");
+    expect(shown).toEqual([
+      "INFO: Creating VM",
+      download(0),
+      download(5),
+      download(10),
+      "INFO: Download completed",
+    ]);
+  });
+
+  it("shows progress every 2 minutes when it is slower than 5% in that time", () => {
+    const shown: string[] = [];
+    let now = 0;
+    const show = progressFilter((line) => shown.push(line), {
+      now: () => now,
+    });
+    show(download(1));
+    now = 119_000;
+    show(download(2));
+    now = 120_000;
+    show(download(3));
+    expect(shown).toEqual([download(1), download(3)]);
+  });
+
+  it("follows the download and the install apart, and shows each 100% once", () => {
+    const shown: string[] = [];
+    const show = progressFilter((line) => shown.push(line), { now: () => 0 });
+    show(download(98));
+    show(download(100));
+    show(download(100));
+    show(install(0));
+    show(install(2));
+    expect(shown).toEqual([download(98), download(100), install(0)]);
+  });
+});
+
+describe.runIf(process.platform === "darwin")("runShowingProgress", () => {
+  it("passes on each line as the command prints it, in a terminal", async () => {
+    // Lume buffers its output unless it is a terminal.
+    const shown: { line: string; at: number }[] = [];
+    const started = Date.now();
+    const code = await runShowingProgress(
+      "/bin/bash",
+      [
+        "-c",
+        '[ -t 1 ] && echo tty; echo "Downloading IPSW Progress: 1%"; sleep 1; echo done',
+      ],
+      process.env,
+      undefined,
+      (line) => shown.push({ line, at: Date.now() - started }),
+    );
+    expect(code).toBe(0);
+    expect(shown.map(({ line }) => line)).toEqual([
+      "tty",
+      "Downloading IPSW Progress: 1%",
+      "done",
+    ]);
+    expect(shown[1].at).toBeLessThan(shown[2].at - 500);
+  });
+
+  it("on abort, stops the command", async () => {
+    const stopping = new AbortController();
+    const running = runShowingProgress(
+      "/bin/bash",
+      ["-c", "echo started; sleep 30"],
+      process.env,
+      stopping.signal,
+      () => stopping.abort(),
+    );
+    const started = Date.now();
+    await running;
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});

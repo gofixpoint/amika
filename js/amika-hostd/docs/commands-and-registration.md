@@ -72,12 +72,14 @@ restart, so rigs keep running and the tunnel and SSH sessions stay up
 `amika-hostd capabilities update --enable|--disable <runtime>` changes
 `[runtimes.*]` in `config.toml` and nothing else
 (`src/internal/runtime-update.ts`). With no runtime named it asks about each
-one this machine can run but smol, as setup does
+one this machine can run, as setup does
 (`src/internal/runtime-choice.ts`);
 without a terminal it then exits with an error naming the flags.
 
 1. It prints the plan. Turning on Lume adds `storage_dir` (in hostd's data
-   directory) and, unless a preset already uses Lume, the `macos-coder`
+   directory); unless the file has Lume sizes, the sizes `macos-small`,
+   `macos-medium` and `macos-large` (`MACOS_SIZES`); and, unless a preset
+   already uses Lume, the `macos-coder`
    preset with template `amika-macos-coder`. With no `[runtimes]` table it
    also lists smol, so smol stays on. When Lume is asked for, each template
    a Lume preset boots that Lume does not have is a step of its own, with
@@ -85,11 +87,11 @@ without a terminal it then exits with an error naming the flags.
    on. The daemon builds it in the background
    ([Building the template](runtime.md#building-the-template)); this command
    does not wait for it.
-2. It installs Lume `0.6.1` with Lume's own installer, into `~/.local/bin`
-   with no `sudo`, when Lume is asked for and not found. Turning on
-   `bare_metal` first checks the machine as setup does (an `sshd` binary,
-   and sshd's StrictModes on amikad's state directory), and refuses with
-   nothing changed; then it installs amikad into hostd's data directory.
+2. It installs what each runtime it turns on, or asked about, needs
+   (`src/internal/runtime-install.ts`, as setup does: see
+   [Runtimes](setup-and-secrets.md#runtimes)). A machine check that fails
+   refuses before the plan is shown, with nothing changed. The plan lists
+   each install, and the JSON plan lists the machine's warnings.
 3. It writes the file, and reloads a running daemon as `reload` does,
    which then sends Amika the new capabilities. With a template to build it
    reloads a running daemon even when the file does not change, since a

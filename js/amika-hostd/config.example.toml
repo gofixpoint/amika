@@ -114,10 +114,12 @@ disk_gib = 40
 # storage_dir = "/Users/you/amika-lume"
 # max_running = 2       # macOS runs 2 macOS VMs at most
 #
-# [runtimes.lume.sizes.medium]
-# vcpus = 4
-# memory_gib = 8
-# disk_gib = 80
+# A Lume rig's disk is its image's, so each Lume size has exactly the disk of
+# the base VM amika-hostd builds, 100 GiB. Turning Lume on adds these sizes.
+# [runtimes.lume.sizes.macos-medium]
+# vcpus = 6
+# memory_gib = 12
+# disk_gib = 100
 
 # --- Preset images ------------------------------------------------------------
 #

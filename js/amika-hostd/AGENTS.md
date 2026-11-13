@@ -178,9 +178,13 @@ Each of these is stated in full, with its reason, in the doc it links to.
 
 - `config.example.toml` with the config schema (`config.test.ts`) and with
   `DEFAULT_SIZES` and `DEFAULT_PRESET_IMAGES` (`setup.test.ts`).
-- The `setup --skill` text with the CLI, by hand: the commands, options,
-  environment variables and error messages it names, and options on the
-  `amika` CLI commands it runs.
+- The `setup --skill` text with the CLI: `setup-skill.test.ts` parses each
+  `amika-hostd` command it names. Update by hand the error messages and
+  environment variables it names, and the options of the `amika` CLI
+  commands it runs.
+- Each runtime's installs in `src/internal/runtime-install.ts` only. Setup,
+  `capabilities update` and `up` use it; `install-amika-hostd.sh` installs
+  nothing for a runtime.
 - A blank environment variable sets nothing; ask which variable sets a
   setting through `envName`.
 - The bundle runs under plain `node` with no `node_modules`
@@ -194,15 +198,17 @@ Each of these is stated in full, with its reason, in the doc it links to.
 `src/internal/` is flat, so the detail lives in `docs/` by area:
 
 - [docs/installation.md](docs/installation.md) — read when changing
-  `install-amika-hostd.sh` (install, `--uninstall`) or the release bundle
-  (`scripts/bundle.mjs`, `scripts/package-release.sh`).
+  `install-amika-hostd.sh`, `amika-hostd uninstall` (`uninstall.ts`), or the
+  release bundle (`scripts/bundle.mjs`, `scripts/package-release.sh`). It
+  lists what each step installs, and where.
 - [docs/commands-and-registration.md](docs/commands-and-registration.md) —
   read when changing the CLI (`src/index.ts`, `cli.ts`, `daemon.ts`), how
   `up`, `serve` and `down` start and stop, registration with Amika
   (`amika-api.ts`), `register-url`, or the pidfile.
 - [docs/setup-and-secrets.md](docs/setup-and-secrets.md) — read when changing
   `amika-hostd setup` (`setup.ts`, `setup-skill.ts`), the runtime questions
-  it shares with `capabilities update` (`runtime-choice.ts`), secret-key
+  and installs it shares with `capabilities update` (`runtime-choice.ts`,
+  `runtime-install.ts`, `smol-setup.ts`), secret-key
   regeneration, or where secrets are kept (`credentials.ts`).
 - [docs/configuration.md](docs/configuration.md) — read when changing a
   setting (`config.ts`, `config.example.toml`), preset images, or the image

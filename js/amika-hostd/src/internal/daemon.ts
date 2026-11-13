@@ -61,6 +61,11 @@ export interface DaemonPaths {
   amikadStateDir: string;
   /** The supervised `amikad serve`'s output on a bare-metal host. */
   amikadLogFile: string;
+  /**
+   * The supervised `amikad serve`, while it runs, so `down` stops one a
+   * crashed daemon left behind.
+   */
+  amikadPidFile: string;
 }
 
 export type Spawn = (
@@ -374,6 +379,7 @@ export function daemonPaths(env: NodeJS.ProcessEnv = {}): DaemonPaths {
     bareMetalRigFile: path.join(dir, "bare-metal-rig.json"),
     amikadStateDir: path.join(dir, "amikad"),
     amikadLogFile: path.join(logDir, "amikad.log"),
+    amikadPidFile: path.join(dir, "amikad.pid"),
   };
 }
 
@@ -442,6 +448,27 @@ export function isSmolvmRunning(
   return (
     program !== undefined && SMOLVM_PROGRAMS.includes(path.basename(program))
   );
+}
+
+/**
+ * Whether `pid` is a live amikad. `down` signals it, so, as with
+ * `isSmolvmRunning`, a pid whose program cannot be confirmed never counts.
+ */
+export function isAmikadRunning(
+  pid: number,
+  platform: HostPlatform = currentHostPlatform(),
+): boolean {
+  if (!isAlive(pid)) return false;
+  const program = platform.processCommand(pid, "comm");
+  return program !== undefined && path.basename(program) === "amikad";
+}
+
+/** Record `pid` in `pidFile`, readable only by this user. */
+export function writePidFile(pidFile: string, pid: number): void {
+  onDisk(pidFile, () => {
+    mkdirSync(path.dirname(pidFile), { recursive: true, mode: 0o700 });
+    writeFileSync(pidFile, `${pid}\n`, { mode: 0o600 });
+  });
 }
 
 /** A background start failure; the message is safe to print. */

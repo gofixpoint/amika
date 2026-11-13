@@ -10,7 +10,15 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { closeSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
-import { openLogFile, type Spawn } from "./daemon.js";
+import {
+  isAmikadRunning,
+  openLogFile,
+  readRunningPid,
+  removePidFile,
+  stopProcess,
+  writePidFile,
+  type Spawn,
+} from "./daemon.js";
 
 export interface AmikadSupervisor {
   /**
@@ -34,6 +42,11 @@ export interface AmikadSupervisorOptions {
   cwd: string;
   /** Where its output is appended. */
   logFile: string;
+  /**
+   * Holds its pid while it runs, so `down` can stop one a crashed daemon left
+   * behind.
+   */
+  pidFile?: string;
   /** amikad's `/healthz`, on its loopback listener. */
   healthUrl: () => string;
   /** How long `start` waits for `/healthz`; a running child is ok after. */
@@ -46,6 +59,8 @@ export interface AmikadSupervisorOptions {
   /** How long `stop` waits for `SIGTERM` before `SIGKILL`. */
   stopTimeoutMs?: number;
   err?: (line: string) => void;
+  /** Whether a pid in `pidFile` is a live amikad; defaults to `ps`. */
+  isLeftover?: (pid: number) => boolean;
   spawn?: Spawn;
   fetch?: typeof fetch;
 }
@@ -56,6 +71,7 @@ export function amikadSupervisor({
   env,
   cwd,
   logFile,
+  pidFile,
   healthUrl,
   readyTimeoutMs = 10_000,
   restartDelayMs = 1_000,
@@ -63,6 +79,7 @@ export function amikadSupervisor({
   stableMs = 60_000,
   stopTimeoutMs = 5_000,
   err = () => {},
+  isLeftover = isAmikadRunning,
   spawn = nodeSpawn,
   fetch: fetcher = fetch,
 }: AmikadSupervisorOptions): AmikadSupervisor {
@@ -77,6 +94,8 @@ export function amikadSupervisor({
     },
     async start() {
       await stopChild();
+      const stuck = await stopLeftover();
+      if (stuck !== undefined) return { ok: false, reason: stuck };
       wanted = true;
       crashes = 0;
       const started = launch();
@@ -111,11 +130,21 @@ export function amikadSupervisor({
     }
     const startedAt = Date.now();
     child = spawned;
+    if (pidFile !== undefined && spawned.pid !== undefined) {
+      try {
+        writePidFile(pidFile, spawned.pid);
+      } catch (error) {
+        err(`amika-hostd: ${describe(error)}`);
+      }
+    }
     // A spawn failure (no such binary) arrives as `error`, then `close`.
     spawned.on("error", (error) => {
       err(`amika-hostd: amikad serve failed: ${describe(error)}`);
     });
     spawned.on("close", (code, signal) => {
+      if (pidFile !== undefined && spawned.pid !== undefined) {
+        removePidFile(pidFile, spawned.pid);
+      }
       if (child !== spawned) return;
       child = undefined;
       if (!wanted) return;
@@ -168,6 +197,41 @@ export function amikadSupervisor({
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Stop an amikad a crashed daemon left running, which still holds the
+   * rig's ports, before starting a new one over its pid file: `SIGTERM`,
+   * then `SIGKILL`. Returns why it could not, keeping the pid file.
+   */
+  async function stopLeftover(): Promise<string | undefined> {
+    if (pidFile === undefined) return undefined;
+    const leftover = readRunningPid(pidFile, isLeftover);
+    if (leftover === undefined || leftover === child?.pid) return undefined;
+    err(
+      `amika-hostd: stopping amikad (pid ${leftover}) left by an earlier run`,
+    );
+    const stopped =
+      (await stopProcess(leftover, isLeftover, { timeoutMs: stopTimeoutMs })) ||
+      (await killLeftover(leftover));
+    if (!stopped) {
+      return `amikad (pid ${leftover}), left by an earlier run, did not exit; stop it, then try again`;
+    }
+    removePidFile(pidFile, leftover);
+    return undefined;
+  }
+
+  /** `SIGKILL` `pid`, and whether it is gone within a second. */
+  async function killLeftover(pid: number): Promise<boolean> {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      return !isLeftover(pid);
+    }
+    for (let tries = 0; tries < 10 && isLeftover(pid); tries++) {
+      await sleep(100);
+    }
+    return !isLeftover(pid);
   }
 
   async function stopChild(): Promise<void> {
