@@ -11,6 +11,7 @@ const SMOL_READY = {
   kvm: () => "ok" as const,
   hasResize2fs: () => true,
 };
+import { DEFAULT_AMIKAD_VERSION } from "./amikad-install.js";
 import { ConfigError, resolveConfig, type HostdConfigFile } from "./config.js";
 import { daemonPaths } from "./daemon.js";
 import { PromptCancelled } from "./prompt.js";
@@ -1125,7 +1126,7 @@ describe("runSetup: the bare_metal runtime", () => {
       "This machine is the rig: 8 vCPUs, 16 GiB memory, 500 GiB disk (linux/x64).",
     );
     expect(h.out).toContain(
-      "SSH sessions log in as jakub, through amikad (/data/amikad/0.3.0/amikad) and its own sshd (/usr/sbin/sshd).",
+      `SSH sessions log in as jakub, through amikad (/data/amikad/${DEFAULT_AMIKAD_VERSION}/amikad) and its own sshd (/usr/sbin/sshd).`,
     );
     expect(h.out).toContain("  runtimes  bare_metal");
   });
