@@ -77,7 +77,9 @@ one this machine can run, as setup does
 without a terminal it then exits with an error naming the flags.
 
 1. It prints the plan. Turning on Lume adds `storage_dir` (in hostd's data
-   directory) and, unless a preset already uses Lume, the `macos-coder`
+   directory); unless the file has Lume sizes, the sizes `macos-small`,
+   `macos-medium` and `macos-large` (`MACOS_SIZES`); and, unless a preset
+   already uses Lume, the `macos-coder`
    preset with template `amika-macos-coder`. With no `[runtimes]` table it
    also lists smol, so smol stays on. When Lume is asked for, each template
    a Lume preset boots that Lume does not have is a step of its own, with

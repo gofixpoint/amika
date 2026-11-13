@@ -4,13 +4,47 @@
  * `[runtimes.*]`, keeping everything else in `config.toml` as it is.
  */
 import { parse as parseToml } from "smol-toml";
-import { ConfigError } from "./config.js";
+import { ConfigError, type HostSize } from "./config.js";
 import { tomlKey } from "./config-upgrade.js";
 import type { RuntimeName } from "./runtimes.js";
 
 /** The preset a Lume host offers, and the template it boots by default. */
 export const MACOS_PRESET = "macos-coder";
 export const DEFAULT_MACOS_IMAGE = "amika-macos-coder";
+
+/**
+ * The disk of the base VM hostd builds, and so of every template and rig
+ * cloned from it: Lume never grows or shrinks a rig's disk (spec 028), so
+ * each Lume size has exactly this disk. The image uses about 31 GB, which
+ * leaves about 70 GB for a rig's repos and builds.
+ */
+export const MACOS_DISK_GIB = 100;
+
+/**
+ * The sizes turning on Lume adds, replacing `[sizes]` for Lume rigs, since
+ * those are for Linux VMs with smaller disks. macOS runs at most two macOS
+ * VMs, so the largest two rigs take 16 vCPUs and 32 GiB of memory.
+ */
+export const MACOS_SIZES: Record<string, HostSize> = {
+  "macos-small": {
+    vcpus: 4,
+    memoryGib: 8,
+    diskGib: MACOS_DISK_GIB,
+    diskGrowOnly: false,
+  },
+  "macos-medium": {
+    vcpus: 6,
+    memoryGib: 12,
+    diskGib: MACOS_DISK_GIB,
+    diskGrowOnly: false,
+  },
+  "macos-large": {
+    vcpus: 8,
+    memoryGib: 16,
+    diskGib: MACOS_DISK_GIB,
+    diskGrowOnly: false,
+  },
+};
 
 export interface RuntimeChange {
   enable: readonly RuntimeName[];
@@ -20,8 +54,8 @@ export interface RuntimeChange {
 /**
  * `contents` with `change` applied, and what changed, in words; no steps
  * when the file already says it. Turning on Lume also adds its
- * `storage_dir` (`lumeStorageDir`) and the `macos-coder` preset, unless the
- * file has them.
+ * `storage_dir` (`lumeStorageDir`), its sizes (`MACOS_SIZES`) and the
+ * `macos-coder` preset, unless the file has them.
  */
 export function updateRuntimes(
   contents: string,
@@ -96,6 +130,24 @@ export function updateRuntimes(
       ]);
     } else append([`[runtimes.${name}]`]);
     steps.push(`Turn on ${name}`);
+    if (
+      name === "lume" &&
+      !lines.some((line) => /^\s*\[\s*runtimes\.lume\.sizes\./.test(line))
+    ) {
+      for (const [size, { vcpus, memoryGib, diskGib }] of Object.entries(
+        MACOS_SIZES,
+      )) {
+        append([
+          `[runtimes.lume.sizes.${tomlKey(size)}]`,
+          `vcpus = ${vcpus}`,
+          `memory_gib = ${memoryGib}`,
+          `disk_gib = ${diskGib}`,
+        ]);
+      }
+      steps.push(
+        `Add sizes ${Object.keys(MACOS_SIZES).join(", ")} on lume, with ${MACOS_DISK_GIB} GiB of disk each`,
+      );
+    }
     if (
       name === "lume" &&
       !lines.some((line) =>

@@ -23,6 +23,8 @@ import {
   MACOS_BASE_VM,
   macosRestoreImageDir,
   missingMacosImages,
+  progressFilter,
+  runShowingProgress,
   type MacosImageDeps,
 } from "./lume-setup.js";
 
@@ -141,7 +143,16 @@ describe("buildMacosImage", () => {
     expect(run.mock.calls.map(([command, args]) => [command, args])).toEqual([
       [
         LUME,
-        ["create", "--ipsw", "latest", "--unattended", "tahoe", MACOS_BASE_VM],
+        [
+          "create",
+          "--ipsw",
+          "latest",
+          "--disk-size",
+          "100GB",
+          "--unattended",
+          "tahoe",
+          MACOS_BASE_VM,
+        ],
       ],
       ["/bin/bash", [FILES.buildScript, MACOS_BASE_VM, "amika-macos-coder"]],
     ]);
@@ -210,6 +221,8 @@ describe("buildMacosImage", () => {
       "create",
       "--ipsw",
       kept,
+      "--disk-size",
+      "100GB",
       "--unattended",
       "tahoe",
       MACOS_BASE_VM,
@@ -472,6 +485,8 @@ describe("the unattended preset in the build", () => {
         "create",
         "--ipsw",
         "latest",
+        "--disk-size",
+        "100GB",
         "--unattended",
         preset,
         MACOS_BASE_VM,
@@ -783,3 +798,89 @@ function isRunning(pid: number): boolean {
     return false;
   }
 }
+
+describe("progressFilter", () => {
+  const download = (percent: number) =>
+    `[2026-11-12T22:29:28Z] INFO: Downloading IPSW Progress: ${percent}%`;
+  const install = (percent: number) =>
+    `[2026-11-12T23:02:31Z] INFO: Installing macOS progress=${percent}%`;
+
+  it("shows every other line, and progress every 5%", () => {
+    const shown: string[] = [];
+    const show = progressFilter((line) => shown.push(line), { now: () => 0 });
+    show("INFO: Creating VM");
+    for (let percent = 0; percent <= 12; percent++) show(download(percent));
+    show("INFO: Download completed");
+    expect(shown).toEqual([
+      "INFO: Creating VM",
+      download(0),
+      download(5),
+      download(10),
+      "INFO: Download completed",
+    ]);
+  });
+
+  it("shows progress every 2 minutes when it is slower than 5% in that time", () => {
+    const shown: string[] = [];
+    let now = 0;
+    const show = progressFilter((line) => shown.push(line), {
+      now: () => now,
+    });
+    show(download(1));
+    now = 119_000;
+    show(download(2));
+    now = 120_000;
+    show(download(3));
+    expect(shown).toEqual([download(1), download(3)]);
+  });
+
+  it("follows the download and the install apart, and shows each 100% once", () => {
+    const shown: string[] = [];
+    const show = progressFilter((line) => shown.push(line), { now: () => 0 });
+    show(download(98));
+    show(download(100));
+    show(download(100));
+    show(install(0));
+    show(install(2));
+    expect(shown).toEqual([download(98), download(100), install(0)]);
+  });
+});
+
+describe.runIf(process.platform === "darwin")("runShowingProgress", () => {
+  it("passes on each line as the command prints it, in a terminal", async () => {
+    // Lume buffers its output unless it is a terminal.
+    const shown: { line: string; at: number }[] = [];
+    const started = Date.now();
+    const code = await runShowingProgress(
+      "/bin/bash",
+      [
+        "-c",
+        '[ -t 1 ] && echo tty; echo "Downloading IPSW Progress: 1%"; sleep 1; echo done',
+      ],
+      process.env,
+      undefined,
+      (line) => shown.push({ line, at: Date.now() - started }),
+    );
+    expect(code).toBe(0);
+    expect(shown.map(({ line }) => line)).toEqual([
+      "tty",
+      "Downloading IPSW Progress: 1%",
+      "done",
+    ]);
+    expect(shown[1].at).toBeLessThan(shown[2].at - 500);
+  });
+
+  it("on abort, stops the command", async () => {
+    const stopping = new AbortController();
+    const running = runShowingProgress(
+      "/bin/bash",
+      ["-c", "echo started; sleep 30"],
+      process.env,
+      stopping.signal,
+      () => stopping.abort(),
+    );
+    const started = Date.now();
+    await running;
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});
