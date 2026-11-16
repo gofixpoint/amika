@@ -1,6 +1,6 @@
 ---
 name: amika-cli
-description: "Drive the `amika` CLI to create, inspect, and operate Amika rigs, the organization's own hosts, and agent chat sessions non-interactively. Use when a task involves `amika rig`, `amika host`, `amika send`, `amika auth`, `amika secret`, `amika service`, `amika snapshot`, or `amika scp`, including listing or retiring bring-your-own-compute hosts and discovering and debugging services from inside an Amika rig."
+description: "Drive the `amika` CLI to create, inspect, and operate Amika rigs, the organization's own hosts, and agent chat sessions non-interactively. Use when a task involves `amika rig`, `amika host`, `amika send`, `amika auth`, `amika secret`, `amika service`, `amika snapshot`, `amika job`, or `amika scp`, including listing or retiring bring-your-own-compute hosts and discovering and debugging services from inside an Amika rig."
 ---
 
 # Using the `amika` CLI
@@ -81,6 +81,7 @@ confirmation flags, and commands that reject JSON output.
 | Fork from a snapshot                       | `amika rig create --snapshot <name>`                                      |
 | List the org's own hosts                   | `amika host list`                                                         |
 | Run a rig on one of those hosts            | `amika rig create --host <hostname>`                                      |
+| Run commands on a cron schedule (beta)     | `amika job --help`                                                        |
 | Authenticate in a headless environment     | Set `AMIKA_API_KEY`                                                       |
 
 ## Critical facts

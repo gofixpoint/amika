@@ -15,6 +15,8 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Override the default timeout for a single request. */
   timeoutMs?: number;
+  /** Extra request headers, such as `Idempotency-Key`. */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -129,7 +131,9 @@ export class HTTPClient {
     accept: string | undefined,
     requestOptions: RequestOptions | undefined,
   ): Promise<{ response: Response; release: () => void }> {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = {
+      ...requestOptions?.headers,
+    };
     const token = await this.tokenSource.token();
     headers["Authorization"] = `Bearer ${token}`;
     if (accept) headers["Accept"] = accept;

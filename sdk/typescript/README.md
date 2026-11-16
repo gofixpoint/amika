@@ -236,6 +236,38 @@ source rig. `client.snapshots.previewScrub(rig)` previews affected paths and
 environment names without returning secret values. Snapshot failures and
 expired waits throw `AmikaError`; HTTP failures throw `AmikaHTTPError`.
 
+## Cron jobs (beta)
+
+A job runs an ordered list of commands on one rig on a cron schedule, such as a
+nightly dependency audit. Each time a slot comes due, the job gets a job run,
+which executes the steps one at a time and stops at the first one that fails.
+Jobs are in beta: an organization without them gets `AmikaHTTPError` 404.
+
+```ts
+await client.jobs.create({
+  name: "nightly-audit",
+  trigger: { kind: "cron", schedule: "0 9 * * 1-5", timezone: "Europe/Warsaw" },
+  steps: [
+    {
+      rigCreate: { name: "audit", repoUrl: "https://github.com/org/repo" },
+      command: "pnpm install --frozen-lockfile",
+      timeoutMs: 600_000,
+    },
+    { command: "pnpm audit --prod", timeoutMs: 1_800_000 },
+  ],
+  rigStatusOnFinish: "deleted",
+});
+const run = await client.jobRuns.create("nightly-audit"); // run it now
+const { items } = await client.jobRuns.list({ job: "nightly-audit" });
+```
+
+Step 0 names the rig with `rig` (a `RigRef`) or `rigCreate`; later steps run on
+the same rig. `rigCreate.name` is a prefix: each job run creates its own rig.
+`jobs.pause(job)` and `jobs.resume(job)` stop and restart the schedule, and
+`jobs.update(job, changes)` replaces only the fields you pass. `jobs.create`
+sends an `Idempotency-Key`; pass `{ idempotencyKey }` and reuse it on a retry,
+so the retry returns the first job instead of failing on its taken name.
+
 ## Configuration
 
 `baseUrl` defaults to `https://app.amika.dev`. An override is the origin without

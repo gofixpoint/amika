@@ -16,7 +16,12 @@ import (
 func resetChangedFlags(cmd *cobra.Command) {
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
 		if f.Changed {
-			_ = f.Value.Set(f.DefValue)
+			// Set appends to a slice flag that was set before, so clear it.
+			if sv, ok := f.Value.(pflag.SliceValue); ok && f.DefValue == "[]" {
+				_ = sv.Replace(nil)
+			} else {
+				_ = f.Value.Set(f.DefValue)
+			}
 			f.Changed = false
 		}
 	})

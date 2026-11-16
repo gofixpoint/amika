@@ -37,7 +37,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `auth login --api-key-file`, `auth logout`, `auth api-key create`, and `skill install`. Commands that open a shell or editor (`sandbox connect`, `sandbox open`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `job create`/`list`/`get`/`update`/`pause`/`resume`/`delete`/`run`, `job runs list`/`get`, `auth login --api-key-file`, `auth logout`, `auth api-key create`, and `skill install`. Commands that open a shell or editor (`sandbox connect`, `sandbox open`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika send`
 
@@ -459,6 +459,73 @@ Deletes each host and its stored secret. `rm` and `remove` are aliases. A host t
 | Flag            | Default | Description              |
 | --------------- | ------- | ------------------------ |
 | `-f`, `--force` | `false` | Skip confirmation prompt |
+
+---
+
+## `amika job`
+
+Run commands on a rig on a cron schedule, such as a nightly test run or dependency audit, without keeping a machine awake to fire them. `jobs` is an alias. Jobs are in beta: where they are not enabled, these commands fail with HTTP 404.
+
+A job is a cron schedule plus an ordered list of steps. Each time a slot comes due, or `amika job run` starts one, the job gets a job run. The job run executes the steps one at a time on one rig, as Command Runs, and stops at the first step that fails. A `<job>` is a job's name or id, or `name=<name>` / `id=<id>` to match one field.
+
+```bash
+# Run the tests on rig "dev" at 02:00 Warsaw time every day
+amika job create nightly-tests --schedule "0 2 * * *" --timezone Europe/Warsaw \
+  --rig dev --command "make test" --timeout 30m
+
+# Create a job from a full request body, e.g. one that creates a fresh rig per run
+amika job create --file job.json
+
+# Start a run now, then follow it
+amika job run nightly-tests
+amika job runs list --job nightly-tests
+amika job runs get <job-run-id>
+
+# Pause, resume, change, and delete
+amika job pause nightly-tests
+amika job resume nightly-tests
+amika job update nightly-tests --schedule "0 3 * * *"
+amika job delete nightly-tests
+```
+
+### `amika job create <name>`
+
+Creates a job from flags, with one step per `--command`, all on the rig `--rig` names. The schedule is a 5-field cron expression (minute, hour, day of month, month, day of week) or `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`, and fires must be at least 5 minutes apart. For anything the flags do not cover, such as a new rig for each job run (`rig_create`), pass the API's `CreateJobRequest` body as JSON with `--file` (`-` reads stdin); `amika job create --help` shows an example.
+
+The command sends a fresh `Idempotency-Key` on each run. Pass `--idempotency-key` and reuse it on a retry so that the retry returns the job the first attempt created.
+
+| Flag                         | Default | Description                                                                        |
+| ---------------------------- | ------- | ---------------------------------------------------------------------------------- |
+| `--schedule <cron>`          |         | Cron schedule (required without `--file`)                                          |
+| `--timezone <zone>`          | `UTC`   | IANA time zone the schedule is read in                                             |
+| `--rig <rig>`                |         | Rig every step runs on (required without `--file`)                                 |
+| `--command <command>`        |         | Shell command of one step; repeat for more steps, run in order                     |
+| `--timeout <duration>`       | `1h`    | Maximum run time of each step once it starts                                       |
+| `--queue-timeout <duration>` |         | Maximum wait for each step to start                                                |
+| `--session <name>`           |         | FIFO lane on the rig the steps run in                                              |
+| `--cwd <dir>`                |         | Working directory of each step                                                     |
+| `--description <text>`       |         | Description of the job                                                             |
+| `--rig-status-on-finish <s>` |         | Rig status once a job run ends: `active`, `stopped`, or `deleted`                  |
+| `--overlap-policy <p>`       | `skip`  | `skip` or `allow` a scheduled run while an earlier one is still pending or running |
+| `--paused`                   | `false` | Create the job paused                                                              |
+| `--file <path>`              |         | Read the whole request body from a JSON file; replaces the flags above             |
+| `--idempotency-key <key>`    |         | Key that makes a retry return the job the first attempt created                    |
+
+### `amika job list`, `amika job get <job>`
+
+`list` shows every job (all pages) with its state, schedule, time zone, next run, and step count; `--enabled` or `--paused` filters. `-o json` emits `{"items": [...], "next_cursor": null}`. `get` shows one job and its steps.
+
+### `amika job update <job>`, `pause`, `resume`
+
+`update` changes only the fields whose flags are given: `--name`, `--description` (empty clears it), `--schedule`, `--timezone`, `--rig-status-on-finish` (`none` clears it), and `--overlap-policy`. To replace the steps, pass an `UpdateJobRequest` body with `--file`. `pause` stops the schedule; `resume` restarts it at its next future slot, skipping the slots missed while paused.
+
+### `amika job delete <job> [...]`
+
+Deletes each job and its job runs; the Command Runs they created stay. A job with a pending or running job run is refused: pause it, and try again once the run ends. `rm` and `remove` are aliases; `-f`/`--force` skips the confirmation prompt and is required with `-o json`.
+
+### `amika job run <job>`, `amika job runs list`, `amika job runs get <id>`
+
+`run` starts a job run now. It ignores the job's overlap policy and does not move its next scheduled run. `runs list` shows job runs newest first, filtered by `--job`, `--status` (`pending`, `running`, `succeeded`, `failed`, `skipped`), and `--trigger` (`cron`, `manual`), up to `--limit` (default 20). `runs get` shows one job run with its Command Run ids and the error that ended it, if any.
 
 ---
 

@@ -80,6 +80,26 @@ export {
   type ListServicesOptions,
 } from "./services/types.js";
 export {
+  type CreateJobRequest,
+  type CronTrigger,
+  type IdempotencyOptions,
+  type Job,
+  type JobRun,
+  type JobRunStatus,
+  type JobRunTriggerKind,
+  type JobRuns,
+  type Jobs,
+  type JobStep,
+  type JobTrigger,
+  type ListJobRunsOptions,
+  type ListJobRunsResponse,
+  type ListJobsOptions,
+  type ListJobsResponse,
+  type OverlapPolicy,
+  type RigStatusOnFinish,
+  type UpdateJobRequest,
+} from "./jobs/types.js";
+export {
   type Snapshots,
   type Snapshot,
   type SnapshotHandle,
