@@ -102,12 +102,12 @@ reports anything. Only an unanswered round trip finds it.
 every `KEEP_ALIVE_INTERVAL_MS` (10 s).
 A ping is missed if no relay message arrives within `PING_TIMEOUT_MS` (5 s).
 The reply can be `PONG` (`amika.tunnel.v2.pong`) or any binary frame.
-Any relay message proves that the connection transfers data.
-A `PONG` can wait behind stream data on a busy connection.
+Any relay message proves that the socket transfers data.
+A `PONG` can wait behind stream data on a busy socket.
 A v2 socket ends after `MAX_MISSED_PINGS` (2) missed pings in a row.
-Thus hostd finds a dead v2 tunnel in approximately 25 s or less.
+Thus hostd finds a dead v2 socket in 25 s or less.
 A v3 socket ends after `RESUME_MAX_MISSED_PINGS` (1) missed ping.
-A v3 drop costs one recovery, not every stream.
+When a v3 socket ends, the session starts recovery and keeps its streams.
 The relay registers the `PING` and `PONG` pair with
 Cloudflare's `setWebSocketAutoResponse`, so its runtime answers without
 waking the relay: an idle host costs nothing, and the relay is not billed a
@@ -177,14 +177,16 @@ The design is spec 035, `specs/035-host-connection-drops.d/resumable-tunnel.md` 
 The daemon offers `amika.tunnel.v3, amika.tunnel.v2`.
 The relay selects one protocol.
 A v3 session counts the frames that it sends and processes.
-It keeps unacknowledged frames in a replay log.
+The session sends `ACK` after it processes 256 KiB.
+It also sends `ACK` 200 ms after it processes the first unacknowledged frame.
+WebSocket preserves frame order, so each frame's position identifies it.
+Frames do not contain sequence numbers.
+
+The session keeps unacknowledged frames in a replay log.
 The log holds at most `HOSTD_MAX_REPLAY_BYTES` (32 MiB) and 65,536 frames.
 The frame limit bounds object overhead for small messages.
-When either limit is exceeded, the log drops its oldest frames.
-A resume that needs a dropped frame is refused.
-It sends `ACK` after processing 256 KiB, or 200 ms after processing the first unacknowledged frame.
-WebSocket preserves frame order, so each frame's position identifies it.
-The frame does not contain a sequence number.
+When the log exceeds either limit, it drops its oldest frames.
+hostd refuses a resume that needs a dropped frame.
 
 When a v3 socket ends:
 
@@ -206,7 +208,7 @@ The session cannot resume in these cases:
 - The recovery window expires.
 
 These cases reset the old session's streams.
-An invalid count also closes the new socket with code `1002`.
+If the count is invalid or the log does not have the frames, hostd also closes the new socket with code `1002`.
 
 A protocol error, relay close code `1002`, or relay close code `CLOSE_SESSION_ENDED` ends the session immediately.
 Shutdown also ends the local session.
@@ -221,9 +223,8 @@ This limits queued traffic and the data that recovery must resend.
 A successful resume resets the retry delay.
 A resumed socket does not count toward the credential-revocation warning because the relay has authorized the host.
 
-A v3 socket sends a ping every 10 s.
-It ends the socket when no relay message answers the ping within 5 s.
-This starts recovery instead of ending every stream.
+hostd ends a v3 socket after one missed ping.
+See [A text ping that the relay answers without waking](#a-text-ping-that-the-relay-answers-without-waking).
 
 Set `AMIKA_HOSTD_TUNNEL_RESUME=0` to offer v2 only.
 The relay has a separate switch, so either end can disable session recovery.
