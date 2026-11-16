@@ -49,15 +49,41 @@ export const LEGACY_CREDENTIAL_HEADER = "x-amika-host-credential";
 export const PING = "amika.tunnel.v2.ping";
 export const PONG = "amika.tunnel.v2.pong";
 
-/** How often hostd pings. */
-export const KEEP_ALIVE_INTERVAL_MS = 30_000;
-/** How long hostd waits for a `PONG` before it treats the tunnel as dead. */
-export const PING_TIMEOUT_MS = 10_000;
+/**
+ * How often hostd pings.
+ *
+ * A tunnel is a WebSocket held open across whatever sits between a
+ * customer's network and Amika, and an idle one is what a NAT or a load
+ * balancer reaps first. This is the host's half of the same bargain
+ * `GATEWAY_KEEP_ALIVE_INTERVAL_MS` makes on the gateway's side.
+ *
+ * It also sets how fast a tunnel that broke with no close event is found.
+ * Until then, the relay sends new requests into the dead socket. With
+ * `PING_TIMEOUT_MS` and `MAX_MISSED_PINGS`, a dead tunnel is found in at
+ * most about 25 s.
+ */
+export const KEEP_ALIVE_INTERVAL_MS = 10_000;
+/**
+ * How long hostd waits for a `PONG` before the ping counts as missed.
+ * Shorter than the interval, so a missed ping is counted before the next
+ * one is due rather than queueing behind it.
+ */
+export const PING_TIMEOUT_MS = 5_000;
+/**
+ * How many pings in a row hostd may miss before it treats the tunnel as
+ * dead. A ping shares the socket with stream data, so during a large
+ * transfer its `PONG` can come late. Ending the tunnel ends every stream on
+ * it, so one late answer must not do that. A late `PONG` resets the count.
+ */
+export const MAX_MISSED_PINGS = 2;
 /**
  * How long the relay lets a host go without pinging before it presumes the
- * host gone. Three intervals, so one lost ping is not a disconnect.
+ * host gone. Three of the 30 s intervals that amika-hostd 0.7.0 and earlier
+ * use, so one lost ping from those hosts is not a disconnect. It does not
+ * follow `KEEP_ALIVE_INTERVAL_MS`, because the relay serves hosts of every
+ * version.
  */
-export const HOST_SILENCE_MS = 3 * KEEP_ALIVE_INTERVAL_MS;
+export const HOST_SILENCE_MS = 90_000;
 
 /** Credit each side starts with to send `DATA` on one stream. */
 export const INITIAL_WINDOW = 256 * 1024;

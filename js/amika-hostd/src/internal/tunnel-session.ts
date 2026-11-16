@@ -32,8 +32,10 @@ import {
 export interface TunnelSessionOptions {
   /** How often to ping the relay. See `watchLiveness`. */
   keepAliveIntervalMs: number;
-  /** How long a ping may go unanswered before the tunnel counts as dead. */
+  /** How long a ping may go unanswered before it counts as missed. */
   pingTimeoutMs: number;
+  /** How many pings in a row may be missed before the tunnel counts as dead. */
+  maxMissedPings: number;
   /** How long `close` lets streams in flight finish. */
   drainMs: number;
   /** Hand one inbound connection to whatever serves HTTP on this host. */
@@ -69,6 +71,8 @@ export class TunnelSession implements StreamCarrier {
     reject: (error: Error) => void;
     timer: NodeJS.Timeout;
   };
+  /** Pings in a row with no `PONG`. Any `PONG` resets it. */
+  private missedPings = 0;
   private draining = false;
   private ended = false;
   private endError?: Error;
@@ -353,6 +357,8 @@ export class TunnelSession implements StreamCarrier {
   }
 
   private onPong(): void {
+    // A late answer still shows that the tunnel carries traffic.
+    this.missedPings = 0;
     const pending = this.pending;
     if (!pending) return;
     this.pending = undefined;
@@ -361,7 +367,8 @@ export class TunnelSession implements StreamCarrier {
   }
 
   /**
-   * Ping on a fixed interval, and end the session when one goes unanswered.
+   * Ping on a fixed interval, and end the session when `maxMissedPings`
+   * pings in a row go unanswered.
    *
    * A text `PING` and not a WebSocket ping frame. The relay's runtime
    * answers it without waking the relay, so an idle host costs nothing, and
@@ -381,7 +388,11 @@ export class TunnelSession implements StreamCarrier {
       if (this.ended || this.draining || this.pending) return;
       this.ping().catch((error: Error) => {
         if (this.ended || this.draining) return;
-        this.abort(error);
+        this.missedPings += 1;
+        if (this.missedPings < this.options.maxMissedPings) return;
+        this.abort(
+          new Error(`${error.message}, ${this.missedPings} times in a row`),
+        );
       });
     }, this.options.keepAliveIntervalMs);
     // Nothing about a tunnel should hold the process open by itself.
