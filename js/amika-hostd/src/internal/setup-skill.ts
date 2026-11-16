@@ -248,9 +248,6 @@ If it fails with:
   \`amika-hostd setup\` in a terminal.
 - **\`host_tunnel_not_enabled\`**: this Amika deployment has no tunnel.
   Tell the operator, and offer to listen instead (step 2).
-- **\`byoc_not_activated\`**: the organization has not activated its own
-  hosts. Tell the operator to enter their activation code in the Amika web
-  app, under **Your hosts** in the create-rig form.
 
 ## 6. Make the host reachable
 
