@@ -9,7 +9,9 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
@@ -216,17 +218,31 @@ type proxyStream struct {
 	read    *bytes.Reader
 	readErr error
 	writes  bytes.Buffer
+	// holdOpen keeps the far end open after its bytes, until Close.
+	holdOpen  bool
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 func (s *proxyStream) Read(p []byte) (int, error) {
 	read, err := s.read.Read(p)
+	if errors.Is(err, io.EOF) && s.holdOpen {
+		<-s.closed
+	}
 	if errors.Is(err, io.EOF) && s.readErr != nil {
 		return read, s.readErr
 	}
 	return read, err
 }
 func (s *proxyStream) Write(p []byte) (int, error) { return s.writes.Write(p) }
-func (s *proxyStream) Close() error                { return nil }
+func (s *proxyStream) Close() error {
+	s.closeOnce.Do(func() {
+		if s.closed != nil {
+			close(s.closed)
+		}
+	})
+	return nil
+}
 
 type fakeSessionDialer struct {
 	stream     *proxyStream
@@ -244,7 +260,11 @@ func (d *fakeSessionDialer) Dial(_ context.Context, url, credential string) (Str
 
 func TestProxySessionCreatesSessionAndCopiesBytes(t *testing.T) {
 	creator := &fakeCreator{hostKey: testHostKey(t)}
-	stream := &proxyStream{read: bytes.NewReader([]byte("from-sshd"))}
+	stream := &proxyStream{
+		read:     bytes.NewReader([]byte("from-sshd")),
+		holdOpen: true,
+		closed:   make(chan struct{}),
+	}
 	dialer := &fakeSessionDialer{stream: stream}
 	pins := &fakePinStore{}
 	var stdout bytes.Buffer
@@ -340,4 +360,49 @@ func testHostKey(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return strings.TrimSpace(string(cryptossh.MarshalAuthorizedKey(key)))
+}
+
+// OpenSSH closes the ProxyCommand's stdin only after it reads EOF from the
+// proxy's stdout. So the proxy must exit when the far end closes, and must not
+// wait for stdin to end first.
+func TestProxySessionExitsWhenTheTransportClosesFirst(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		readErr error
+		wantErr bool
+	}{
+		{"normal closure", websocket.CloseError{Code: websocket.StatusNormalClosure}, false},
+		{"host gone", websocket.CloseError{Code: websocket.StatusInternalError}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stream := &proxyStream{read: bytes.NewReader([]byte("from-sshd")), readErr: test.readErr}
+			stdin, openSSH := io.Pipe()
+			defer openSSH.Close()
+			var stdout bytes.Buffer
+
+			done := make(chan error, 1)
+			go func() {
+				done <- ProxySession(
+					context.Background(),
+					&fakeCreator{hostKey: testHostKey(t)},
+					&fakeSessionDialer{stream: stream},
+					&fakePinStore{},
+					"my.team.sbx_123.localhost-3011.amika",
+					stdin,
+					&stdout,
+				)
+			}()
+			select {
+			case err := <-done:
+				if (err != nil) != test.wantErr {
+					t.Fatalf("ProxySession error = %v, want error %v", err, test.wantErr)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("ProxySession still waits for stdin after the transport closed")
+			}
+			if got := stdout.String(); got != "from-sshd" {
+				t.Fatalf("stdout received %q", got)
+			}
+		})
+	}
 }
