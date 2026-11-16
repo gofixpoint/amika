@@ -174,6 +174,7 @@ export async function dialTunnel(
         // the other end, so a peer that did not agree to this protocol is
         // refused here rather than fed a frame stream.
         if (ws.protocol !== TUNNEL_SUBPROTOCOL) {
+          abandon(ws);
           ws.close(1002, "subprotocol");
           reject(
             new TunnelUnavailable(
@@ -197,6 +198,7 @@ export async function dialTunnel(
         // The socket is this side's to clean up: `ws` hands over the
         // response and does nothing else with the connection.
         response.destroy();
+        abandon(ws);
         ws.terminate();
         reject(refusal(response.statusCode ?? 0));
       });
@@ -206,6 +208,19 @@ export async function dialTunnel(
     ws.once("error", onError);
     ws.once("unexpected-response", onUnexpected);
   });
+}
+
+/**
+ * Keep an `error` listener on a socket the dial will not hand over.
+ *
+ * `settle` removes the dial's own listeners, but the socket is not closed
+ * yet. `terminate` on a socket that is still connecting makes `ws` emit
+ * `error` on a later tick. Node throws an `error` event that has no
+ * listener, and the daemon exits instead of dialling again. The rejection
+ * already carries the reason, so this listener ignores the error.
+ */
+function abandon(ws: WebSocket): void {
+  ws.on("error", () => {});
 }
 
 /**

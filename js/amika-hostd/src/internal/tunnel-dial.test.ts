@@ -5,8 +5,10 @@
  * covers the decisions around that dial, which are the ones that decide
  * whether a revoked host retries for ever or tells its operator.
  */
-import { EventEmitter } from "node:events";
-import type { WebSocket } from "ws";
+import { EventEmitter, once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { WebSocket as WebSocketClient, type WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
 import {
   dialTunnel,
@@ -47,6 +49,56 @@ describe("the handshake the gateway reads", () => {
     expect(headers["x-amika-host-credential"]).toBeUndefined();
     // Not a bearer token: the gateway passes the value on unread.
     expect(headers.authorization).toBeUndefined();
+  });
+});
+
+describe("a gateway that refuses the upgrade", () => {
+  it("rejects the dial and the socket closes without an unhandled error", async () => {
+    // The gateway answers the upgrade with a plain 503, as it does when
+    // the relay is not ready after a tunnel close.
+    const server = createServer();
+    server.on("upgrade", (_request, socket) => {
+      socket.end(
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+      );
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    let closed: Promise<void> | undefined;
+    try {
+      const dial = dialTunnel(
+        {
+          gatewayUrl: `ws://127.0.0.1:${port}/v2/host-tunnel`,
+          hostId: "host-1",
+          credential: "cred-1",
+          generation: 1,
+        },
+        {
+          handshakeTimeoutMs: 1_000,
+          userAgent: "amika-hostd/test",
+          connect: (url, options) => {
+            const socket = new WebSocketClient(url, options.protocols, options);
+            // Not `events.once`: it adds an `error` listener of its own,
+            // and that listener would hide the defect under test.
+            closed = new Promise((resolve) =>
+              socket.once("close", () => resolve()),
+            );
+            return socket;
+          },
+        },
+      );
+
+      const error = await dial.catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(TunnelUnavailable);
+      expect((error as TunnelUnavailable).status).toBe(503);
+      // `ws` emits `error` and then `close` on a later tick. An `error`
+      // with no listener throws there, and `close` never comes.
+      await closed;
+    } finally {
+      server.close();
+    }
   });
 });
 
