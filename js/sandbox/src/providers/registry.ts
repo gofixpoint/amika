@@ -23,6 +23,8 @@ import type { DaytonaConfig } from "./daytona/config";
 import type { E2bConfig } from "./e2b/config";
 import type { FreestyleConfig } from "./freestyle/config";
 import type { VercelConfig } from "./vercel/config";
+import type { InstaboxConfig } from "./instabox/config";
+import instaboxProvider, { openInstaboxAdapter } from "./instabox/provider";
 import type { SimulateConfig } from "./simulate/config";
 import simulateProvider, { openSimulateAdapter } from "./simulate/provider";
 import type { SandboxProvider, SnapshotIdResolver } from "./provider";
@@ -54,6 +56,8 @@ export interface SandboxProviderDeps {
   e2b: E2bConfig | null;
   freestyle: FreestyleConfig | null;
   vercel: VercelConfig | null;
+  /** Absent means the same as `null`: not configured. */
+  instabox?: InstaboxConfig | null;
   smol: SmolConfig | null;
   /** Absent means the same as `null`: not configured. */
   lume?: LumeConfig | null;
@@ -97,6 +101,8 @@ const LUME_HINT =
   "Lume provider is not configured (set LUME_ENABLED=true, LUME_STORAGE_DIR, and LUME_STATE_DIR)";
 const E2B_HINT =
   "E2B provider is not configured (set E2B_ENABLED=true and E2B_API_KEY)";
+const INSTABOX_HINT =
+  "Instabox provider is not configured (set INSTABOX_ENABLED=true and INSTABOX_API_KEY)";
 const SIMULATE_HINT =
   "Simulate provider is not configured (set SIMULATE_ENABLED=true)";
 
@@ -163,6 +169,17 @@ const PROVIDERS = {
       }),
     openAdapter: (deps, id) =>
       openVercelAdapter(requireConfig(deps.vercel, VERCEL_HINT), id),
+  },
+  instabox: {
+    create: (deps) =>
+      instaboxProvider(requireConfig(deps.instabox ?? null, INSTABOX_HINT)),
+    openAdapter: (deps, id) =>
+      Promise.resolve(
+        openInstaboxAdapter(
+          requireConfig(deps.instabox ?? null, INSTABOX_HINT),
+          id,
+        ),
+      ),
   },
   simulate: {
     create: (deps) =>
