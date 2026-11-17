@@ -13,7 +13,8 @@ dependency a rig can install, at the versions the base image builds from:
   checksum file where there is one, and its commands checked to exist.
 - npm dependencies carry an exact version and the commands the package
   declares; npm checks the registry's integrity hashes at install, as in the
-  image build.
+  image build. Pi and Pi Web install with --engine-strict and
+  --ignore-scripts, as steps 80 and 82 install them.
 
 Run it after changing versions.env:
 
@@ -124,8 +125,8 @@ def build(versions: dict[str, str]) -> dict:
         npm_dep("claude-code", "@anthropic-ai/claude-code", v["claude-code"]),
         npm_dep("npm", "npm", v["npm"]),
         npm_dep("opencode", "opencode-ai", v["opencode"]),
-        npm_dep("pi", "@earendil-works/pi-coding-agent", v["pi"]),
-        npm_dep("pi-web", "@agegr/pi-web", v["pi-web"]),
+        npm_dep("pi", "@earendil-works/pi-coding-agent", v["pi"], strict=True),
+        npm_dep("pi-web", "@agegr/pi-web", v["pi-web"], strict=True),
         npm_dep("typescript", "typescript", v["typescript"]),
         npm_dep("tsx", "tsx", v["tsx"]),
     ]
@@ -211,20 +212,26 @@ def check_bins(url: str, data: bytes, strip: int, bins: list[dict]) -> None:
             raise SystemExit(f"{url}: archive has no {item['path']}")
 
 
-def npm_dep(name: str, package: str, version: str) -> dict:
+def npm_dep(name: str, package: str, version: str, *, strict: bool = False) -> dict:
+    """An npm dependency. `strict` installs it with --engine-strict and
+    --ignore-scripts, as the image build installs Pi and Pi Web."""
     manifest = json.loads(download(f"https://registry.npmjs.org/{package}/{version}"))
     declared = manifest.get("bin") or {}
     if isinstance(declared, str):
         declared = {package.rsplit("/", 1)[-1]: declared}
     if not declared:
         raise SystemExit(f"{package}@{version} declares no commands")
-    return {
+    dep = {
         "name": name,
         "version": version,
         "kind": "npm",
         "package": package,
         "bins": sorted(declared),
     }
+    if strict:
+        dep["ignore_scripts"] = True
+        dep["engine_strict"] = True
+    return dep
 
 
 def published_sums(url: str) -> dict[str, str]:

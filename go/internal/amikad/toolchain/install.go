@@ -366,9 +366,42 @@ func linkCommand(binDir, name, target string) error {
 }
 
 // installPackages installs the KindNPM dependencies whose pinned version is
-// not already present, in one npm run, then links their commands. Each
-// installed dependency reports the whole run's time.
+// not already present, then links their commands. Dependencies that ask for
+// the same npm flags share one npm run, so one dependency's flags never
+// apply to another.
 func installPackages(ctx context.Context, node Dep, deps []Dep, options Options) error {
+	groups := map[string][]Dep{}
+	var order []string
+	for _, dep := range deps {
+		key := strings.Join(npmFlags(dep), " ")
+		if _, seen := groups[key]; !seen {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], dep)
+	}
+	for _, key := range order {
+		if err := installPackageRun(ctx, node, groups[key], options); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// npmFlags are the npm install flags dep asks for.
+func npmFlags(dep Dep) []string {
+	var flags []string
+	if dep.EngineStrict {
+		flags = append(flags, "--engine-strict")
+	}
+	if dep.IgnoreScripts {
+		flags = append(flags, "--ignore-scripts")
+	}
+	return flags
+}
+
+// installPackageRun installs deps, which share their npm flags, in one npm
+// run. Each installed dependency reports the run's time.
+func installPackageRun(ctx context.Context, node Dep, deps []Dep, options Options) error {
 	npmPrefix := filepath.Join(options.Prefix, "npm")
 	var specs []string
 	missing := map[string]bool{}
@@ -380,10 +413,12 @@ func installPackages(ctx context.Context, node Dep, deps []Dep, options Options)
 	}
 	started := time.Now()
 	if len(specs) > 0 {
-		args := append([]string{
+		args := []string{
 			"install", "--global", "--prefix", npmPrefix,
 			"--no-fund", "--no-audit", "--loglevel=error",
-		}, specs...)
+		}
+		args = append(args, npmFlags(deps[0])...)
+		args = append(args, specs...)
 		if err := options.RunNPM(ctx, depDir(options.Prefix, node), args, options.Log); err != nil {
 			return fmt.Errorf("npm install %s: %w", strings.Join(specs, " "), err)
 		}

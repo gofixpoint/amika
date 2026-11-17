@@ -48,16 +48,17 @@ func TestParseAcceptsAValidLockfile(t *testing.T) {
 
 func TestParseRefusesUnsafeLockfiles(t *testing.T) {
 	cases := map[string]string{
-		"http url":       strings.Replace(validLock, "https://example.com/gh", "http://example.com/gh", 1),
-		"short sha":      strings.Replace(validLock, testSHA, "abc", 1),
-		"path traversal": strings.Replace(validLock, `"bin/gh"`, `"../../etc/passwd"`, 1),
-		"absolute path":  strings.Replace(validLock, `"bin/gh"`, `"/usr/bin/gh"`, 1),
-		"link dir":       strings.Replace(validLock, `"link_dir": "/usr/bin"`, `"link_dir": "/etc"`, 1),
-		"bad package":    strings.Replace(validLock, `"package": "opencode-ai"`, `"package": "x; rm -rf /"`, 1),
-		"old schema":     strings.Replace(validLock, `"schema": 2`, `"schema": 1`, 1),
-		"unknown field":  strings.Replace(validLock, `"schema": 2`, `"schema": 2, "extra": true`, 1),
-		"bad command":    strings.Replace(validLock, `["opencode"]`, `["../opencode"]`, 1),
-		"reserved name":  strings.Replace(validLock, `"name": "opencode"`, `"name": "openssh-server"`, 1),
+		"http url":               strings.Replace(validLock, "https://example.com/gh", "http://example.com/gh", 1),
+		"short sha":              strings.Replace(validLock, testSHA, "abc", 1),
+		"path traversal":         strings.Replace(validLock, `"bin/gh"`, `"../../etc/passwd"`, 1),
+		"absolute path":          strings.Replace(validLock, `"bin/gh"`, `"/usr/bin/gh"`, 1),
+		"link dir":               strings.Replace(validLock, `"link_dir": "/usr/bin"`, `"link_dir": "/etc"`, 1),
+		"npm flag on an archive": strings.Replace(validLock, `"link_dir": "/usr/bin"`, `"link_dir": "/usr/bin", "ignore_scripts": true`, 1),
+		"bad package":            strings.Replace(validLock, `"package": "opencode-ai"`, `"package": "x; rm -rf /"`, 1),
+		"old schema":             strings.Replace(validLock, `"schema": 2`, `"schema": 1`, 1),
+		"unknown field":          strings.Replace(validLock, `"schema": 2`, `"schema": 2, "extra": true`, 1),
+		"bad command":            strings.Replace(validLock, `["opencode"]`, `["../opencode"]`, 1),
+		"reserved name":          strings.Replace(validLock, `"name": "opencode"`, `"name": "openssh-server"`, 1),
 	}
 	for name, input := range cases {
 		t.Run(name, func(t *testing.T) {

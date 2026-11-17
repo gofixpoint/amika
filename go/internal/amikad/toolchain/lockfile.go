@@ -68,6 +68,12 @@ type Dep struct {
 	Package string `json:"package,omitempty"`
 	// Bins are the commands a KindNPM dependency puts on PATH.
 	Bins []string `json:"bins,omitempty"`
+	// IgnoreScripts installs a KindNPM dependency with npm's
+	// --ignore-scripts, so its lifecycle scripts never run as root.
+	IgnoreScripts bool `json:"ignore_scripts,omitempty"`
+	// EngineStrict installs a KindNPM dependency with npm's --engine-strict,
+	// so it refuses a Node its package does not support.
+	EngineStrict bool `json:"engine_strict,omitempty"`
 	// LinkDir is where the commands are linked; empty means DefaultBinDir.
 	// gh links into /usr/bin, because the control plane's gh auth shim takes
 	// /usr/local/bin/gh and runs the next gh on PATH.
@@ -177,6 +183,9 @@ func (d Dep) validate() error {
 	case KindArchive:
 		if len(d.Artifacts) == 0 {
 			return errors.New("archive dependency has no artifacts")
+		}
+		if d.IgnoreScripts || d.EngineStrict {
+			return errors.New("ignore_scripts and engine_strict apply only to npm dependencies")
 		}
 		for platform, artifact := range d.Artifacts {
 			if platform != "linux/amd64" && platform != "linux/arm64" {

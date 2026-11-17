@@ -196,6 +196,49 @@ func TestInstallNPMDepsUseTheLockfileNodeOnce(t *testing.T) {
 	}
 }
 
+func TestInstallNPMDepsRunOncePerSetOfFlags(t *testing.T) {
+	node := makeTarGz(t, tarEntry{name: "node-v1/bin/node", body: "node"})
+	server, _ := serve(t, map[string][]byte{"/node.tgz": node})
+	deps := []Dep{
+		archiveDep("node", server.URL+"/node.tgz", sha(node), 1, Bin{Path: "bin/node"}),
+		{Name: "pi", Version: "1.0.0", Kind: KindNPM, Package: "@earendil-works/pi-coding-agent", Bins: []string{"pi"}, IgnoreScripts: true, EngineStrict: true},
+		{Name: "opencode", Version: "2.0.0", Kind: KindNPM, Package: "opencode-ai", Bins: []string{"opencode"}},
+		{Name: "pi-web", Version: "3.0.0", Kind: KindNPM, Package: "@agegr/pi-web", Bins: []string{"pi-web"}, IgnoreScripts: true, EngineStrict: true},
+	}
+	options := testOptions(t)
+	var runs []string
+	options.RunNPM = func(_ context.Context, _ string, args []string, _ io.Writer) error {
+		runs = append(runs, strings.Join(args, " "))
+		for _, arg := range args {
+			at := strings.LastIndex(arg, "@")
+			if at <= 0 || strings.HasPrefix(arg, "-") {
+				continue
+			}
+			pkgDir := filepath.Join(options.Prefix, "npm", "lib", "node_modules", filepath.FromSlash(arg[:at]))
+			if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+				return err
+			}
+			manifest := `{"version":"` + arg[at+1:] + `"}`
+			if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(manifest), 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := Install(context.Background(), Selection{Deps: deps}, options); err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("npm runs = %q, want one per set of flags", runs)
+	}
+	if !strings.HasSuffix(runs[0], "--engine-strict --ignore-scripts @earendil-works/pi-coding-agent@1.0.0 @agegr/pi-web@3.0.0") {
+		t.Fatalf("pi run = %q, want both Pi packages with the safe flags", runs[0])
+	}
+	if strings.Contains(runs[1], "--ignore-scripts") || strings.Contains(runs[1], "--engine-strict") || !strings.HasSuffix(runs[1], " opencode-ai@2.0.0") {
+		t.Fatalf("opencode run = %q, want it without the Pi flags", runs[1])
+	}
+}
+
 func TestInstallBinaryFormat(t *testing.T) {
 	binary := []byte("\x7fELF fake")
 	server, _ := serve(t, map[string][]byte{"/tool": binary})
