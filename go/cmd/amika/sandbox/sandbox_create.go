@@ -10,6 +10,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/gitrepo"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/rigref"
 	"github.com/gofixpoint/amika/go/internal/runmode"
 	"github.com/gofixpoint/amika/go/internal/sandbox"
 	"github.com/spf13/cobra"
@@ -18,8 +19,27 @@ import (
 var sandboxCreateCmd = &cobra.Command{
 	Use:   "create [<name>]",
 	Short: "Create a new rig",
-	Long:  `Create a new rig. If <name> is omitted, a random name is generated.`,
-	Args:  cobra.MaximumNArgs(1),
+	Long: `Create a new rig. If <name> is omitted, a random name is generated.
+
+These flags say where the rig runs:
+
+  --provider <provider>    the sandbox provider, e.g. instabox. The rig goes
+                           to your organization's default account there, or
+                           to Amika Cloud when there is none.
+  --cloud-account <account>
+                           one of your organization's own provider accounts
+                           (see "amika cloud-account list"): a name or id, or
+                           name=<name> / id=<id> to match one field. "amika"
+                           names Amika Cloud. With no --provider, the provider
+                           comes from the account.
+  --host <host>            one of your organization's own hosts.
+
+With none of them, the rig runs at the server's default provider, in the
+same way as --provider.`,
+	Example: `  amika rig create dev --provider instabox
+  amika rig create dev --provider instabox --cloud-account prod
+  amika rig create dev --cloud-account id=cacc_123`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, err := createName(cmd, args)
 		if err != nil {
@@ -39,6 +59,9 @@ var sandboxCreateCmd = &cobra.Command{
 		}
 		hostRef, err := createHostRef(cmd)
 		if err != nil {
+			return err
+		}
+		if _, err := createCloudAccount(cmd); err != nil {
 			return err
 		}
 		// The API refuses it too; checked here so it fails before login.
@@ -183,6 +206,11 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 	if host != nil {
 		hostID = host.ID
 	}
+	// Validated in RunE before the auth gate; only the value is read here.
+	cloudAccount, err := createCloudAccount(cmd)
+	if err != nil {
+		return err
+	}
 	runtime = strings.TrimSpace(runtime)
 	// A host whose only runtime is bare_metal takes the rig there when the
 	// create names no runtime and no preset, as the API does. Named here,
@@ -207,9 +235,8 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 
 	req := apiclient.CreateSandboxRequest{
 		Name: name,
-		// An unchanged hidden --provider flag produces an empty value, which JSON
-		// omits so the API still applies SANDBOX_PROVIDER. Explicit values are
-		// forwarded for provider-specific operational and E2E checks.
+		// An unchanged --provider flag produces an empty value, which JSON
+		// omits so the API applies its default provider, or the account's.
 		Provider:         provider,
 		HostID:           hostID,
 		Runtime:          runtime,
@@ -224,6 +251,7 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 		NewBranchName:    newBranch,
 		GithubAuthMode:   githubAuthMode,
 	}
+	req.SetCloudAccount(cloudAccount)
 	// Only set Snapshot when a slug was given; an unset flag leaves the field
 	// nil so the server applies its default snapshot chain.
 	if snapshot != "" {
@@ -258,10 +286,15 @@ func createRemoteSandbox(cmd *cobra.Command, target, name string, identity gitre
 	if err := assertRigLandedOnHost(sb, hostID); err != nil {
 		return err
 	}
+	if err := assertRigLandedInCloudAccount(sb, cloudAccount); err != nil {
+		return err
+	}
 
 	// sb.Hostname is the rig's own DNS name; the host is the one --host named.
 	if sb.Runtime != nil && hostRef != "" {
 		fmt.Fprintf(pw, "Rig %q created on %s (%s, %s, %s)\n", sb.Name, hostRef, *sb.Runtime, deref(sb.OS), dash(deref(sb.SandboxSize)))
+	} else if sb.CloudAccount != nil {
+		fmt.Fprintf(pw, "Rig %q created in %s\n", sb.Name, rigCloud(*sb))
 	} else {
 		fmt.Fprintf(pw, "Rig %q created\n", sb.Name)
 	}
@@ -332,12 +365,91 @@ func createHostRef(cmd *cobra.Command) (string, error) {
 	// rather than coming back as a 400.
 	for _, conflict := range []struct{ flag, why string }{
 		{"provider", "a rig on your own host runs on that host's daemon, not on a cloud provider"},
+		{"cloud-account", "a rig on your own host runs on that host's daemon, not in a cloud provider account"},
 	} {
 		if value, _ := cmd.Flags().GetString(conflict.flag); value != "" {
 			return "", fmt.Errorf("--%s cannot be combined with --host: %s", conflict.flag, conflict.why)
 		}
 	}
 	return ref, nil
+}
+
+// createCloudAccount reads --cloud-account into the account selector the
+// create request carries. The zero selector, for an absent flag, leaves the
+// account to the server: the provider's default account, or Amika Cloud.
+//
+// An explicitly empty value is refused, as --host's is. A script that passes
+// --cloud-account "$ACCOUNT" with the variable unset means to name an
+// account, and landing the rig in whatever account is the default, on
+// someone else's bill, is the one outcome it must not get. --host refuses the
+// combination with this flag (createHostRef).
+func createCloudAccount(cmd *cobra.Command) (apiclient.CloudAccountSelector, error) {
+	if !cmd.Flags().Changed("cloud-account") {
+		return apiclient.CloudAccountSelector{}, nil
+	}
+	raw, _ := cmd.Flags().GetString("cloud-account")
+	if strings.TrimSpace(raw) == "" {
+		return apiclient.CloudAccountSelector{}, fmt.Errorf("--cloud-account needs an account name or id; omit it to use the provider's default account")
+	}
+	ref, err := rigref.ParseResource(raw, "cloud account")
+	if err != nil {
+		return apiclient.CloudAccountSelector{}, err
+	}
+	return apiclient.CloudAccountSelector{Value: ref.Value, By: string(ref.Kind)}, nil
+}
+
+// assertRigLandedInCloudAccount checks that a rig asked for by
+// --cloud-account actually runs in that account. A control plane predating
+// cloud accounts strips the unknown create field, as it strips host_id (see
+// assertRigLandedOnHost), and builds the rig on Amika Cloud. Reporting
+// success there would leave the rig in Amika's provider account and on its
+// bill, the outcome the flag exists to prevent.
+func assertRigLandedInCloudAccount(sb *apiclient.RemoteSandbox, sel apiclient.CloudAccountSelector) error {
+	if sel.Value == "" || sel.Matches(sb.CloudAccount) {
+		return nil
+	}
+	// Only a missing account points at an old control plane; one that
+	// reports some other account plainly understands the field.
+	diagnosis := "It is most likely a version that does not support --cloud-account, which silently ignores it."
+	if sb.CloudAccount != nil {
+		diagnosis = "That is not the account this command named."
+	}
+	return fmt.Errorf(
+		"rig %q was created, but not in the cloud account you asked for: the control plane reports it in %s. %s "+
+			"Delete the rig with `amika rig delete %s`",
+		sb.Name, rigCloudLanding(sb), diagnosis, sb.Name)
+}
+
+// rigCloudLanding names the account a rig ended up in, for the mismatch
+// above.
+func rigCloudLanding(sb *apiclient.RemoteSandbox) string {
+	if sb.CloudAccount != nil {
+		return fmt.Sprintf("cloud account %s (%s)", rigCloud(*sb), sb.CloudAccount.ID)
+	}
+	if sb.Provider != nil && *sb.Provider != "" {
+		return fmt.Sprintf("Amika Cloud (provider %s)", *sb.Provider)
+	}
+	return "Amika Cloud"
+}
+
+// rigCloud names where a cloud rig runs as <provider>/<account>, with the
+// account "amika" for Amika Cloud, as every surface shows it. It is "" for a
+// rig on one of the organization's own hosts, which runs at no provider.
+func rigCloud(sb apiclient.RemoteSandbox) string {
+	if deref(sb.HostID) != "" {
+		return ""
+	}
+	account := apiclient.CloudAccountNameAmika
+	if sb.CloudAccount != nil {
+		account = sb.CloudAccount.Name
+	}
+	if deref(sb.Provider) == "" {
+		if sb.CloudAccount == nil {
+			return ""
+		}
+		return account
+	}
+	return *sb.Provider + "/" + account
 }
 
 // bareMetalCreateConflicts refuses the flags that ask for something a

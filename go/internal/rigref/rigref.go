@@ -161,6 +161,21 @@ func Prefix(raw string) (Kind, bool) {
 // value, with or without a prefix, is an error.
 func Parse(raw string) (Ref, error) { return parseWith(Default, raw) }
 
+// ParseResource parses a reference to a resource other than a rig, such as a
+// cloud account, by the same rule: a name or id, or ref=/name=/id= to pin the
+// field. what names the resource in errors. "_self" names only the current
+// rig, so here it is an ordinary value.
+func ParseResource(raw, what string) (Ref, error) {
+	ref := Ref{Kind: KindRef, Value: raw}
+	if kind, ok := Prefix(raw); ok {
+		ref = Ref{Kind: kind, Value: raw[len(kind)+1:]}
+	}
+	if strings.TrimSpace(ref.Value) == "" {
+		return Ref{}, fmt.Errorf("%s reference %q is empty", what, raw)
+	}
+	return ref, nil
+}
+
 // parseWith parses raw into a Ref, resolving "_self" through resolver.
 func parseWith(resolver Resolver, raw string) (Ref, error) {
 	ref := Ref{Kind: KindRef, Value: raw}

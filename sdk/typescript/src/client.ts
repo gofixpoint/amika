@@ -6,6 +6,7 @@ import { type Secrets } from "./secrets/types.js";
 import { type AgentCredentials } from "./agent-credentials/types.js";
 import { type Repositories } from "./repositories/types.js";
 import { type Jobs, type JobRuns } from "./jobs/types.js";
+import { type CloudAccounts } from "./cloud-accounts/types.js";
 
 import { LegacyClient } from "./legacy/client.js";
 import { HTTPClient } from "./internal/http.js";
@@ -20,6 +21,7 @@ import { createSecrets } from "./secrets/client.js";
 import { createAgentCredentials } from "./agent-credentials/client.js";
 import { createRepositories } from "./repositories/client.js";
 import { createJobs, createJobRuns } from "./jobs/client.js";
+import { createCloudAccounts } from "./cloud-accounts/client.js";
 
 /**
  * Create cloud development rigs and run coding agents with explicit credentials.
@@ -48,6 +50,8 @@ export class AmikaClient extends LegacyClient {
   readonly jobs: Jobs;
   /** Start a job outside its schedule, and inspect its runs (beta). */
   readonly jobRuns: JobRuns;
+  /** Connect the organization's own accounts at sandbox providers, to run rigs in (beta). */
+  readonly cloudAccounts: CloudAccounts;
 
   constructor(options: AmikaClientOptions) {
     super();
@@ -65,5 +69,6 @@ export class AmikaClient extends LegacyClient {
     this.repositories = createRepositories(http);
     this.jobs = createJobs(http);
     this.jobRuns = createJobRuns(http);
+    this.cloudAccounts = createCloudAccounts(http);
   }
 }

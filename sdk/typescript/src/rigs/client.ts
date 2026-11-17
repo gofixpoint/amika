@@ -59,6 +59,15 @@ export function createRigs(
           "hostId must not be empty; omit it to run the rig on Amika Cloud",
         );
       }
+      // Likewise: an empty account is not a request for the default one.
+      if (
+        typeof request.cloudAccount === "string" &&
+        !request.cloudAccount.trim()
+      ) {
+        throw new AmikaError(
+          'cloudAccount must not be empty; omit it to use the default account, or pass "amika" for Amika Cloud',
+        );
+      }
       return createRigResource(
         remoteRigFromWire(
           (await http.doJSON<Record<string, unknown>>(

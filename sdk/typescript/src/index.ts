@@ -40,6 +40,7 @@ export {
   type RemoteRigCreator,
   type RemoteRigService,
   type ResolvedAgentCredential,
+  type RigCloudAccount,
   type CreateSandboxRequest,
   type RemoteSandbox,
   type RemoteSandboxCreator,
@@ -99,6 +100,15 @@ export {
   type RigStatusOnFinish,
   type UpdateJobRequest,
 } from "./jobs/types.js";
+export {
+  type CloudAccount,
+  type CloudAccountLookupOptions,
+  type CloudAccountRef,
+  type CloudAccounts,
+  type CreateCloudAccountRequest,
+  type ListCloudAccountsOptions,
+  type UpdateCloudAccountRequest,
+} from "./cloud-accounts/types.js";
 export {
   type Snapshots,
   type Snapshot,

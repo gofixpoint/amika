@@ -282,3 +282,31 @@ func TestRunSCPV2KeepsBareMetalPathsRelative(t *testing.T) {
 		t.Fatalf("printed %q, want %q", out.String(), want)
 	}
 }
+
+// TestRunSCPV2KeepsCloudAccountPathsRelative checks that a rig in an org's
+// own cloud account, whose amika home is the provider's (Instabox:
+// /data/home), never has /home/amika prepended.
+func TestRunSCPV2KeepsCloudAccountPathsRelative(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"sb_1","name":"box","state":"active","provider":"instabox","cloud_account":{"id":"cacc_1","name":"prod"}}`))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("AMIKA_API_URL", server.URL)
+	t.Setenv("AMIKA_API_KEY", "test-key")
+	prev := prepareSessionTarget
+	t.Cleanup(func() { prepareSessionTarget = prev })
+	prepareSessionTarget = func(_ basedir.Paths, _ ssh.SessionCreator, name, id string) (string, error) {
+		return name + "." + id + ".test.amika", nil
+	}
+
+	cmd := NewV2()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := runSCPV2(cmd, []string{"--print", "./a.txt", "box:~/b.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if want := "scp ./a.txt box.sb_1.test.amika:b.txt\n"; out.String() != want {
+		t.Fatalf("printed %q, want %q", out.String(), want)
+	}
+}

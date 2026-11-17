@@ -346,4 +346,56 @@ describe("AmikaClient rig decoding", () => {
     ).rejects.toThrow("hostId must not be empty");
     expect(calls).toHaveLength(0);
   });
+
+  it("sends the cloud account in the field its kind calls for", async () => {
+    const created = { id: "1", name: "dev", state: "initializing" };
+    const { fetch, calls } = mockFetch([
+      { status: 202, body: created },
+      { status: 202, body: created },
+      { status: 202, body: created },
+    ]);
+    const client = makeClient(fetch);
+    await client.rigs.create({ provider: "instabox", cloudAccount: "prod" });
+    await client.rigs.create({ cloudAccount: { ref: "cacc_1", by: "id" } });
+    await client.rigs.create({ cloudAccount: { ref: "prod", by: "name" } });
+    expect(calls.map((c) => JSON.parse(c.body ?? ""))).toEqual([
+      { provider: "instabox", cloud_account_ref: "prod" },
+      { cloud_account_id: "cacc_1" },
+      { cloud_account_name: "prod" },
+    ]);
+  });
+
+  it("reports the rig's cloud account, or null for Amika Cloud", async () => {
+    const { fetch } = mockFetch([
+      {
+        status: 202,
+        body: {
+          id: "1",
+          name: "dev",
+          provider: "instabox",
+          cloud_account: { id: "cacc_1", name: "prod" },
+        },
+      },
+      { status: 202, body: { id: "2", name: "cloud", cloud_account: null } },
+      { status: 202, body: { id: "3", name: "old" } },
+    ]);
+    const client = makeClient(fetch);
+    const inAccount = await client.rigs.create({ cloudAccount: "prod" });
+    expect(inAccount.cloudAccount).toEqual({ id: "cacc_1", name: "prod" });
+    expect((await client.rigs.create({})).cloudAccount).toBeNull();
+    // A control plane that predates the field omits it.
+    expect((await client.rigs.create({})).cloudAccount).toBeNull();
+  });
+
+  it("rejects a blank cloudAccount without sending a request", async () => {
+    const { fetch, calls } = mockFetch([]);
+    const client = makeClient(fetch);
+    await expect(client.rigs.create({ cloudAccount: " " })).rejects.toThrow(
+      "cloudAccount must not be empty",
+    );
+    await expect(
+      client.rigs.create({ cloudAccount: { ref: "", by: "id" } }),
+    ).rejects.toThrow("cloudAccount must not be empty");
+    expect(calls).toHaveLength(0);
+  });
 });

@@ -374,6 +374,7 @@ func newCreateCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 	for _, name := range []string{
 		"provider", "preset", "size", "snapshot", "setup-script",
 		"branch", "new-branch", "github-auth-mode", "host", "runtime",
+		"cloud-account",
 	} {
 		c.Flags().String(name, "", "")
 	}

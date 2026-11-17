@@ -1,3 +1,4 @@
+import type { CloudAccountRef } from "../cloud-accounts/types.js";
 import { type LegacyShape } from "../internal/types.js";
 
 /**
@@ -118,6 +119,22 @@ export interface CreateRigRequest {
    * or `rig.refresh()`, not on the object `create` returns.
    */
   hostId?: string;
+  /**
+   * One of the organization's cloud accounts (bring your own cloud) to run the
+   * rig in. A plain string matches the account's ID or name;
+   * `{ ref, by: "id" | "name" }` pins one. `"amika"` names Amika Cloud. Omit
+   * it to use the organization's default account for `provider`, or Amika
+   * Cloud when the provider has none. With no `provider`, the provider comes
+   * from the account. Names are unique per provider, so pass `provider` to
+   * narrow a name two providers share. An empty value is rejected. The server
+   * refuses it together with `hostId`, and refuses a `provider` other than the
+   * account's.
+   *
+   * A control plane that predates cloud accounts silently drops this field
+   * and builds the rig on Amika Cloud, so confirm
+   * {@link RemoteRig.cloudAccount} on the created rig.
+   */
+  cloudAccount?: CloudAccountRef;
 }
 
 /** @deprecated Use {@link CreateRigRequest}. */
@@ -225,6 +242,11 @@ export interface RemoteRig {
   currentSessionId: string | null;
   /** Abbreviated published-service metadata. Use client.services.list for full service records. */
   services: RemoteRigService[];
+  /**
+   * The organization's cloud account the rig runs in, or null for Amika Cloud
+   * and for a rig on one of the organization's own hosts.
+   */
+  cloudAccount: RigCloudAccount | null;
   /** Creation timestamp returned by the server. */
   createdAt: string;
   /** Last-update timestamp returned by the server. */
@@ -275,7 +297,18 @@ export interface RemoteRig {
 }
 
 /** @deprecated Use {@link RemoteRig}. */
-export type RemoteSandbox = LegacyShape<RemoteRig, "providerRigId">;
+export type RemoteSandbox = LegacyShape<
+  RemoteRig,
+  "providerRigId" | "cloudAccount"
+>;
+
+/** The cloud account a rig runs in, as rig responses name it. */
+export interface RigCloudAccount {
+  /** The account's ID, `cacc_…`. */
+  id: string;
+  /** The account's name, unique per provider. */
+  name: string;
+}
 
 /**
  * The human who created a remote rig. Either field may be null if the

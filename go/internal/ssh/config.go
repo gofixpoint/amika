@@ -282,6 +282,18 @@ func (s *HostsState) SetSessionHostUser(alias, user string) bool {
 	return true
 }
 
+// SessionHostUser returns the login account recorded for a v2 alias, or
+// apiclient.DefaultSSHUser when none is: SetSessionHostUser stores the
+// default account as empty.
+func (s HostsState) SessionHostUser(alias string) string {
+	for _, host := range s.SessionHosts {
+		if host.Alias == alias && host.User != "" {
+			return host.User
+		}
+	}
+	return apiclient.DefaultSSHUser
+}
+
 // Render produces the contents of ~/.ssh/amika.conf from the state. Each block
 // is a stable `Host amika-<id>` alias preceded by the sandbox name as a comment
 // so the file stays human-readable even though it is keyed by id.

@@ -6,15 +6,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestSandboxCreateProviderFlagIsHidden(t *testing.T) {
+// --provider picks the provider whose default cloud account a rig lands in,
+// so it is a documented flag, no longer an internal override.
+func TestSandboxCreateProviderFlagIsShown(t *testing.T) {
 	cmd := &cobra.Command{}
 	addProviderFlag(cmd)
 	flag := cmd.Flags().Lookup("provider")
 	if flag == nil {
 		t.Fatal("provider flag is missing")
 	}
-	if !flag.Hidden {
-		t.Fatal("provider flag should be hidden")
+	if flag.Hidden {
+		t.Fatal("provider flag should not be hidden")
 	}
 	if flag.DefValue != "" {
 		t.Fatalf("provider flag default = %q, want empty", flag.DefValue)

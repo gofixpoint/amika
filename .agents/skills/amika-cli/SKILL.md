@@ -1,18 +1,18 @@
 ---
 name: amika-cli
-description: "Drive the `amika` CLI to create, inspect, and operate Amika rigs, the organization's own hosts, and agent chat sessions non-interactively. Use when a task involves `amika rig`, `amika host`, `amika send`, `amika auth`, `amika secret`, `amika service`, `amika snapshot`, `amika job`, or `amika scp`, including listing or retiring bring-your-own-compute hosts and discovering and debugging services from inside an Amika rig."
+description: "Drive the `amika` CLI to create, inspect, and operate Amika rigs, the organization's own hosts and cloud provider accounts, and agent chat sessions non-interactively. Use when a task involves `amika rig`, `amika host`, `amika cloud-account`, `amika send`, `amika auth`, `amika secret`, `amika service`, `amika snapshot`, `amika job`, or `amika scp`, including listing or retiring bring-your-own-compute hosts, connecting bring-your-own-cloud provider accounts, and discovering and debugging services from inside an Amika rig."
 ---
 
 # Using the `amika` CLI
 
-Use `amika` to operate hosted Amika rigs, the organization's own hosts, and
-agent chat sessions without hanging on prompts or interactive sessions.
+Use `amika` to operate hosted Amika rigs, the organization's own hosts and
+cloud provider accounts, and agent chat sessions without hanging on prompts or interactive sessions.
 Hosted rigs are the default target. Run `amika <command> --help` before relying on a flag in a reference
 because the installed binary is authoritative.
 
 Read only the reference relevant to the task:
 
-- [Rig lifecycle, hosts, agents, auth, and secrets](references/rig-operations.md)
+- [Rig lifecycle, hosts, cloud accounts, agents, auth, and secrets](references/rig-operations.md)
 - [Services, repository config, and snapshots](references/services-config-snapshots.md)
 - [SSH, editors, and file transfer](references/connectivity.md)
 - [Structured output and non-interactive behavior](references/non-interactive.md)
@@ -81,6 +81,8 @@ confirmation flags, and commands that reject JSON output.
 | Fork from a snapshot                       | `amika rig create --snapshot <name>`                                      |
 | List the org's own hosts                   | `amika host list`                                                         |
 | Run a rig on one of those hosts            | `amika rig create --host <hostname>`                                      |
+| Connect the org's own provider account     | `amika cloud-account --help`                                              |
+| Run a rig in one of those accounts         | `amika rig create --cloud-account <account>`                              |
 | Run commands on a cron schedule (beta)     | `amika job --help`                                                        |
 | Authenticate in a headless environment     | Set `AMIKA_API_KEY`                                                       |
 
@@ -88,8 +90,8 @@ confirmation flags, and commands that reject JSON output.
 
 - Rig creation auto-detects the current git repository and makes a clean
   clone. Uncommitted work is not copied.
-- `snapshot list -o json` returns `{"items": [...]}`; most list commands return
-  a bare array.
+- `snapshot list`, `job list`, and `cloud-account list` with `-o json` return
+  `{"items": [...]}`; most other list commands return a bare array.
 - `--secret env:KEY=NAME` refers to a stored secret name, not a literal value.
 - `amika send` can report an agent failure through `is_error`; inspect
   the result even when the request completed.
