@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // System is the part of the machine bootstrap reads or changes outside the
@@ -23,6 +24,8 @@ type System interface {
 	// Run runs name with args; env adds to the inherited environment.
 	Run(ctx context.Context, env []string, name string, args ...string) error
 	Chown(path string, uid, gid int) error
+	// Owner returns a path's owning uid and gid.
+	Owner(path string) (uid, gid int, err error)
 	// Glibc returns the glibc version as {major, minor}, or an error on a
 	// machine without glibc.
 	Glibc() ([2]int, error)
@@ -67,6 +70,19 @@ func (s OSSystem) Run(ctx context.Context, env []string, name string, args ...st
 
 // Chown changes a path's owner.
 func (OSSystem) Chown(path string, uid, gid int) error { return os.Chown(path, uid, gid) }
+
+// Owner reads a path's owner from its inode.
+func (OSSystem) Owner(path string) (int, int, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, 0, fmt.Errorf("%s has no owner", path)
+	}
+	return int(stat.Uid), int(stat.Gid), nil
+}
 
 var glibcPattern = regexp.MustCompile(`glibc (\d+)\.(\d+)`)
 

@@ -21,6 +21,9 @@ type fakeSystem struct {
 	glibcErr error
 	runs     []string
 	chowns   []string
+	// owners maps a path to its uid and gid; an existing path missing here
+	// belongs to root.
+	owners map[string][2]int
 }
 
 func newFakeSystem() *fakeSystem {
@@ -29,6 +32,7 @@ func newFakeSystem() *fakeSystem {
 		groups:   map[string]bool{},
 		commands: map[string]bool{"sshd": true, "git": true, "sudo": true, "curl": true, "apt-get": true},
 		glibc:    [2]int{2, 39},
+		owners:   map[string][2]int{},
 	}
 }
 
@@ -62,9 +66,18 @@ func (f *fakeSystem) Run(_ context.Context, _ []string, name string, args ...str
 	return nil
 }
 
-func (f *fakeSystem) Chown(path string, _, _ int) error {
+func (f *fakeSystem) Chown(path string, uid, gid int) error {
 	f.chowns = append(f.chowns, path)
+	f.owners[path] = [2]int{uid, gid}
 	return nil
+}
+
+func (f *fakeSystem) Owner(path string) (int, int, error) {
+	if _, err := os.Stat(path); err != nil {
+		return 0, 0, err
+	}
+	owner := f.owners[path]
+	return owner[0], owner[1], nil
 }
 
 func (f *fakeSystem) Glibc() ([2]int, error) { return f.glibc, f.glibcErr }
@@ -148,6 +161,62 @@ func TestBootstrapIsIdempotentAndKeepsTheUsersOwnScripts(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(setup); string(data) != "pnpm install\n" {
 		t.Fatalf("setup.sh replaced: %q", data)
+	}
+}
+
+func TestBootstrapRepairsExistingDirectories(t *testing.T) {
+	system := newFakeSystem()
+	system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/data/home"}
+	b := newBootstrapper(t, system)
+	home, ssh := b.path("/data/home"), b.path("/data/home/.ssh")
+	if err := os.MkdirAll(ssh, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	system.owners[home] = [2]int{1000, 1000}
+
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(ssh); info.Mode().Perm() != 0o700 {
+		t.Fatalf(".ssh mode = %v, want 0700 (amikad's sshd refuses anything else)", info.Mode().Perm())
+	}
+	if system.owners[ssh] != [2]int{1000, 1000} {
+		t.Fatalf(".ssh owner = %v, want amika", system.owners[ssh])
+	}
+	if info, _ := os.Stat(home); info.Mode().Perm() != 0o750 {
+		t.Fatalf("home mode = %v, want the provider's 0750 kept", info.Mode().Perm())
+	}
+}
+
+func TestBootstrapRefusesAnotherUsersHome(t *testing.T) {
+	cases := map[string]func(*fakeSystem){
+		"amika missing": func(*fakeSystem) {},
+		"amika present": func(s *fakeSystem) {
+			s.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/data/home"}
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			system := newFakeSystem()
+			setup(system)
+			b := newBootstrapper(t, system)
+			home := b.path("/data/home")
+			if err := os.MkdirAll(home, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			system.owners[home] = [2]int{1001, 1001}
+
+			err := b.Run(context.Background(), Options{Home: "/data/home"})
+			if !errors.Is(err, ErrUnsupportedImage) {
+				t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+			}
+			if len(system.runs) != 0 || len(system.chowns) != 0 {
+				t.Fatalf("bootstrap changed the machine before refusing: runs=%v chowns=%v", system.runs, system.chowns)
+			}
+		})
 	}
 }
 

@@ -163,7 +163,18 @@ func (b *Bootstrapper) hasManager(name string) bool {
 // rule when missing.
 func (b *Bootstrapper) ensureUser(ctx context.Context, options Options) (*user.User, error) {
 	account, err := b.System.LookupUser(User)
-	if err != nil {
+	if err == nil {
+		uid, convErr := strconv.Atoi(account.Uid)
+		if convErr != nil {
+			return nil, fmt.Errorf("uid of %s: %w", User, convErr)
+		}
+		if err := b.refuseForeignHome(account.HomeDir, uid); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := b.refuseForeignHome(options.Home, -1); err != nil {
+			return nil, err
+		}
 		if _, groupErr := b.System.LookupGroup(User); groupErr != nil {
 			if err := b.System.Run(ctx, nil, "groupadd", User); err != nil {
 				return nil, fmt.Errorf("groupadd %s: %w", User, err)
@@ -184,10 +195,32 @@ func (b *Bootstrapper) ensureUser(ctx context.Context, options Options) (*user.U
 	return account, nil
 }
 
+// refuseForeignHome stops bootstrap when home belongs to a user other than
+// root or amika (uid amikaUID, or -1 before amika exists): the hooks change
+// the ownership of amika's whole home, and Amika never takes over another
+// user's home.
+func (b *Bootstrapper) refuseForeignHome(home string, amikaUID int) error {
+	uid, _, err := b.System.Owner(b.path(home))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("owner of %s: %w", home, err)
+	}
+	if uid == 0 || uid == amikaUID {
+		return nil
+	}
+	return fmt.Errorf("%w: %s belongs to uid %d, and %s cannot take over another user's home",
+		ErrUnsupportedImage, home, uid, User)
+}
+
 type directory struct {
 	path      string
 	mode      os.FileMode
 	userOwned bool
+	// keepMode leaves an existing directory's mode alone: the home keeps the
+	// mode the provider gave it.
+	keepMode bool
 }
 
 // ensureDirectories creates what the image's step 50 creates.
@@ -202,7 +235,7 @@ func (b *Bootstrapper) ensureDirectories(account *user.User) error {
 	}
 	home := account.HomeDir
 	directories := []directory{
-		{path: home, mode: 0o755, userOwned: true},
+		{path: home, mode: 0o755, userOwned: true, keepMode: true},
 		{path: path.Join(home, ".ssh"), mode: 0o700, userOwned: true},
 		{path: path.Join(home, "workspace"), mode: 0o755, userOwned: true},
 		{path: "/var/log/amika", mode: 0o755, userOwned: true},
@@ -216,26 +249,57 @@ func (b *Bootstrapper) ensureDirectories(account *user.User) error {
 		{path: "/run/sshd", mode: 0o755},
 	}
 	for _, dir := range directories {
-		target := b.path(dir.path)
-		info, statErr := os.Stat(target)
-		if statErr == nil && info.IsDir() {
-			continue
-		}
-		if err := os.MkdirAll(target, dir.mode); err != nil {
-			return err
-		}
-		if err := os.Chmod(target, dir.mode); err != nil {
-			return err
-		}
+		owner := [2]int{0, 0}
 		if dir.userOwned {
-			if err := b.System.Chown(target, uid, gid); err != nil {
-				return fmt.Errorf("chown %s: %w", dir.path, err)
-			}
+			owner = [2]int{uid, gid}
+		}
+		if err := b.ensureDirectory(dir, owner); err != nil {
+			return err
 		}
 	}
 	for _, script := range []string{"setup.sh", "start.sh"} {
 		if err := b.writeFile("/usr/local/etc/amikad/setup/"+script, []byte("exit 0\n"), 0o755, true); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// ensureDirectory creates dir, or repairs an existing one: an image can ship
+// one of these directories with another mode or owner, and amikad's sshd
+// refuses a .ssh that is not 0700. It changes nothing that is already right.
+func (b *Bootstrapper) ensureDirectory(dir directory, owner [2]int) error {
+	target := b.path(dir.path)
+	info, err := os.Stat(target)
+	created := errors.Is(err, fs.ErrNotExist)
+	switch {
+	case created:
+		if err := os.MkdirAll(target, dir.mode); err != nil {
+			return err
+		}
+		if info, err = os.Stat(target); err != nil {
+			return err
+		}
+	case err != nil:
+		return err
+	case !info.IsDir():
+		return fmt.Errorf("%s exists and is not a directory", dir.path)
+	}
+	if (created || !dir.keepMode) && info.Mode().Perm() != dir.mode {
+		if err := os.Chmod(target, dir.mode); err != nil {
+			return err
+		}
+		if !created {
+			b.logf("set the mode of %s to %o", dir.path, dir.mode)
+		}
+	}
+	uid, gid, err := b.System.Owner(target)
+	if err != nil {
+		return fmt.Errorf("owner of %s: %w", dir.path, err)
+	}
+	if uid != owner[0] || gid != owner[1] {
+		if err := b.System.Chown(target, owner[0], owner[1]); err != nil {
+			return fmt.Errorf("chown %s: %w", dir.path, err)
 		}
 	}
 	return nil
