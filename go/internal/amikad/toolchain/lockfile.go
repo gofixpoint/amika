@@ -19,6 +19,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // SchemaVersion is the lockfile format this package reads.
@@ -48,6 +49,11 @@ const (
 // Lockfile is the parsed toolchain.lock.json.
 type Lockfile struct {
 	Schema int `json:"schema"`
+	// NPMBefore is when the lockfile was generated (RFC 3339). npm resolves
+	// an npm dependency's own dependencies, which the lockfile does not pin,
+	// only from versions published by then, so a release made since cannot
+	// reach a rig.
+	NPMBefore string `json:"npm_before,omitempty"`
 	// Amikad is the release the control plane uploads; `amikad install`
 	// never installs it.
 	Amikad Dep   `json:"amikad"`
@@ -120,6 +126,9 @@ var (
 	sha256Pattern  = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	versionPattern = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$`)
 	npmNamePattern = regexp.MustCompile(`^(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`)
+	// npmVersionPattern is an exact version, never a tag or range such as
+	// `latest` or `1.x`.
+	npmVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?$`)
 	// allowedLinkDirs are the directories a dependency may link into: both
 	// are on every default PATH, sudo's secure_path included.
 	allowedLinkDirs = map[string]bool{"/usr/local/bin": true, "/usr/bin": true}
@@ -137,6 +146,14 @@ func Parse(r io.Reader) (*Lockfile, error) {
 	if err := decoder.Decode(&lock); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidLockfile, err)
 	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%w: data after the lockfile", ErrInvalidLockfile)
+	}
+	if lock.NPMBefore != "" {
+		if _, err := time.Parse(time.RFC3339, lock.NPMBefore); err != nil {
+			return nil, fmt.Errorf("%w: npm_before: %v", ErrInvalidLockfile, err)
+		}
+	}
 	if lock.Schema != SchemaVersion {
 		return nil, fmt.Errorf("%w: schema %d, want %d", ErrInvalidLockfile, lock.Schema, SchemaVersion)
 	}
@@ -144,6 +161,7 @@ func Parse(r io.Reader) (*Lockfile, error) {
 		return nil, fmt.Errorf("%w: amikad: %v", ErrInvalidLockfile, err)
 	}
 	names := map[string]bool{OpenSSHServer: true}
+	directories := map[string]string{}
 	commands := map[string]string{}
 	for _, dep := range lock.Deps {
 		if err := dep.validate(); err != nil {
@@ -153,6 +171,13 @@ func Parse(r io.Reader) (*Lockfile, error) {
 			return nil, fmt.Errorf("%w: dependency %q listed twice", ErrInvalidLockfile, dep.Name)
 		}
 		names[dep.Name] = true
+		// Two dependencies must never install into one tool directory
+		// (name "a", version "b-c" and name "a-b", version "c").
+		directory := dep.Name + "-" + dep.Version
+		if other, taken := directories[directory]; taken {
+			return nil, fmt.Errorf("%w: %s and %s share the tool directory %s", ErrInvalidLockfile, other, dep.Name, directory)
+		}
+		directories[directory] = dep.Name
 		for _, command := range dep.commandNames() {
 			if owner, taken := commands[command]; taken && command != "npm" && command != "npx" {
 				// npm may replace node's own npm and npx; nothing else may
@@ -204,6 +229,9 @@ func (d Dep) validate() error {
 	case KindNPM:
 		if !npmNamePattern.MatchString(d.Package) {
 			return errors.New("bad npm package")
+		}
+		if !npmVersionPattern.MatchString(d.Version) {
+			return fmt.Errorf("npm version %q is not an exact version", d.Version)
 		}
 		if len(d.Bins) == 0 {
 			return errors.New("npm dependency has no bins")

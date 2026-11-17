@@ -300,9 +300,20 @@ func TestInstallNPMDepsUseTheLockfileNodeOnce(t *testing.T) {
 	if len(runs) != 1 || !strings.HasSuffix(runs[0], "@anthropic-ai/claude-code@2.0.0") {
 		t.Fatalf("npm runs = %q, want one install of the pinned version", runs)
 	}
+	// claude links to a wrapper that runs it with the lockfile's Node first
+	// on PATH, whatever node the image has.
 	target, _ := os.Readlink(filepath.Join(options.BinDir, "claude"))
-	if want := filepath.Join(options.Prefix, "npm", "bin", "claude"); target != want {
+	if want := filepath.Join(options.Prefix, "npm", "wrappers", "claude"); target != want {
 		t.Fatalf("claude link = %s, want %s", target, want)
+	}
+	wrapper, _ := os.ReadFile(target)
+	for _, want := range []string{
+		"PATH='" + filepath.Join(options.Prefix, "tools", "node-1.0.0", "bin") + "':\"$PATH\"",
+		"exec '" + filepath.Join(options.Prefix, "npm", "bin", "claude") + "' \"$@\"",
+	} {
+		if !strings.Contains(string(wrapper), want) {
+			t.Fatalf("wrapper lacks %q:\n%s", want, wrapper)
+		}
 	}
 }
 
@@ -336,13 +347,18 @@ func TestInstallNPMDepsRunOncePerSetOfFlags(t *testing.T) {
 		}
 		return nil
 	}
-	if err := Install(context.Background(), Selection{Deps: deps}, options); err != nil {
+	if err := Install(context.Background(), Selection{Deps: deps, NPMBefore: "2026-11-17T19:00:00Z"}, options); err != nil {
 		t.Fatal(err)
 	}
 	if len(runs) != 2 {
 		t.Fatalf("npm runs = %q, want one per set of flags", runs)
 	}
-	if !strings.HasSuffix(runs[0], "--engine-strict --ignore-scripts @earendil-works/pi-coding-agent@1.0.0 @agegr/pi-web@3.0.0") {
+	for _, run := range runs {
+		if !strings.Contains(run, "--before=2026-11-17T19:00:00Z") {
+			t.Fatalf("npm run %q resolves dependencies published after the lockfile", run)
+		}
+	}
+	if !strings.HasSuffix(runs[0], "--engine-strict --ignore-scripts --before=2026-11-17T19:00:00Z @earendil-works/pi-coding-agent@1.0.0 @agegr/pi-web@3.0.0") {
 		t.Fatalf("pi run = %q, want both Pi packages with the safe flags", runs[0])
 	}
 	if strings.Contains(runs[1], "--ignore-scripts") || strings.Contains(runs[1], "--engine-strict") || !strings.HasSuffix(runs[1], " opencode-ai@2.0.0") {
@@ -417,6 +433,26 @@ func TestInstallRestoresADeletedArchiveCommand(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(options.Prefix, "tools", "tool-1.0.0", "bin", "tool")); err != nil {
 		t.Fatalf("command not restored: %v", err)
+	}
+}
+
+func TestInstallSweepsWhatAKilledInstallLeft(t *testing.T) {
+	options := testOptions(t)
+	tools := filepath.Join(options.Prefix, "tools")
+	leftovers := []string{
+		filepath.Join(tools, ".download-gh-123"),
+		filepath.Join(tools, ".staging-gh-456", "bin"),
+	}
+	for _, leftover := range leftovers {
+		writeExecutable(t, leftover, "partial")
+	}
+	if err := Install(context.Background(), Selection{}, options); err != nil {
+		t.Fatal(err)
+	}
+	for _, leftover := range []string{leftovers[0], filepath.Dir(leftovers[1])} {
+		if _, err := os.Lstat(leftover); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s left behind", leftover)
+		}
 	}
 }
 

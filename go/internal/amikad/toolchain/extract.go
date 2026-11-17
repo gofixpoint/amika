@@ -193,8 +193,10 @@ func resolvesInside(root, rel string) bool {
 // strippedName cleans an entry name and drops strip leading components.
 // ok is false for an entry that strip removes entirely (a top directory).
 func strippedName(name string, strip int) (string, bool, error) {
-	cleaned := path.Clean(strings.TrimPrefix(name, "./"))
-	if strings.HasPrefix(name, "/") || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+	// Clean the whole name: ".//a" and "a" must be the same entry, or a link
+	// at one escapes the check of paths under the other.
+	cleaned := path.Clean(name)
+	if path.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", false, fmt.Errorf("archive entry %q leaves the tool directory", name)
 	}
 	parts := strings.Split(cleaned, "/")

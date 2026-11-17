@@ -98,6 +98,7 @@ func Install(ctx context.Context, selection Selection, options Options) error {
 		return fmt.Errorf("wait for another amikad install: %w", err)
 	}
 	defer lock.Close()
+	sweepLeftovers(options.Prefix)
 	if selection.OpenSSHServer && options.EnsureOpenSSHServer != nil {
 		started := time.Now()
 		installed, err := options.EnsureOpenSSHServer(ctx)
@@ -135,7 +136,19 @@ func Install(ctx context.Context, selection Selection, options Options) error {
 	if node.Name == "" {
 		return errors.New("npm dependencies need the node dependency in the selection")
 	}
-	return installPackages(ctx, node, packages, options)
+	return installPackages(ctx, node, packages, selection.NPMBefore, options)
+}
+
+// sweepLeftovers removes the downloads and staging directories of an
+// install that was killed. It runs under the install lock, so no install
+// still uses them.
+func sweepLeftovers(prefix string) {
+	for _, pattern := range []string{".download-*", ".staging-*"} {
+		matches, _ := filepath.Glob(filepath.Join(prefix, "tools", pattern))
+		for _, match := range matches {
+			_ = os.RemoveAll(match)
+		}
+	}
 }
 
 func withDefaults(options Options) Options {
@@ -358,6 +371,11 @@ func writeNew(p string, data []byte, mode os.FileMode) error {
 		file.Close()
 		return err
 	}
+	// The mode as given, whatever the process umask.
+	if err := file.Chmod(mode); err != nil {
+		file.Close()
+		return err
+	}
 	return file.Close()
 }
 
@@ -505,7 +523,7 @@ func linkedByAmikad(path, prefix string) bool {
 // not already present, then links their commands. Dependencies that ask for
 // the same npm flags share one npm run, so one dependency's flags never
 // apply to another.
-func installPackages(ctx context.Context, node Dep, deps []Dep, options Options) error {
+func installPackages(ctx context.Context, node Dep, deps []Dep, npmBefore string, options Options) error {
 	groups := map[string][]Dep{}
 	var order []string
 	for _, dep := range deps {
@@ -516,7 +534,7 @@ func installPackages(ctx context.Context, node Dep, deps []Dep, options Options)
 		groups[key] = append(groups[key], dep)
 	}
 	for _, key := range order {
-		if err := installPackageRun(ctx, node, groups[key], options); err != nil {
+		if err := installPackageRun(ctx, node, groups[key], npmBefore, options); err != nil {
 			return err
 		}
 	}
@@ -536,8 +554,9 @@ func npmFlags(dep Dep) []string {
 }
 
 // installPackageRun installs deps, which share their npm flags, in one npm
-// run. Each installed dependency reports the run's time.
-func installPackageRun(ctx context.Context, node Dep, deps []Dep, options Options) error {
+// run. Each installed dependency reports the run's time. Its commands are
+// linked through wrappers that run them with the lockfile's Node.
+func installPackageRun(ctx context.Context, node Dep, deps []Dep, npmBefore string, options Options) error {
 	npmPrefix := filepath.Join(options.Prefix, "npm")
 	var specs []string
 	missing := map[string]bool{}
@@ -554,6 +573,9 @@ func installPackageRun(ctx context.Context, node Dep, deps []Dep, options Option
 			"--no-fund", "--no-audit", "--loglevel=error",
 		}
 		args = append(args, npmFlags(deps[0])...)
+		if npmBefore != "" {
+			args = append(args, "--before="+npmBefore)
+		}
 		args = append(args, specs...)
 		if err := options.RunNPM(ctx, depDir(options.Prefix, node), args, options.Log); err != nil {
 			return fmt.Errorf("npm install %s: %w", strings.Join(specs, " "), err)
@@ -569,7 +591,11 @@ func installPackageRun(ctx context.Context, node Dep, deps []Dep, options Option
 			return fmt.Errorf("%s: npm installed no %s command", dep.Name, missingBin)
 		}
 		for _, bin := range dep.Bins {
-			if err := linkCommand(options, linkDir(options, dep), bin, filepath.Join(npmPrefix, "bin", bin)); err != nil {
+			wrapper, err := writeNPMWrapper(npmPrefix, depDir(options.Prefix, node), bin)
+			if err != nil {
+				return err
+			}
+			if err := linkCommand(options, linkDir(options, dep), bin, wrapper); err != nil {
 				return err
 			}
 		}
@@ -580,6 +606,31 @@ func installPackageRun(ctx context.Context, node Dep, deps []Dep, options Option
 		options.Report(timing)
 	}
 	return nil
+}
+
+// writeNPMWrapper writes the script linked onto PATH for an npm command. It
+// puts the lockfile's Node first on PATH, so a `#!/usr/bin/env node` command
+// runs on that Node even when the image has a node of its own earlier on
+// PATH, which amikad never replaces.
+func writeNPMWrapper(npmPrefix, nodeDir, bin string) (string, error) {
+	directory := filepath.Join(npmPrefix, "wrappers")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return "", err
+	}
+	wrapper := filepath.Join(directory, bin)
+	content := fmt.Sprintf("#!/bin/sh\n# Written by amikad install: runs %s with the toolchain's Node.\nPATH=%s:\"$PATH\"\nexport PATH\nexec %s \"$@\"\n",
+		bin, shellQuote(filepath.Join(nodeDir, "bin")), shellQuote(filepath.Join(npmPrefix, "bin", bin)))
+	if info, err := os.Lstat(wrapper); err == nil && info.Mode().IsRegular() && info.Mode().Perm() == 0o755 {
+		if current, err := os.ReadFile(wrapper); err == nil && string(current) == content {
+			return wrapper, nil
+		}
+	}
+	return wrapper, writeNew(wrapper, []byte(content), 0o755)
+}
+
+// shellQuote quotes s for a POSIX shell.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // npmInstalled reports whether dep is at its pinned version under prefix

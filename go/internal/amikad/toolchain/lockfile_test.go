@@ -59,6 +59,11 @@ func TestParseRefusesUnsafeLockfiles(t *testing.T) {
 		"unknown field":          strings.Replace(validLock, `"schema": 2`, `"schema": 2, "extra": true`, 1),
 		"bad command":            strings.Replace(validLock, `["opencode"]`, `["../opencode"]`, 1),
 		"reserved name":          strings.Replace(validLock, `"name": "opencode"`, `"name": "openssh-server"`, 1),
+		"npm tag":                strings.Replace(validLock, `"version": "1.0.0", "kind": "npm"`, `"version": "latest", "kind": "npm"`, 1),
+		"shared directory": strings.Replace(strings.Replace(validLock, `"version": "2.1.0"`, `"version": "2.1.0-rc"`, 1),
+			`"name": "node", "version": "24.0.0"`, `"name": "gh-2.1.0", "version": "rc"`, 1),
+		"trailing data":  validLock + `{"schema": 2}`,
+		"bad npm_before": strings.Replace(validLock, `"schema": 2`, `"schema": 2, "npm_before": "yesterday"`, 1),
 	}
 	for name, input := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -170,6 +175,26 @@ func TestExtractRefusesEscapesThroughExtractedSymlinks(t *testing.T) {
 				t.Fatal("extract accepted an entry that goes through or out of a symlink")
 			}
 		})
+	}
+}
+
+func TestExtractTreatsDotSlashNamesAsTheSameEntry(t *testing.T) {
+	// ".//a" must be the same entry as "a": a link at one must stop writes
+	// under the other, and its target must be checked from where it lands.
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "a.tgz")
+	data := makeTarGz(t,
+		tarEntry{name: ".//a", link: "../../../../etc", typeflag: tar.TypeSymlink},
+		tarEntry{name: "a/evil", body: "x"},
+	)
+	if err := os.WriteFile(archive, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractTarGz(archive, filepath.Join(dir, "out", "tool"), 0); err == nil {
+		t.Fatal("extract accepted a link that leaves the tool directory")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "etc", "evil")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("extract wrote outside the tool directory")
 	}
 }
 

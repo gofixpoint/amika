@@ -20,6 +20,8 @@ type Selection struct {
 	OpenSSHServer bool
 	// Deps are the lockfile dependencies, in lockfile order.
 	Deps []Dep
+	// NPMBefore is the lockfile's npm_before.
+	NPMBefore string
 }
 
 // Select resolves the defaults, plus add, minus without. An npm dependency
@@ -62,7 +64,7 @@ func Select(lock *Lockfile, add, without []string) (Selection, error) {
 		}
 	}
 
-	selection := Selection{OpenSSHServer: !excluding[OpenSSHServer]}
+	selection := Selection{OpenSSHServer: !excluding[OpenSSHServer], NPMBefore: lock.NPMBefore}
 	for _, dep := range lock.Deps {
 		if wanted[dep.Name] {
 			selection.Deps = append(selection.Deps, dep)

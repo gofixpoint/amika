@@ -14,7 +14,9 @@ dependency a rig can install, at the versions the base image builds from:
   checksum file where there is one, and its commands checked to exist.
 - npm dependencies carry an exact version and the commands the package
   declares; npm checks the registry's integrity hashes at install, as in the
-  image build. Pi and Pi Web install with --engine-strict and
+  image build. Their own dependencies are not pinned, so the lockfile records
+  when it was generated (`npm_before`), and npm resolves them only from
+  versions published by then. Pi and Pi Web install with --engine-strict and
   --ignore-scripts, as steps 80 and 82 install them.
 
 Run it after changing versions.env:
@@ -26,6 +28,7 @@ Run it after changing versions.env:
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import io
 import json
@@ -131,7 +134,13 @@ def build(versions: dict[str, str]) -> dict:
         npm_dep("typescript", "typescript", v["typescript"]),
         npm_dep("tsx", "tsx", v["tsx"]),
     ]
-    return {"schema": 2, "amikad": amika_release("amikad", v["amikad"]), "deps": deps}
+    npm_before = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "schema": 2,
+        "npm_before": npm_before,
+        "amikad": amika_release("amikad", v["amikad"]),
+        "deps": deps,
+    }
 
 
 def node(version: str) -> dict:
@@ -143,7 +152,7 @@ def node(version: str) -> dict:
             f"https://nodejs.org/dist/v{version}/{name}",
             strip=1,
             bins=[{"path": "bin/node"}, {"path": "bin/npm"}, {"path": "bin/npx"}],
-            published=sums.get(name),
+            published=published_sum(sums, name),
         )
     return archive_dep("node", version, artifacts)
 
@@ -155,7 +164,7 @@ def gh(version: str) -> dict:
     for platform, names in PLATFORMS.items():
         name = f"gh_{version}_linux_{names['go']}.tar.gz"
         artifacts[platform] = archive(
-            f"{base}/{name}", strip=1, bins=[{"path": "bin/gh"}], published=sums.get(name)
+            f"{base}/{name}", strip=1, bins=[{"path": "bin/gh"}], published=published_sum(sums, name)
         )
     return archive_dep("gh", version, artifacts)
 
@@ -167,7 +176,7 @@ def amika_release(component: str, version: str) -> dict:
     for platform, names in PLATFORMS.items():
         name = f"{component}_{version}_linux_{names['go']}.tar.gz"
         artifacts[platform] = archive(
-            f"{base}/{name}", strip=1, bins=[{"path": component}], published=sums.get(name)
+            f"{base}/{name}", strip=1, bins=[{"path": component}], published=published_sum(sums, name)
         )
     return archive_dep(component, version, artifacts)
 
@@ -233,6 +242,13 @@ def npm_dep(name: str, package: str, version: str, *, strict: bool = False) -> d
         dep["ignore_scripts"] = True
         dep["engine_strict"] = True
     return dep
+
+
+def published_sum(sums: dict[str, str], name: str) -> str:
+    """The publisher's sha256 for name; a checksum file that omits it is an error."""
+    if name not in sums:
+        raise SystemExit(f"the publisher's checksum file does not list {name}")
+    return sums[name]
 
 
 def published_sums(url: str) -> dict[str, str]:
