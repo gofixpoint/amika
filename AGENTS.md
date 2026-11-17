@@ -84,6 +84,7 @@ Conventions for commands (help text, replacing flags, `--output`/`-o` JSON, rig 
 - `sandbox.go` — `sandbox create|list|connect|delete` commands
 - `host.go` — `host list|get|delete` commands over the org's own hosts (BYOC); hosts are registered by `amika-hostd`, not here
 - `job.go` — `job create|list|get|update|pause|resume|delete|run` and `job runs list|get`, over the cron jobs API (`/jobs`, `/job-runs`)
+- `cloud_account.go` — `cloud-account create|list|get|update|set-default|unset-default|delete`, over the cloud accounts API (`/cloud-accounts`): the org's own accounts at sandbox providers (bring your own cloud). The provider API key comes only from `--api-key-file` (`-` for stdin) or `--api-key-env`, never a plain flag value
 - `auth.go` — `auth login|logout|status` commands
 - `auth_api_key.go` — `auth api-key create`, which mints an API key and writes its value only to the `--out` file (never the CLI's own output, errors, or `-o json`)
 - `skill.go` — `skill install --global|--local [--agents ...]`, which writes the `amika-cli` agent skill embedded in the binary into each agent's skill directory (logic in `internal/agentskill`)
