@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -288,6 +289,7 @@ func TestInstallNPMDepsUseTheLockfileNodeOnce(t *testing.T) {
 		if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 			return err
 		}
+		writeNPMBins(t, options.Prefix, "claude")
 		return os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"version":"2.0.0"}`), 0o644)
 	}
 	for range 2 {
@@ -317,6 +319,7 @@ func TestInstallNPMDepsRunOncePerSetOfFlags(t *testing.T) {
 	var runs []string
 	options.RunNPM = func(_ context.Context, _ string, args []string, _ io.Writer) error {
 		runs = append(runs, strings.Join(args, " "))
+		writeNPMBins(t, options.Prefix, "pi", "opencode", "pi-web")
 		for _, arg := range args {
 			at := strings.LastIndex(arg, "@")
 			if at <= 0 || strings.HasPrefix(arg, "-") {
@@ -344,6 +347,89 @@ func TestInstallNPMDepsRunOncePerSetOfFlags(t *testing.T) {
 	}
 	if strings.Contains(runs[1], "--ignore-scripts") || strings.Contains(runs[1], "--engine-strict") || !strings.HasSuffix(runs[1], " opencode-ai@2.0.0") {
 		t.Fatalf("opencode run = %q, want it without the Pi flags", runs[1])
+	}
+}
+
+// writeNPMBins puts the named commands in the npm prefix's bin directory, as
+// a real npm install does.
+func writeNPMBins(t *testing.T, prefix string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		writeExecutable(t, filepath.Join(prefix, "npm", "bin", name), "#!/bin/sh\n")
+	}
+}
+
+func TestInstallReinstallsAnNPMPackageMissingItsCommand(t *testing.T) {
+	node := makeTarGz(t, tarEntry{name: "node-v1/bin/node", body: "node"})
+	server, _ := serve(t, map[string][]byte{"/node.tgz": node})
+	deps := []Dep{
+		archiveDep("node", server.URL+"/node.tgz", sha(node), 1, Bin{Path: "bin/node"}),
+		{Name: "claude-code", Version: "2.0.0", Kind: KindNPM, Package: "@anthropic-ai/claude-code", Bins: []string{"claude"}},
+	}
+	options := testOptions(t)
+	pkgDir := filepath.Join(options.Prefix, "npm", "lib", "node_modules", "@anthropic-ai", "claude-code")
+	// An earlier install stopped after package.json, before the command.
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), []byte(`{"version":"2.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runs := 0
+	options.RunNPM = func(context.Context, string, []string, io.Writer) error {
+		runs++
+		writeNPMBins(t, options.Prefix, "claude")
+		return nil
+	}
+	if err := Install(context.Background(), Selection{Deps: deps}, options); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 {
+		t.Fatalf("npm runs = %d, want a reinstall of the package without its command", runs)
+	}
+
+	// An npm run that leaves no command fails instead of linking nothing.
+	if err := os.Remove(filepath.Join(options.Prefix, "npm", "bin", "claude")); err != nil {
+		t.Fatal(err)
+	}
+	options.RunNPM = func(context.Context, string, []string, io.Writer) error { return nil }
+	if err := Install(context.Background(), Selection{Deps: deps}, options); err == nil || !strings.Contains(err.Error(), "no claude command") {
+		t.Fatalf("err = %v, want a missing command", err)
+	}
+}
+
+func TestInstallRestoresADeletedArchiveCommand(t *testing.T) {
+	archive := makeTarGz(t, tarEntry{name: "tool_1.0.0/bin/tool", body: "tool"})
+	server, hits := serve(t, map[string][]byte{"/tool.tgz": archive})
+	tool := archiveDep("tool", server.URL+"/tool.tgz", sha(archive), 1, Bin{Path: "bin/tool"})
+	options := testOptions(t)
+	if err := Install(context.Background(), Selection{Deps: []Dep{tool}}, options); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(options.Prefix, "tools", "tool-1.0.0", "bin", "tool")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Install(context.Background(), Selection{Deps: []Dep{tool}}, options); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 2 {
+		t.Fatalf("downloads = %d, want a reinstall of the tool missing its command", hits.Load())
+	}
+	if _, err := os.Stat(filepath.Join(options.Prefix, "tools", "tool-1.0.0", "bin", "tool")); err != nil {
+		t.Fatalf("command not restored: %v", err)
+	}
+}
+
+func TestInstallRefusesAnOversizedDownload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(maxDownloadBytes+1))
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+	tool := archiveDep("tool", server.URL+"/tool.tgz", strings.Repeat("0", 64), 1, Bin{Path: "bin/tool"})
+	err := Install(context.Background(), Selection{Deps: []Dep{tool}}, testOptions(t))
+	if err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("err = %v, want the download refused for its size", err)
 	}
 }
 

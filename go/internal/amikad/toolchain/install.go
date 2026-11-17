@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gofixpoint/amika/go/internal/filelock"
 )
 
 // Default install locations. Dependencies live under DefaultPrefix and
@@ -32,6 +34,16 @@ const markerFile = ".amika-sha256"
 
 // downloadConcurrency bounds parallel downloads.
 const downloadConcurrency = 4
+
+// maxDownloadBytes bounds one archive download, so a corrupt or hostile
+// server cannot fill the disk before the sha256 check runs. The largest
+// archive today, Node, is under 60 MiB.
+const maxDownloadBytes = 512 << 20
+
+// lockFile, under the prefix, serializes installs: a foreground and a
+// background install at once would write the same tool directories and npm
+// prefix.
+const lockFile = ".install.lock"
 
 // Timing is one dependency's line in the install report.
 type Timing struct {
@@ -78,6 +90,14 @@ type Options struct {
 // only repairs links. It never replaces a file it did not create.
 func Install(ctx context.Context, selection Selection, options Options) error {
 	options = withDefaults(options)
+	if err := os.MkdirAll(filepath.Join(options.Prefix, "tools"), 0o755); err != nil {
+		return err
+	}
+	lock, err := filelock.Acquire(ctx, filepath.Join(options.Prefix, lockFile))
+	if err != nil {
+		return fmt.Errorf("wait for another amikad install: %w", err)
+	}
+	defer lock.Close()
 	if selection.OpenSSHServer && options.EnsureOpenSSHServer != nil {
 		started := time.Now()
 		installed, err := options.EnsureOpenSSHServer(ctx)
@@ -105,9 +125,6 @@ func Install(ctx context.Context, selection Selection, options Options) error {
 		if dep.Name == nodeDepName {
 			node = dep
 		}
-	}
-	if err := os.MkdirAll(filepath.Join(options.Prefix, "tools"), 0o755); err != nil {
-		return err
 	}
 	if err := installArchives(ctx, archives, options); err != nil {
 		return err
@@ -199,7 +216,7 @@ func installArchive(ctx context.Context, dep Dep, artifact Artifact, options Opt
 	started := time.Now()
 	dest := depDir(options.Prefix, dep)
 	timing := Timing{Dep: dep.Name, Version: dep.Version, Status: "present"}
-	if installedSHA(dest) != artifact.SHA256 {
+	if installedSHA(dest) != artifact.SHA256 || !archiveCommandsExist(dest, artifact) {
 		download, unpack, err := fetchAndUnpack(ctx, dep, artifact, dest, options)
 		if err != nil {
 			return err
@@ -232,6 +249,18 @@ func linkDir(options Options, dep Dep) string {
 
 func depDir(prefix string, dep Dep) string {
 	return filepath.Join(prefix, "tools", dep.Name+"-"+dep.Version)
+}
+
+// archiveCommandsExist reports whether every command the artifact declares
+// is still in dest: a deleted one makes the tool reinstall.
+func archiveCommandsExist(dest string, artifact Artifact) bool {
+	for _, bin := range artifact.Bins {
+		cleaned, _ := cleanRelative(bin.Path)
+		if _, err := os.Stat(filepath.Join(dest, filepath.FromSlash(cleaned))); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func installedSHA(dest string) string {
@@ -304,13 +333,32 @@ func unpack(dep Dep, artifact Artifact, downloadPath, dest, toolsDir string) err
 			return fmt.Errorf("archive has no %s: %w", bin.Path, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(staging, markerFile), []byte(artifact.SHA256+"\n"), 0o644); err != nil {
+	// The archive may hold an entry of the marker's name; replace it rather
+	// than write through it.
+	if err := writeNew(filepath.Join(staging, markerFile), []byte(artifact.SHA256+"\n"), 0o644); err != nil {
 		return err
 	}
 	if err := os.RemoveAll(dest); err != nil {
 		return err
 	}
 	return os.Rename(staging, dest)
+}
+
+// writeNew replaces whatever is at p with a new file holding data, never
+// writing through an existing symlink.
+func writeNew(p string, data []byte, mode os.FileMode) error {
+	if err := os.RemoveAll(p); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 // fetch streams url into w and returns the hex sha256 of what it wrote. It
@@ -360,9 +408,17 @@ func fetchOnce(ctx context.Context, client *http.Client, url string, w io.Writer
 	if response.StatusCode != http.StatusOK {
 		return "", response.StatusCode >= 500, fmt.Errorf("download %s: HTTP %d", url, response.StatusCode)
 	}
+	tooLarge := fmt.Errorf("download %s: larger than %d MiB", url, maxDownloadBytes>>20)
+	if response.ContentLength > maxDownloadBytes {
+		return "", false, tooLarge
+	}
 	hash := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(w, hash), response.Body); err != nil {
+	written, err := io.Copy(io.MultiWriter(w, hash), io.LimitReader(response.Body, maxDownloadBytes+1))
+	if err != nil {
 		return "", ctx.Err() == nil, fmt.Errorf("download %s: %w", url, err)
+	}
+	if written > maxDownloadBytes {
+		return "", false, tooLarge
 	}
 	return hex.EncodeToString(hash.Sum(nil)), false, nil
 }
@@ -486,7 +542,7 @@ func installPackageRun(ctx context.Context, node Dep, deps []Dep, options Option
 	var specs []string
 	missing := map[string]bool{}
 	for _, dep := range deps {
-		if installedNPMVersion(npmPrefix, dep.Package) != dep.Version {
+		if !npmInstalled(npmPrefix, dep) {
 			specs = append(specs, dep.Package+"@"+dep.Version)
 			missing[dep.Name] = true
 		}
@@ -509,6 +565,9 @@ func installPackageRun(ctx context.Context, node Dep, deps []Dep, options Option
 		if got := installedNPMVersion(npmPrefix, dep.Package); got != dep.Version {
 			return fmt.Errorf("%s: npm installed %q, want %s", dep.Name, got, dep.Version)
 		}
+		if missingBin := npmMissingBin(npmPrefix, dep); missingBin != "" {
+			return fmt.Errorf("%s: npm installed no %s command", dep.Name, missingBin)
+		}
 		for _, bin := range dep.Bins {
 			if err := linkCommand(options, linkDir(options, dep), bin, filepath.Join(npmPrefix, "bin", bin)); err != nil {
 				return err
@@ -521,6 +580,23 @@ func installPackageRun(ctx context.Context, node Dep, deps []Dep, options Option
 		options.Report(timing)
 	}
 	return nil
+}
+
+// npmInstalled reports whether dep is at its pinned version under prefix
+// with every command it declares: a half-finished install or a deleted
+// command makes it reinstall.
+func npmInstalled(prefix string, dep Dep) bool {
+	return installedNPMVersion(prefix, dep.Package) == dep.Version && npmMissingBin(prefix, dep) == ""
+}
+
+// npmMissingBin is the first of dep's commands missing under prefix, or "".
+func npmMissingBin(prefix string, dep Dep) string {
+	for _, bin := range dep.Bins {
+		if _, err := os.Stat(filepath.Join(prefix, "bin", bin)); err != nil {
+			return bin
+		}
+	}
+	return ""
 }
 
 // installedNPMVersion is the version of a globally installed package under

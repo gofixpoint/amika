@@ -425,20 +425,34 @@ func (o *DaemonOperations) InstallToolchain(ctx context.Context, options Install
 	})
 }
 
+// maxLockfileBytes bounds the lockfile read; Parse refuses anything larger.
+const maxLockfileBytes = 1 << 20
+
 func readLockfile(path string, stdin io.Reader) ([]byte, error) {
 	if path == "-" {
-		return io.ReadAll(io.LimitReader(stdin, 1<<20))
+		return io.ReadAll(io.LimitReader(stdin, maxLockfileBytes+1))
 	}
-	return os.ReadFile(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, maxLockfileBytes+1))
 }
 
 // installInBackground copies the lockfile beside amikad's state and starts a
-// detached `amikad install` on it, which removes the copy once read.
-func installInBackground(lockfile []byte, options InstallOptions) error {
+// detached `amikad install` on it, which removes the copy once read. When
+// the install does not start, the copy is removed here.
+func installInBackground(lockfile []byte, options InstallOptions) (err error) {
 	copyFile, err := os.CreateTemp(platform.StateDirectory, "install-*.lock.json")
 	if err != nil {
 		return fmt.Errorf("stage the lockfile: %w", err)
 	}
+	defer func() {
+		if err != nil {
+			os.Remove(copyFile.Name())
+		}
+	}()
 	if _, err := copyFile.Write(lockfile); err != nil {
 		copyFile.Close()
 		return err
