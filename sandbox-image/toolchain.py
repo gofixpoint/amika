@@ -7,7 +7,8 @@ lockfile. It pins the amikad release the control plane uploads and every
 dependency a rig can install, at the versions the base image builds from:
 
 - gh is the one default; every other dependency is installed only when a
-  caller asks for it (`amikad install --dep <name>`).
+  caller asks for it (`amikad install --dep <name>`). A gh the image already
+  has outside /usr/local/bin is kept (`prefer_image`).
 - archive dependencies carry a URL and sha256 per platform. Each archive is
   downloaded here, its sha256 computed and checked against the publisher's
   checksum file where there is one, and its commands checked to exist.
@@ -116,8 +117,8 @@ def build(versions: dict[str, str]) -> dict:
     deps = [
         # The default: the control plane's gh auth shim takes
         # /usr/local/bin/gh and runs the next gh on PATH, so gh links into
-        # /usr/bin.
-        {**gh(v["gh"]), "default": True, "link_dir": "/usr/bin"},
+        # /usr/bin, and a gh the image has elsewhere on PATH is kept.
+        {**gh(v["gh"]), "default": True, "link_dir": "/usr/bin", "prefer_image": True},
         node(v["node"]),
         amika_release("amika", v["amika"]),
         codex(v["codex"]),

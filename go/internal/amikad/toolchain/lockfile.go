@@ -78,6 +78,12 @@ type Dep struct {
 	// gh links into /usr/bin, because the control plane's gh auth shim takes
 	// /usr/local/bin/gh and runs the next gh on PATH.
 	LinkDir string `json:"link_dir,omitempty"`
+	// PreferImage keeps the image's own copy: when the image already has
+	// every one of the dependency's commands on PATH, outside DefaultBinDir,
+	// install reports it present and downloads nothing. gh sets it: the
+	// control plane's shim takes /usr/local/bin/gh and runs the next gh on
+	// PATH, which can be the image's.
+	PreferImage bool `json:"prefer_image,omitempty"`
 }
 
 // Artifact is one platform's download of a KindArchive dependency.

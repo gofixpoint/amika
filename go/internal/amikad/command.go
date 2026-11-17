@@ -269,9 +269,10 @@ func newInstallCommand(operations Operations) *cobra.Command {
 		Long: "Install the default dependencies (OpenSSH server when the image has\n" +
 			"no sshd, and gh) plus each --dep, minus each --without, from a toolchain\n" +
 			"lockfile. Downloads are checked against the lockfile's sha256 and\n" +
-			"unpacked under /opt/amika; commands are linked onto PATH. A dependency\n" +
-			"already at its pinned version is skipped. Prints one JSON timing line\n" +
-			"per dependency. Run it as root.",
+			"unpacked under /opt/amika; commands are linked onto PATH, never over a\n" +
+			"file amikad did not create. A gh the image has outside /usr/local/bin is\n" +
+			"kept. A dependency already at its pinned version is skipped. Prints one\n" +
+			"JSON timing line per dependency. Run it as root.",
 		Example: "  amikad install --lockfile /var/lib/amikad/toolchain.lock.json\n" +
 			"  amikad install --dep opencode --dep pi-web < toolchain.lock.json\n" +
 			"  amikad install --without gh --background < toolchain.lock.json",

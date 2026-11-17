@@ -59,7 +59,8 @@
         }
       },
       "default": true,
-      "link_dir": "/usr/bin"
+      "link_dir": "/usr/bin",
+      "prefer_image": true
     },
     {
       "name": "node",

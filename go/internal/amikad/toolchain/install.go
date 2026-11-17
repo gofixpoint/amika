@@ -55,6 +55,9 @@ type Options struct {
 	BinRoot string
 	// Platform defaults to the running OS/architecture ("linux/amd64").
 	Platform string
+	// Path is searched for the image's own commands (Dep.PreferImage);
+	// defaults to $PATH.
+	Path string
 	// HTTPClient defaults to a client with a per-download timeout.
 	HTTPClient *http.Client
 	// RunNPM runs npm with args and env; tests replace it. The default runs
@@ -72,7 +75,7 @@ type Options struct {
 // Install installs the selection: OpenSSH server when asked for and
 // missing, then every lockfile dependency not already at its pinned version,
 // linking its commands. It is idempotent: a second run downloads nothing and
-// only repairs links.
+// only repairs links. It never replaces a file it did not create.
 func Install(ctx context.Context, selection Selection, options Options) error {
 	options = withDefaults(options)
 	if selection.OpenSSHServer && options.EnsureOpenSSHServer != nil {
@@ -86,6 +89,13 @@ func Install(ctx context.Context, selection Selection, options Options) error {
 	var archives, packages []Dep
 	var node Dep
 	for _, dep := range selection.Deps {
+		if dep.PreferImage {
+			if paths := imageCommands(dep, options); paths != nil {
+				fmt.Fprintf(options.Log, "keeping the image's %s (%s)\n", dep.Name, strings.Join(paths, ", "))
+				options.Report(Timing{Dep: dep.Name, Status: "present"})
+				continue
+			}
+		}
 		switch dep.Kind {
 		case KindArchive:
 			archives = append(archives, dep)
@@ -120,6 +130,9 @@ func withDefaults(options Options) Options {
 	}
 	if options.Platform == "" {
 		options.Platform = runtime.GOOS + "/" + runtime.GOARCH
+	}
+	if options.Path == "" {
+		options.Path = os.Getenv("PATH")
 	}
 	if options.HTTPClient == nil {
 		options.HTTPClient = &http.Client{Timeout: 10 * time.Minute}
@@ -191,7 +204,7 @@ func installArchive(ctx context.Context, dep Dep, artifact Artifact, options Opt
 	}
 	for _, bin := range artifact.Bins {
 		cleaned, _ := cleanRelative(bin.Path)
-		if err := linkCommand(linkDir(options, dep), bin.CommandName(), filepath.Join(dest, filepath.FromSlash(cleaned))); err != nil {
+		if err := linkCommand(options, linkDir(options, dep), bin.CommandName(), filepath.Join(dest, filepath.FromSlash(cleaned))); err != nil {
 			return err
 		}
 	}
@@ -347,14 +360,18 @@ func fetchOnce(ctx context.Context, client *http.Client, url string, w io.Writer
 	return hex.EncodeToString(hash.Sum(nil)), false, nil
 }
 
-// linkCommand points binDir/name at target, replacing any existing entry
-// atomically.
-func linkCommand(binDir, name, target string) error {
+// linkCommand points binDir/name at target, replacing an earlier link of
+// amikad's atomically. Any other file there belongs to the image, and stays.
+func linkCommand(options Options, binDir, name, target string) error {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return err
 	}
 	link := filepath.Join(binDir, name)
 	if current, err := os.Readlink(link); err == nil && current == target {
+		return nil
+	}
+	if _, err := os.Lstat(link); err == nil && !linkedByAmikad(link, options.Prefix) {
+		fmt.Fprintf(options.Log, "keeping %s, which amikad did not create\n", link)
 		return nil
 	}
 	temporary := filepath.Join(binDir, ".amika-link-"+name)
@@ -363,6 +380,62 @@ func linkCommand(binDir, name, target string) error {
 		return err
 	}
 	return os.Rename(temporary, link)
+}
+
+// imageCommands returns where the image itself provides each of dep's
+// commands on options.Path, outside options.BinDir and amikad's own links,
+// or nil when it lacks one.
+func imageCommands(dep Dep, options Options) []string {
+	var names []string
+	switch dep.Kind {
+	case KindArchive:
+		for _, bin := range dep.Artifacts[options.Platform].Bins {
+			names = append(names, bin.CommandName())
+		}
+	case KindNPM:
+		names = dep.Bins
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	var found []string
+	for _, name := range names {
+		path := imageCommand(name, options)
+		if path == "" {
+			return nil
+		}
+		found = append(found, path)
+	}
+	return found
+}
+
+func imageCommand(name string, options Options) string {
+	for _, dir := range filepath.SplitList(options.Path) {
+		if dir == "" || filepath.Clean(dir) == filepath.Clean(options.BinDir) {
+			continue
+		}
+		candidate := filepath.Join(dir, name)
+		info, err := os.Stat(candidate)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+			continue
+		}
+		if linkedByAmikad(candidate, options.Prefix) {
+			continue
+		}
+		return candidate
+	}
+	return ""
+}
+
+// linkedByAmikad reports whether path is a symlink into prefix, which only
+// amikad makes.
+func linkedByAmikad(path, prefix string) bool {
+	target, err := os.Readlink(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(prefix), filepath.Clean(target))
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // installPackages installs the KindNPM dependencies whose pinned version is
@@ -430,7 +503,7 @@ func installPackageRun(ctx context.Context, node Dep, deps []Dep, options Option
 			return fmt.Errorf("%s: npm installed %q, want %s", dep.Name, got, dep.Version)
 		}
 		for _, bin := range dep.Bins {
-			if err := linkCommand(linkDir(options, dep), bin, filepath.Join(npmPrefix, "bin", bin)); err != nil {
+			if err := linkCommand(options, linkDir(options, dep), bin, filepath.Join(npmPrefix, "bin", bin)); err != nil {
 				return err
 			}
 		}
