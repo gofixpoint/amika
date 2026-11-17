@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/gofixpoint/amika/go/internal/amikad/norelay"
 	"github.com/gofixpoint/amika/go/internal/buildmeta"
@@ -34,6 +35,39 @@ type SetupSSHDOptions struct {
 	ForceOverwrite bool
 }
 
+// BootstrapOptions selects the rig user `amikad bootstrap` sets up.
+type BootstrapOptions struct {
+	// Home is the home directory for the amika user when bootstrap creates
+	// it.
+	Home string
+	// Log receives progress lines.
+	Log io.Writer
+}
+
+// InstallOptions selects what `amikad install` installs and how.
+type InstallOptions struct {
+	// Lockfile is the lockfile's path; "-" reads standard input.
+	Lockfile string
+	// Deps adds dependencies to the defaults; Without removes defaults.
+	Deps    []string
+	Without []string
+	// Background returns at once and installs in a detached process that
+	// logs to /var/log/amikad/install.log.
+	Background bool
+	// DeleteLockfile removes Lockfile once read; set for the detached
+	// process, whose lockfile is a copy.
+	DeleteLockfile bool
+	// Out receives one JSON timing line per dependency; Log, progress text.
+	Out io.Writer
+	Log io.Writer
+}
+
+// WaitReadyOptions selects the listener `amikad wait-ready` polls.
+type WaitReadyOptions struct {
+	Port    int
+	Timeout time.Duration
+}
+
 // Operations is the command layer's sandbox-interior boundary.
 type Operations interface {
 	SetupSSHD(context.Context, SetupSSHDOptions) error
@@ -42,6 +76,9 @@ type Operations interface {
 	ClearAuthorizedKeys(context.Context) error
 	SetConnectToken(context.Context, io.Reader) error
 	Serve(context.Context, ServeOptions) error
+	Bootstrap(context.Context, BootstrapOptions) error
+	InstallToolchain(context.Context, InstallOptions, io.Reader) error
+	WaitReady(context.Context, WaitReadyOptions) error
 }
 
 // UnimplementedOperations is a fail-closed Operations implementation. It does
@@ -75,6 +112,21 @@ func (UnimplementedOperations) SetConnectToken(context.Context, io.Reader) error
 
 // Serve returns ErrNotImplemented without opening a listener.
 func (UnimplementedOperations) Serve(context.Context, ServeOptions) error {
+	return ErrNotImplemented
+}
+
+// Bootstrap returns ErrNotImplemented without changing the machine.
+func (UnimplementedOperations) Bootstrap(context.Context, BootstrapOptions) error {
+	return ErrNotImplemented
+}
+
+// InstallToolchain returns ErrNotImplemented without reading the lockfile.
+func (UnimplementedOperations) InstallToolchain(context.Context, InstallOptions, io.Reader) error {
+	return ErrNotImplemented
+}
+
+// WaitReady returns ErrNotImplemented without polling.
+func (UnimplementedOperations) WaitReady(context.Context, WaitReadyOptions) error {
 	return ErrNotImplemented
 }
 
@@ -180,6 +232,79 @@ func NewCommand(operations Operations) *cobra.Command {
 		"maximum concurrent no-relay bridge sessions",
 	)
 
-	root.AddCommand(setup, hostKey, authorizedKeys, connectToken, serve)
+	root.AddCommand(setup, hostKey, authorizedKeys, connectToken, serve,
+		newBootstrapCommand(operations),
+		newInstallCommand(operations),
+		newWaitReadyCommand(operations),
+	)
 	return root
+}
+
+// newBootstrapCommand installs the Amika runtime on a rig that booted the
+// provider's own image.
+func newBootstrapCommand(operations Operations) *cobra.Command {
+	options := BootstrapOptions{}
+	command := &cobra.Command{
+		Use:   "bootstrap",
+		Short: "Install the Amika runtime on a machine without an Amika image",
+		Long: "Install what an Amika base image ships for amikad and the lifecycle\n" +
+			"hooks: sudo, the amika user and its sudo rule, the directories, and the\n" +
+			"hooks. Run it as root. It is idempotent.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			options.Log = cmd.ErrOrStderr()
+			return operations.Bootstrap(cmd.Context(), options)
+		},
+	}
+	command.Flags().StringVar(&options.Home, "home", "", "home directory for the amika user when it must be created (default /home/amika)")
+	return command
+}
+
+// newInstallCommand installs dependencies from the toolchain lockfile.
+func newInstallCommand(operations Operations) *cobra.Command {
+	options := InstallOptions{}
+	command := &cobra.Command{
+		Use:   "install",
+		Short: "Install a rig's dependencies from the toolchain lockfile",
+		Long: "Install the default dependencies (OpenSSH server when the image has\n" +
+			"no sshd, and gh) plus each --dep, minus each --without, from a toolchain\n" +
+			"lockfile. Downloads are checked against the lockfile's sha256 and\n" +
+			"unpacked under /opt/amika; commands are linked onto PATH, never over a\n" +
+			"file amikad did not create. A gh the image has outside /usr/local/bin is\n" +
+			"kept. A dependency already at its pinned version is skipped. Prints one\n" +
+			"JSON timing line per dependency. Run it as root.",
+		Example: "  amikad install --lockfile /var/lib/amikad/toolchain.lock.json\n" +
+			"  amikad install --dep opencode --dep pi-web < toolchain.lock.json\n" +
+			"  amikad install --without gh --background < toolchain.lock.json",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			options.Out = cmd.OutOrStdout()
+			options.Log = cmd.ErrOrStderr()
+			return operations.InstallToolchain(cmd.Context(), options, cmd.InOrStdin())
+		},
+	}
+	flags := command.Flags()
+	flags.StringVar(&options.Lockfile, "lockfile", "-", "path of the toolchain lockfile; - reads standard input")
+	flags.StringArrayVar(&options.Deps, "dep", nil, "also install this dependency (repeatable)")
+	flags.StringArrayVar(&options.Without, "without", nil, "skip this default dependency (repeatable)")
+	flags.BoolVar(&options.Background, "background", false, "return at once and install in the background")
+	flags.BoolVar(&options.DeleteLockfile, "delete-lockfile", false, "remove the lockfile once read")
+	_ = flags.MarkHidden("delete-lockfile")
+	return command
+}
+
+// newWaitReadyCommand waits for a started amikad to answer.
+func newWaitReadyCommand(operations Operations) *cobra.Command {
+	options := WaitReadyOptions{}
+	command := &cobra.Command{
+		Use:   "wait-ready",
+		Short: "Wait until amikad serve answers on its port",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return operations.WaitReady(cmd.Context(), options)
+		},
+	}
+	command.Flags().IntVar(&options.Port, "port", DefaultPort, "the port amikad serve was given")
+	command.Flags().DurationVar(&options.Timeout, "timeout", 10*time.Second, "how long to wait")
+	return command
 }
