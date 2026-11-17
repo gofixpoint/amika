@@ -192,13 +192,15 @@ export async function send(
   };
   if (opts.accept) headers.Accept = opts.accept;
   if (opts.idempotent) headers["Idempotency-Key"] = randomUUID();
-  let body: string | Uint8Array | undefined;
+  let body: RequestInit["body"];
   if (opts.json !== undefined) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(opts.json);
   } else if (opts.raw !== undefined) {
     headers["Content-Type"] = "application/octet-stream";
-    body = opts.raw;
+    // A copy backed by a plain ArrayBuffer, which every BodyInit typing
+    // accepts (a Buffer may sit on a SharedArrayBuffer in the type system).
+    body = new Uint8Array(opts.raw);
   }
   const timeoutMs =
     opts.timeoutMs === undefined ? REQUEST_TIMEOUT_MS : opts.timeoutMs;
