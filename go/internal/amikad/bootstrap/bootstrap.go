@@ -120,7 +120,20 @@ var sshdPaths = []string{"/usr/sbin/sshd", "/usr/bin/sshd"}
 // manager when the image has no sshd, and reports whether it did. amikad
 // runs its own sshd on loopback and never uses the system's service.
 func (b *Bootstrapper) EnsureOpenSSHServer(ctx context.Context) (bool, error) {
-	return b.ensureCommand(ctx, "sshd", "openssh-server", sshdPaths)
+	installed, err := b.ensureCommand(ctx, "sshd", "openssh-server", sshdPaths)
+	if err != nil || !installed {
+		return installed, err
+	}
+	// The package starts its own service on port 22, open to every account
+	// with a password. amikad never uses it, so turn it off. Best effort: an
+	// image without systemd has no such service, and each distro names it
+	// differently.
+	if b.hasManager("systemctl") {
+		for _, unit := range []string{"ssh.socket", "ssh.service", "sshd.service"} {
+			_ = b.System.Run(ctx, nil, "systemctl", "disable", "--now", unit)
+		}
+	}
+	return true, nil
 }
 
 // ensureCommand installs pkg with the image's package manager when command
@@ -138,10 +151,13 @@ func (b *Bootstrapper) ensureCommand(ctx context.Context, command, pkg string, p
 	switch {
 	case b.hasManager("apt-get"):
 		env := []string{"DEBIAN_FRONTEND=noninteractive"}
-		if err := b.System.Run(ctx, env, "apt-get", "update", "-q"); err != nil {
+		// A fresh machine's cloud-init or unattended upgrades often hold the
+		// package lock for a while; wait for it instead of failing.
+		lock := []string{"-o", "DPkg::Lock::Timeout=120"}
+		if err := b.System.Run(ctx, env, "apt-get", append(lock, "update", "-q")...); err != nil {
 			return false, fmt.Errorf("apt-get update: %w", err)
 		}
-		if err := b.System.Run(ctx, env, "apt-get", "install", "-y", "-q", "--no-install-recommends", pkg); err != nil {
+		if err := b.System.Run(ctx, env, "apt-get", append(lock, "install", "-y", "-q", "--no-install-recommends", pkg)...); err != nil {
 			return false, fmt.Errorf("apt-get install %s: %w", pkg, err)
 		}
 	case b.hasManager("dnf"):
@@ -174,11 +190,21 @@ func (b *Bootstrapper) ensureUser(ctx context.Context, options Options) (*user.U
 		if err := b.refuseForeignHome(account.HomeDir, uid); err != nil {
 			return nil, err
 		}
+		// The hooks give files to amika:amika, so the group must exist even
+		// when the image's amika account has another primary group.
+		if _, groupErr := b.System.LookupGroup(User); groupErr != nil {
+			if err := b.System.Run(ctx, nil, "groupadd", User); err != nil {
+				return nil, fmt.Errorf("groupadd %s: %w", User, err)
+			}
+		}
 	} else {
 		if err := b.checkHome(options.Home); err != nil {
 			return nil, err
 		}
 		if err := b.refuseForeignHome(options.Home, -1); err != nil {
+			return nil, err
+		}
+		if err := b.refuseOccupiedHome(options.Home); err != nil {
 			return nil, err
 		}
 		if _, groupErr := b.System.LookupGroup(User); groupErr != nil {
@@ -205,8 +231,8 @@ func (b *Bootstrapper) ensureUser(ctx context.Context, options Options) (*user.U
 // hooks change the ownership of the whole home.
 var systemDirectories = map[string]bool{
 	"bin": true, "boot": true, "dev": true, "etc": true, "lib": true,
-	"lib32": true, "lib64": true, "proc": true, "run": true, "sbin": true,
-	"sys": true, "usr": true,
+	"lib32": true, "lib64": true, "proc": true, "root": true, "run": true,
+	"sbin": true, "sys": true, "tmp": true, "usr": true, "var": true,
 }
 
 // checkHome refuses a home that is not a dedicated directory: not absolute
@@ -252,6 +278,24 @@ func checkHomePath(home string) error {
 	return nil
 }
 
+// refuseOccupiedHome stops bootstrap from giving a new amika user a home
+// that already holds files, such as a directory of several users' homes:
+// the hooks would take everything in it.
+func (b *Bootstrapper) refuseOccupiedHome(home string) error {
+	entries, err := os.ReadDir(b.path(home))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", home, err)
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("%w: %s already holds files, and a new %s user needs a home of its own",
+			ErrUnsupportedImage, home, User)
+	}
+	return nil
+}
+
 // refuseForeignHome stops bootstrap when home belongs to a user other than
 // root or amika (uid amikaUID, or -1 before amika exists): the hooks change
 // the ownership of amika's whole home, and Amika never takes over another
@@ -282,6 +326,9 @@ type directory struct {
 	// refuses a symlinked .ssh, and amikad never replaces what it did not
 	// create.
 	allowLink bool
+	// leaveLink leaves a symlink alone: a user may point ~/workspace at a
+	// repository elsewhere, and that must not stop later starts.
+	leaveLink bool
 }
 
 // ensureDirectories creates what the image's step 50 creates.
@@ -298,7 +345,7 @@ func (b *Bootstrapper) ensureDirectories(account *user.User) error {
 	directories := []directory{
 		{path: home, mode: 0o755, userOwned: true, keepMode: true, allowLink: true},
 		{path: path.Join(home, ".ssh"), mode: 0o700, userOwned: true},
-		{path: path.Join(home, "workspace"), mode: 0o755, userOwned: true},
+		{path: path.Join(home, "workspace"), mode: 0o755, userOwned: true, leaveLink: true},
 		{path: "/var/log/amika", mode: 0o755, userOwned: true},
 		{path: "/usr/lib/amika", mode: 0o755, userOwned: true},
 		{path: "/usr/local/etc/amika", mode: 0o755, userOwned: true},
@@ -333,6 +380,9 @@ func (b *Bootstrapper) ensureDirectory(dir directory, owner [2]int) error {
 	target := b.path(dir.path)
 	info, err := os.Lstat(target)
 	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if dir.leaveLink {
+			return nil
+		}
 		if !dir.allowLink {
 			return fmt.Errorf("%w: %s is a symlink; amikad needs a real directory there", ErrUnsupportedImage, dir.path)
 		}

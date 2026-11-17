@@ -372,6 +372,7 @@ func (o *DaemonOperations) Bootstrap(ctx context.Context, options BootstrapOptio
 	if os.Geteuid() != 0 {
 		return errors.New("amikad bootstrap must run as root")
 	}
+	useStandardUmask()
 	b := &bootstrap.Bootstrapper{
 		Root:   "/",
 		System: bootstrap.OSSystem{Output: options.Log},
@@ -393,6 +394,7 @@ func (o *DaemonOperations) InstallToolchain(ctx context.Context, options Install
 	if os.Geteuid() != 0 {
 		return errors.New("amikad install must run as root")
 	}
+	useStandardUmask()
 	data, err := readLockfile(options.Lockfile, stdin)
 	if err != nil {
 		return err

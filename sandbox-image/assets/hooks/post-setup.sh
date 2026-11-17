@@ -7,5 +7,6 @@
 
 set -euo pipefail
 
-amika_home="$(getent passwd amika | cut -d: -f6)"
-sudo chown -R amika:amika "${amika_home:-/home/amika}"
+amika_home="$(getent passwd amika | cut -d: -f6 || true)"
+# -H follows the home itself when it is a symlink to the real directory.
+sudo chown -RH amika:amika "${amika_home:-/home/amika}"

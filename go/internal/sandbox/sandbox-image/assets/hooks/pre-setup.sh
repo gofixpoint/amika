@@ -30,7 +30,7 @@ AMIKA_CWD_FILE="$AMIKA_STATE_DIR/agent-cwd"
 # The amika user's home: /home/amika on Amika's images, the provider's
 # persistent home where a rig boots the provider's own image (Instabox's is
 # /data/home).
-AMIKA_HOME="$(getent passwd amika | cut -d: -f6)"
+AMIKA_HOME="$(getent passwd amika | cut -d: -f6 || true)"
 AMIKA_HOME="${AMIKA_HOME:-/home/amika}"
 
 # Give amika everything under the given paths. A rig booted from a snapshot
