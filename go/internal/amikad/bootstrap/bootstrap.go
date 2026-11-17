@@ -1,7 +1,7 @@
 // Package bootstrap installs the Amika runtime onto a rig that booted the
-// provider's own image instead of an Amika base image: the rig user and its
-// sudo rule, the directories amikad and the lifecycle hooks use, and the
-// hooks themselves. OpenSSH server, when the image lacks it, is a default of
+// provider's own image instead of an Amika base image: sudo, the rig user
+// and its sudo rule, the directories amikad and the lifecycle hooks use, and
+// the hooks themselves. OpenSSH server, when the image lacks it, is a default of
 // `amikad install` (EnsureOpenSSHServer).
 //
 // It is what the base image's runtime steps do (sandbox-image/steps 50 and
@@ -67,6 +67,10 @@ func (b *Bootstrapper) Run(ctx context.Context, options Options) error {
 	if err := b.checkLibc(); err != nil {
 		return err
 	}
+	// The lifecycle hooks run their steps through sudo.
+	if _, err := b.ensureCommand(ctx, "sudo", "sudo", nil); err != nil {
+		return err
+	}
 	account, err := b.ensureUser(ctx, options)
 	if err != nil {
 		return err
@@ -120,30 +124,36 @@ var sshdPaths = []string{"/usr/sbin/sshd", "/usr/bin/sshd"}
 // manager when the image has no sshd, and reports whether it did. amikad
 // runs its own sshd on loopback and never uses the system's service.
 func (b *Bootstrapper) EnsureOpenSSHServer(ctx context.Context) (bool, error) {
-	if _, err := b.System.LookPath("sshd"); err == nil {
+	return b.ensureCommand(ctx, "sshd", "openssh-server", sshdPaths)
+}
+
+// ensureCommand installs pkg with the image's package manager when command
+// is neither on PATH nor at one of paths, and reports whether it did.
+func (b *Bootstrapper) ensureCommand(ctx context.Context, command, pkg string, paths []string) (bool, error) {
+	if _, err := b.System.LookPath(command); err == nil {
 		return false, nil
 	}
-	for _, p := range sshdPaths {
+	for _, p := range paths {
 		if _, err := os.Stat(b.path(p)); err == nil {
 			return false, nil
 		}
 	}
-	b.logf("installing openssh-server")
+	b.logf("installing %s", pkg)
 	switch {
 	case b.hasManager("apt-get"):
 		env := []string{"DEBIAN_FRONTEND=noninteractive"}
 		if err := b.System.Run(ctx, env, "apt-get", "update", "-q"); err != nil {
 			return false, fmt.Errorf("apt-get update: %w", err)
 		}
-		if err := b.System.Run(ctx, env, "apt-get", "install", "-y", "-q", "--no-install-recommends", "openssh-server"); err != nil {
-			return false, fmt.Errorf("apt-get install: %w", err)
+		if err := b.System.Run(ctx, env, "apt-get", "install", "-y", "-q", "--no-install-recommends", pkg); err != nil {
+			return false, fmt.Errorf("apt-get install %s: %w", pkg, err)
 		}
 	case b.hasManager("dnf"):
-		if err := b.System.Run(ctx, nil, "dnf", "install", "-y", "-q", "openssh-server"); err != nil {
-			return false, fmt.Errorf("dnf install: %w", err)
+		if err := b.System.Run(ctx, nil, "dnf", "install", "-y", "-q", pkg); err != nil {
+			return false, fmt.Errorf("dnf install %s: %w", pkg, err)
 		}
 	default:
-		return false, fmt.Errorf("%w: no sshd, and no apt-get or dnf to install it", ErrUnsupportedImage)
+		return false, fmt.Errorf("%w: no %s, and no apt-get or dnf to install %s", ErrUnsupportedImage, command, pkg)
 	}
 	return true, nil
 }
