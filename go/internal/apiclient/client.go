@@ -67,6 +67,14 @@ type CreateSandboxRequest struct {
 	// names one of that host's own sizes, and the API refuses Provider,
 	// Snapshot, and the lifecycle timers.
 	HostID string `json:"host_id,omitempty"`
+	// CloudAccountRef, CloudAccountName, and CloudAccountID name one of the
+	// organization's cloud accounts (bring your own cloud) to run the rig in.
+	// The API takes at most one of them, and none with HostID. Set them with
+	// SetCloudAccount. All empty, the rig goes to the provider's default
+	// account, or to Amika Cloud when the provider has none.
+	CloudAccountRef  string `json:"cloud_account_ref,omitempty"`
+	CloudAccountName string `json:"cloud_account_name,omitempty"`
+	CloudAccountID   string `json:"cloud_account_id,omitempty"`
 	// Snapshot forks the new sandbox from a captured snapshot slug (remote
 	// only). nil omits the field so the server applies its default snapshot
 	// chain (repo default, else preset/size); a non-nil value boots from that
@@ -144,8 +152,13 @@ type RemoteSandbox struct {
 	Snapshot          *string                `json:"snapshot"`
 	CurrentSessionID  *string                `json:"current_session_id"`
 	Services          []RemoteSandboxService `json:"services"`
-	CreatedAt         string                 `json:"created_at"`
-	UpdatedAt         string                 `json:"updated_at"`
+	// CloudAccount is the organization's cloud account the rig runs in, or
+	// nil for Amika Cloud and for a rig on one of the organization's own
+	// hosts. A control plane that predates cloud accounts omits the field,
+	// which decodes as nil too: every rig it runs is on Amika Cloud.
+	CloudAccount *RemoteSandboxCloudAccount `json:"cloud_account"`
+	CreatedAt    string                     `json:"created_at"`
+	UpdatedAt    string                     `json:"updated_at"`
 
 	// --- non-required fields (omitempty allowed) ---
 
@@ -194,6 +207,13 @@ func (s *RemoteSandbox) IsBareMetal() bool {
 type RemoteSandboxCreator struct {
 	Name  *string `json:"name"`
 	Email *string `json:"email"`
+}
+
+// RemoteSandboxCloudAccount is the cloud account a rig runs in, as rig
+// responses name it.
+type RemoteSandboxCloudAccount struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // MountedSecret is one entry in RemoteSandbox.MountedSecrets: which secrets a

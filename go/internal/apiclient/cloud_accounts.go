@@ -47,6 +47,43 @@ func (s CloudAccountSelector) path() string {
 	return path
 }
 
+// SetCloudAccount names the account to run the rig in, in the create field
+// sel's kind calls for: cloud_account_ref, cloud_account_name, or
+// cloud_account_id. The zero selector names none, which leaves the account to
+// the server. sel.Provider is not sent; the request's own Provider narrows a
+// name.
+func (r *CreateSandboxRequest) SetCloudAccount(sel CloudAccountSelector) {
+	r.CloudAccountRef, r.CloudAccountName, r.CloudAccountID = "", "", ""
+	switch {
+	case sel.Value == "":
+	case sel.kind() == SelectByName:
+		r.CloudAccountName = sel.Value
+	case sel.kind() == SelectByID:
+		r.CloudAccountID = sel.Value
+	default:
+		r.CloudAccountRef = sel.Value
+	}
+}
+
+// Matches reports whether a is the account s names. The name "amika" names
+// Amika Cloud, which a rig reports as no account at all.
+func (s CloudAccountSelector) Matches(a *RemoteSandboxCloudAccount) bool {
+	if s.kind() != SelectByID && s.Value == CloudAccountNameAmika {
+		return a == nil
+	}
+	if a == nil {
+		return false
+	}
+	switch s.kind() {
+	case SelectByName:
+		return a.Name == s.Value
+	case SelectByID:
+		return a.ID == s.Value
+	default:
+		return a.ID == s.Value || a.Name == s.Value
+	}
+}
+
 // CloudAccount mirrors the API's CloudAccount schema. The account's API key
 // is never part of it.
 type CloudAccount struct {

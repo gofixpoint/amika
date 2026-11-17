@@ -381,14 +381,11 @@ func parseCloudAccountRef(cmd *cobra.Command, raw string) (apiclient.CloudAccoun
 // parseCloudAccountSelector parses an account reference with no provider:
 // a name or id, or name=<name> / id=<id> / ref=<value>.
 func parseCloudAccountSelector(raw string) (apiclient.CloudAccountSelector, error) {
-	sel := apiclient.CloudAccountSelector{Value: raw, By: apiclient.SelectByRef}
-	if kind, ok := rigref.Prefix(raw); ok {
-		sel = apiclient.CloudAccountSelector{Value: raw[len(kind)+1:], By: string(kind)}
+	ref, err := rigref.ParseResource(raw, "cloud account")
+	if err != nil {
+		return apiclient.CloudAccountSelector{}, err
 	}
-	if strings.TrimSpace(sel.Value) == "" {
-		return apiclient.CloudAccountSelector{}, fmt.Errorf("cloud account reference %q is empty", raw)
-	}
-	return sel, nil
+	return apiclient.CloudAccountSelector{Value: ref.Value, By: string(ref.Kind)}, nil
 }
 
 // explainCloudAccountRef rewrites the API's 409 resource_ref_ambiguous into
