@@ -224,3 +224,27 @@ func TestPresetBashErrorPrelude_LogsErrTrapDetails(t *testing.T) {
 		}
 	}
 }
+
+// A rig that boots the provider's own image keeps the amika user's home
+// where the provider puts it (Instabox: /data/home), so the hooks read it
+// from the account database instead of assuming /home/amika.
+func TestPresetHooks_UseTheAmikaUsersOwnHome(t *testing.T) {
+	for _, hook := range []string{"pre-setup.sh", "post-setup.sh"} {
+		data, err := sandboxImageFS.ReadFile("sandbox-image/assets/hooks/" + hook)
+		if err != nil {
+			t.Fatalf("ReadFile %s: %v", hook, err)
+		}
+		content := string(data)
+		if !strings.Contains(content, "getent passwd amika | cut -d: -f6") {
+			t.Fatalf("%s does not read the amika user's home", hook)
+		}
+		for _, line := range strings.Split(content, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			if strings.Contains(line, "/home/amika") && !strings.Contains(line, ":-/home/amika}") {
+				t.Fatalf("%s hard-codes /home/amika: %q", hook, line)
+			}
+		}
+	}
+}

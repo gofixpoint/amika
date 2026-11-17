@@ -27,6 +27,12 @@ AMIKA_TMP_DIR="/tmp/amikad"
 AMIKA_USER_TMP_DIR="/tmp/amika"
 AMIKA_CWD_FILE="$AMIKA_STATE_DIR/agent-cwd"
 
+# The amika user's home: /home/amika on Amika's images, the provider's
+# persistent home where a rig boots the provider's own image (Instabox's is
+# /data/home).
+AMIKA_HOME="$(getent passwd amika | cut -d: -f6)"
+AMIKA_HOME="${AMIKA_HOME:-/home/amika}"
+
 # Give amika everything under the given paths. A rig booted from a snapshot
 # can carry symlinks whose owner cannot be changed: in a machine made from a
 # smolvm pack, `chown -h` on a symlink the source machine created fails with
@@ -75,7 +81,7 @@ if [[ -n "${AMIKA_AGENT_CWD:-}" ]]; then
 elif [[ -f "$AMIKA_CWD_FILE" ]]; then
   amika_agent_cwd="$(cat "$AMIKA_CWD_FILE")"
 else
-  amika_agent_cwd="/home/amika/workspace"
+  amika_agent_cwd="$AMIKA_HOME/workspace"
 fi
 
 mkdir -p \
@@ -147,12 +153,12 @@ fi
 # Create as root first because Docker bind-mounts (e.g. agent credential files
 # under ~/.local/) can leave intermediate directories root-owned, preventing
 # the amika user from creating subdirectories.
-PNPM_HOME="/home/amika/.local/share/pnpm"
+PNPM_HOME="$AMIKA_HOME/.local/share/pnpm"
 mkdir -p "$PNPM_HOME"
-own_by_amika /home/amika/.local
+own_by_amika "$AMIKA_HOME/.local"
 cat > /usr/local/etc/amikad/setup/env.sh <<'ENVEOF'
 export PNPM_HOME="$HOME/.local/share/pnpm"
 export PATH="$PNPM_HOME:$PATH"
 ENVEOF
 
-own_by_amika /home/amika
+own_by_amika "$AMIKA_HOME"
