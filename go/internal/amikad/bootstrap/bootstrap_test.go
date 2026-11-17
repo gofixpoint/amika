@@ -280,6 +280,61 @@ func TestBootstrapRefusesAnUnsafeHome(t *testing.T) {
 	})
 }
 
+func TestBootstrapRefusesAHomeThatLinksSomewhereUnsafe(t *testing.T) {
+	for name, target := range map[string]string{"/": "/", "/etc": "/etc/amika"} {
+		t.Run(name, func(t *testing.T) {
+			system := newFakeSystem()
+			system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/home/amika"}
+			b := newBootstrapper(t, system)
+			if err := os.MkdirAll(b.path(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(b.path("/home"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(b.path(target), b.path("/home/amika")); err != nil {
+				t.Fatal(err)
+			}
+			err := b.Run(context.Background(), Options{})
+			if !errors.Is(err, ErrUnsupportedImage) {
+				t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+			}
+			if len(system.chowns) != 0 {
+				t.Fatalf("bootstrap changed owners: %v", system.chowns)
+			}
+		})
+	}
+}
+
+func TestBootstrapReplacesAManagedFileThatIsASymlink(t *testing.T) {
+	system := newFakeSystem()
+	b := newBootstrapper(t, system)
+	// The image left the sudo rule's path as a link to another file.
+	elsewhere := b.path("/etc/elsewhere")
+	if err := os.MkdirAll(filepath.Dir(elsewhere), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(elsewhere, []byte("amika ALL=(ALL) NOPASSWD:ALL\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rule := b.path("/etc/sudoers.d/90-amika")
+	if err := os.MkdirAll(filepath.Dir(rule), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, rule); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(rule); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o440 {
+		t.Fatalf("sudo rule = %v, %v; want a 0440 regular file", info, err)
+	}
+	if info, _ := os.Stat(elsewhere); info.Mode().Perm() != 0o644 {
+		t.Fatalf("the link's target changed mode to %v", info.Mode().Perm())
+	}
+}
+
 func TestBootstrapRefusesAnotherUsersHome(t *testing.T) {
 	cases := map[string]func(*fakeSystem){
 		"amika missing": func(*fakeSystem) {},

@@ -168,14 +168,14 @@ func (b *Bootstrapper) ensureUser(ctx context.Context, options Options) (*user.U
 		if convErr != nil {
 			return nil, fmt.Errorf("uid of %s: %w", User, convErr)
 		}
-		if err := checkHome(account.HomeDir); err != nil {
+		if err := b.checkHome(account.HomeDir); err != nil {
 			return nil, err
 		}
 		if err := b.refuseForeignHome(account.HomeDir, uid); err != nil {
 			return nil, err
 		}
 	} else {
-		if err := checkHome(options.Home); err != nil {
+		if err := b.checkHome(options.Home); err != nil {
 			return nil, err
 		}
 		if err := b.refuseForeignHome(options.Home, -1); err != nil {
@@ -211,9 +211,39 @@ var systemDirectories = map[string]bool{
 
 // checkHome refuses a home that is not a dedicated directory: not absolute
 // or not clean, /, a top-level directory, or one inside a system directory.
-// Bootstrap gives the home to amika, and the hooks change the ownership of
-// everything under it.
-func checkHome(home string) error {
+// A home that is a symlink must point at such a directory too. Bootstrap
+// gives the home to amika, and the hooks change the ownership of everything
+// under it.
+func (b *Bootstrapper) checkHome(home string) error {
+	if err := checkHomePath(home); err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(b.path(home))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", home, err)
+	}
+	root, err := filepath.EvalSymlinks(b.path("/"))
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%w: %s leads outside the machine's root", ErrUnsupportedImage, home)
+	}
+	target := "/" + filepath.ToSlash(rel)
+	if target == "/." {
+		target = "/"
+	}
+	if err := checkHomePath(target); err != nil {
+		return fmt.Errorf("%s is a link to %s: %w", home, target, err)
+	}
+	return nil
+}
+
+func checkHomePath(home string) error {
 	parts := strings.Split(strings.TrimPrefix(home, "/"), "/")
 	if !path.IsAbs(home) || path.Clean(home) != home || len(parts) < 2 || systemDirectories[parts[0]] {
 		return fmt.Errorf("%w: %q is not a safe home for %s; it must be a dedicated directory such as /home/%s",
@@ -369,14 +399,14 @@ func (b *Bootstrapper) writeHooks() error {
 }
 
 // ensureFileMode sets p's mode when it differs: a hook with the right
-// content but no execute bit still fails to run.
+// content but no execute bit still fails to run. It never follows a symlink.
 func (b *Bootstrapper) ensureFileMode(p string, mode os.FileMode) error {
 	target := b.path(p)
-	info, err := os.Stat(target)
+	info, err := os.Lstat(target)
 	if err != nil {
 		return err
 	}
-	if info.Mode().Perm() == mode {
+	if !info.Mode().IsRegular() || info.Mode().Perm() == mode {
 		return nil
 	}
 	b.logf("set the mode of %s to %o", p, mode)
@@ -385,25 +415,46 @@ func (b *Bootstrapper) ensureFileMode(p string, mode os.FileMode) error {
 
 // writeFile writes data to p unless it already holds exactly data. With
 // keepExisting, an existing file's content is left alone whatever it holds
-// (the user's setup.sh, for example). Either way, the mode is set.
+// (the user's setup.sh, for example). Either way, the mode is set. A symlink
+// at p is replaced, or with keepExisting left alone; it is never written
+// through.
 func (b *Bootstrapper) writeFile(p string, data []byte, mode os.FileMode, keepExisting bool) error {
 	target := b.path(p)
-	if current, err := os.ReadFile(target); err == nil {
-		if keepExisting || string(current) == string(data) {
+	if info, err := os.Lstat(target); err == nil {
+		if keepExisting {
 			return b.ensureFileMode(p, mode)
+		}
+		if info.Mode().IsRegular() {
+			if current, err := os.ReadFile(target); err == nil && string(current) == string(data) {
+				return b.ensureFileMode(p, mode)
+			}
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-	temporary := filepath.Join(filepath.Dir(target), ".amikad-"+filepath.Base(target))
-	if err := os.WriteFile(temporary, data, mode); err != nil {
+	// A new, randomly named file: never one the image left in the way.
+	temporary, err := os.CreateTemp(filepath.Dir(target), ".amikad-*")
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(temporary, mode); err != nil {
-		os.Remove(temporary)
-		return err
+	written := func() error {
+		if _, err := temporary.Write(data); err != nil {
+			temporary.Close()
+			return err
+		}
+		if err := temporary.Close(); err != nil {
+			return err
+		}
+		if err := os.Chmod(temporary.Name(), mode); err != nil {
+			return err
+		}
+		return os.Rename(temporary.Name(), target)
+	}()
+	if written != nil {
+		os.Remove(temporary.Name())
+		return written
 	}
 	b.logf("wrote %s", p)
-	return os.Rename(temporary, target)
+	return nil
 }
