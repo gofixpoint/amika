@@ -168,10 +168,16 @@ func (b *Bootstrapper) ensureUser(ctx context.Context, options Options) (*user.U
 		if convErr != nil {
 			return nil, fmt.Errorf("uid of %s: %w", User, convErr)
 		}
+		if err := checkHome(account.HomeDir); err != nil {
+			return nil, err
+		}
 		if err := b.refuseForeignHome(account.HomeDir, uid); err != nil {
 			return nil, err
 		}
 	} else {
+		if err := checkHome(options.Home); err != nil {
+			return nil, err
+		}
 		if err := b.refuseForeignHome(options.Home, -1); err != nil {
 			return nil, err
 		}
@@ -193,6 +199,27 @@ func (b *Bootstrapper) ensureUser(ctx context.Context, options Options) (*user.U
 		return nil, err
 	}
 	return account, nil
+}
+
+// systemDirectories are top-level directories that are never a home: the
+// hooks change the ownership of the whole home.
+var systemDirectories = map[string]bool{
+	"bin": true, "boot": true, "dev": true, "etc": true, "lib": true,
+	"lib32": true, "lib64": true, "proc": true, "run": true, "sbin": true,
+	"sys": true, "usr": true,
+}
+
+// checkHome refuses a home that is not a dedicated directory: not absolute
+// or not clean, /, a top-level directory, or one inside a system directory.
+// Bootstrap gives the home to amika, and the hooks change the ownership of
+// everything under it.
+func checkHome(home string) error {
+	parts := strings.Split(strings.TrimPrefix(home, "/"), "/")
+	if !path.IsAbs(home) || path.Clean(home) != home || len(parts) < 2 || systemDirectories[parts[0]] {
+		return fmt.Errorf("%w: %q is not a safe home for %s; it must be a dedicated directory such as /home/%s",
+			ErrUnsupportedImage, home, User, User)
+	}
+	return nil
 }
 
 // refuseForeignHome stops bootstrap when home belongs to a user other than

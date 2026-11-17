@@ -254,6 +254,32 @@ func TestBootstrapRepairsTheModeOfAnUnchangedFile(t *testing.T) {
 	}
 }
 
+func TestBootstrapRefusesAnUnsafeHome(t *testing.T) {
+	for _, home := range []string{"/", "/data", "/etc/amika", "/usr/local/amika", "data/home", "/data/../home", "/data/home/"} {
+		t.Run("new amika "+home, func(t *testing.T) {
+			system := newFakeSystem()
+			err := newBootstrapper(t, system).Run(context.Background(), Options{Home: home})
+			if !errors.Is(err, ErrUnsupportedImage) {
+				t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+			}
+			if len(system.runs) != 0 || len(system.chowns) != 0 {
+				t.Fatalf("bootstrap changed the machine: runs=%v chowns=%v", system.runs, system.chowns)
+			}
+		})
+	}
+	t.Run("existing amika with home /", func(t *testing.T) {
+		system := newFakeSystem()
+		system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/"}
+		err := newBootstrapper(t, system).Run(context.Background(), Options{})
+		if !errors.Is(err, ErrUnsupportedImage) {
+			t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+		}
+		if len(system.chowns) != 0 {
+			t.Fatalf("bootstrap changed owners: %v", system.chowns)
+		}
+	})
+}
+
 func TestBootstrapRefusesAnotherUsersHome(t *testing.T) {
 	cases := map[string]func(*fakeSystem){
 		"amika missing": func(*fakeSystem) {},
