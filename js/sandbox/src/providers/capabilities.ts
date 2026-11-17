@@ -19,6 +19,7 @@ import { daytonaCapabilities } from "./daytona/capabilities";
 import { e2bCapabilities } from "./e2b/capabilities";
 import { freestyleCapabilities } from "./freestyle/capabilities";
 import { vercelCapabilities } from "./vercel/capabilities";
+import { instaboxCapabilities } from "./instabox/capabilities";
 import { simulateCapabilities } from "./simulate/capabilities";
 
 // Colocated pure constants (see each provider's `capabilities.ts`), aggregated
@@ -35,6 +36,7 @@ export const SANDBOX_PROVIDER_CAPABILITIES: Record<
   e2b: e2bCapabilities,
   freestyle: freestyleCapabilities,
   vercel: vercelCapabilities,
+  instabox: instaboxCapabilities,
   simulate: simulateCapabilities,
 };
 
@@ -64,6 +66,10 @@ export const SANDBOX_PROVIDER_DISPLAY: Record<
   vercel: {
     label: "Vercel",
     badgeClassName: "bg-black text-white",
+  },
+  instabox: {
+    label: "Instabox",
+    badgeClassName: "bg-teal-700 text-white",
   },
   simulate: {
     label: "Simulated",

@@ -87,6 +87,15 @@ export interface CreateSandboxProviderInput {
   resources?: SandboxResources;
   /** Non-secret environment variables that must exist in the provider image. */
   envVars?: Record<string, string>;
+  /**
+   * Minutes with no activity before the sandbox stops. This is an idle
+   * timeout, not a hard limit: activity resets the timer. `0` means never
+   * stop. Absent means the provider's default.
+   *
+   * Map it to the vendor's idle timer. If the vendor has only a fixed
+   * session timeout (like E2B and Vercel), a sandbox in use can stop.
+   * Say so in the provider's docs.
+   */
   autoStopInterval?: number;
   autoDeleteInterval?: number;
   /** The caller-ordered service list to expose and return unchanged by identity. */
@@ -635,6 +644,7 @@ export interface SandboxCapability {
   // on a lifecycle provider; all absent on a create/delete-only one.
   start?(
     providerSandboxId: string,
+    /** Same meaning as `CreateSandboxProviderInput.autoStopInterval`. */
     autoStopInterval?: number | null,
   ): Promise<void>;
   stop?(providerSandboxId: string): Promise<void>;
@@ -878,6 +888,7 @@ export interface Sandbox {
   readonly provider: SandboxProviderName;
   /** The creation result, present only on a `Sandbox` returned from `create`. */
   readonly created?: CreatedProviderSandbox;
+  /** `autoStopInterval` has the same meaning as on create. */
   start(autoStopInterval?: number | null): Promise<void>;
   stop(): Promise<void>;
   delete(): Promise<void>;

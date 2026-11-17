@@ -43,6 +43,7 @@ var SupportedSandboxProviders = map[string]bool{
 	"daytona":   true,
 	"e2b":       true,
 	"freestyle": true,
+	"instabox":  true,
 	"vercel":    true,
 }
 
