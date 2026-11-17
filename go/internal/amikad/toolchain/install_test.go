@@ -223,6 +223,23 @@ func TestInstallKeepsAFileItDidNotCreate(t *testing.T) {
 	}
 }
 
+func TestInstallChecksEveryPlatformBeforeDownloading(t *testing.T) {
+	archive := makeTarGz(t, tarEntry{name: "tool_1.0.0/bin/tool", body: "tool"})
+	server, hits := serve(t, map[string][]byte{"/tool.tgz": archive})
+	tool := archiveDep("tool", server.URL+"/tool.tgz", sha(archive), 1, Bin{Path: "bin/tool"})
+	armOnly := Dep{
+		Name: "arm-only", Version: "1.0.0", Kind: KindArchive,
+		Artifacts: map[string]Artifact{"linux/arm64": {URL: server.URL + "/x", SHA256: sha(archive), Format: FormatTarGz, Bins: []Bin{{Path: "x"}}}},
+	}
+	err := Install(context.Background(), Selection{Deps: []Dep{tool, armOnly}}, testOptions(t))
+	if err == nil || !strings.Contains(err.Error(), "arm-only has no download for linux/amd64") {
+		t.Fatalf("err = %v", err)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("downloads = %d, want none before the refusal", hits.Load())
+	}
+}
+
 func TestInstallRefusesAHashMismatch(t *testing.T) {
 	archive := makeTarGz(t, tarEntry{name: "x/bin/x", body: "x"})
 	server, _ := serve(t, map[string][]byte{"/x.tgz": archive})

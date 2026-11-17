@@ -166,12 +166,19 @@ func installArchives(ctx context.Context, deps []Dep, options Options) error {
 		mutex sync.Mutex
 		errs  []error
 	)
-	slots := make(chan struct{}, downloadConcurrency)
-	for _, dep := range deps {
+	// Every artifact is checked before any download starts, so a refusal
+	// never leaves downloads running behind it.
+	artifacts := make([]Artifact, len(deps))
+	for i, dep := range deps {
 		artifact, ok := dep.Artifacts[options.Platform]
 		if !ok {
 			return fmt.Errorf("%s has no download for %s", dep.Name, options.Platform)
 		}
+		artifacts[i] = artifact
+	}
+	slots := make(chan struct{}, downloadConcurrency)
+	for i, dep := range deps {
+		artifact := artifacts[i]
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
