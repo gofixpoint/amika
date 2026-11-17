@@ -342,7 +342,8 @@ func TestManagedSSHDClosesSessionsWhoseClientStopsAnswering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sshd -T: %v\n%s", err, output)
 	}
-	effective := "\n" + string(output)
+	// Linux's sshd prints keywords in lower case; macOS's in mixed case.
+	effective := "\n" + strings.ToLower(string(output))
 	for _, setting := range []string{"clientaliveinterval 15", "clientalivecountmax 4"} {
 		if !strings.Contains(effective, "\n"+setting+"\n") {
 			t.Fatalf("sshd does not apply %q:\n%s", setting, output)
