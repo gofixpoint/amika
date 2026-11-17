@@ -139,6 +139,40 @@ func TestExtractRefusesEntriesOutsideTheToolDirectory(t *testing.T) {
 	}
 }
 
+func TestExtractRefusesEscapesThroughExtractedSymlinks(t *testing.T) {
+	cases := map[string][]tarEntry{
+		// root/up points at the tool directory itself, which the text check
+		// allows; a file written under it lands in the tool directory too.
+		"file under a link": {
+			{name: "root/up", link: ".", typeflag: tar.TypeSymlink},
+			{name: "root/up/file", body: "x"},
+		},
+		// Each link's text stays inside, but together they lead out: x/b
+		// resolves to the root, so x/b/c -> .. resolves above it.
+		"chained links": {
+			{name: "root/x/b", link: "..", typeflag: tar.TypeSymlink},
+			{name: "root/x/l", link: "b/../..", typeflag: tar.TypeSymlink},
+		},
+		"hard link through a link": {
+			{name: "root/dir/file", body: "x"},
+			{name: "root/up", link: "dir", typeflag: tar.TypeSymlink},
+			{name: "root/copy", link: "root/up/file", typeflag: tar.TypeLink},
+		},
+	}
+	for name, entries := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			archive := filepath.Join(dir, "a.tgz")
+			if err := os.WriteFile(archive, makeTarGz(t, entries...), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := extractTarGz(archive, filepath.Join(dir, "out"), 1); err == nil {
+				t.Fatal("extract accepted an entry that goes through or out of a symlink")
+			}
+		})
+	}
+}
+
 func TestExtractKeepsInternalSymlinks(t *testing.T) {
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "a.tgz")
