@@ -17,6 +17,7 @@ def main() -> int:
     errors.extend(validate_step_version_literals(bundle))
     errors.extend(validate_generated_dockerfiles(bundle, manifest, versions))
     errors.extend(validate_regeneration(bundle))
+    errors.extend(validate_toolchain_lock(bundle))
 
     if errors:
         for error in errors:
@@ -210,6 +211,17 @@ def validate_regeneration(bundle: Path) -> list[str]:
     if result.returncode == 0:
         return []
     return ["run sandbox-image/generate.py to refresh generated artifacts"]
+
+
+def validate_toolchain_lock(bundle: Path) -> list[str]:
+    import subprocess
+
+    result = subprocess.run(
+        [sys.executable, str(bundle / "toolchain.py"), "--check"], check=False
+    )
+    if result.returncode == 0:
+        return []
+    return ["run sandbox-image/toolchain.py to refresh the toolchain lockfile"]
 
 
 if __name__ == "__main__":

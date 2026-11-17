@@ -22,6 +22,15 @@ directory is generated, so an edit here is only half the change.
   intentional; do not "clean it up".
 - `python3 sandbox-image/generate.py --check` verifies generated files are
   current without writing them.
+- **Regenerate the toolchain lockfile after a `versions.env` change.** Rigs
+  that boot a provider's own image get their dependencies from
+  `sandbox-image/toolchain.lock.json` through `amikad install`. Run
+  `python3 sandbox-image/toolchain.py`. It downloads every archive to pin its
+  sha256. Commit the lockfile with the `versions.env` change.
+  `make test-sandbox-image` fails on a stale lockfile.
+- **Keep the lockfile's defaults small.** Mark a dependency `default` only
+  when every rig needs it. Today that is gh. Other dependencies install only
+  when the control plane asks for them with `amikad install --dep`.
 
 ## Verification checks
 
