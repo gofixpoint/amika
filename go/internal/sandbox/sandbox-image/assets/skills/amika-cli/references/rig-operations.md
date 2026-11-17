@@ -1,4 +1,4 @@
-# Rig lifecycle, hosts, agents, auth, and secrets
+# Rig lifecycle, hosts, cloud accounts, agents, auth, and secrets
 
 ## Authentication
 
@@ -68,6 +68,33 @@ what the host runs rigs on: `smol` (Linux VMs), `lume` (macOS VMs), and
 runtime is `bare_metal` has no sizes, so SIZES shows its detected resources,
 as in `10cpu/32GiB/926.5GiB`. A bare-metal rig takes only a name, and logs
 in as the host's account, not `amika`, with no `/home/amika`.
+
+## The organization's own cloud accounts
+
+An organization can connect its own account at a sandbox provider, such as
+InstaBox (bring-your-own-cloud). Rigs in it run on the organization's provider
+quota and bill. Each provider has at most one default account. A rig create
+that names only `--provider` lands in that default account, or on Amika Cloud
+when the provider has none. `--cloud-account` names an account: a name or id,
+or `name=<name>` / `id=<id>`. The name `amika` means Amika Cloud.
+
+```bash
+amika cloud-account create --provider instabox --name prod \
+  --api-key-file ./key.txt --default    # or --api-key-env VAR, or --api-key-file -
+amika cloud-account list -o json        # {"items": [...]}; never the key
+amika rig create --provider instabox    # the default account, or Amika Cloud
+amika rig create --cloud-account prod   # the provider comes from the account
+amika cloud-account set-default prod
+amika cloud-account unset-default prod  # instabox rigs go to Amika Cloud again
+amika cloud-account delete prod --force # refused while rigs or snapshots remain
+```
+
+Never pass the provider key as a plain argument. `--cloud-account` cannot be
+combined with `--host`. Names are unique per provider: when a name matches
+accounts on two providers, add `--provider` or use `id=`. `rig get` shows
+`cloud_account`, which is null on Amika Cloud. `rig list -l` shows
+`<provider>/<account>` in PROVIDER. A rig in a provider's own image can have
+another home directory and login account than `/home/amika` and `amika`.
 
 ## Agent credentials and secrets
 
