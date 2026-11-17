@@ -25,8 +25,9 @@ import (
 	"strings"
 )
 
-// DefaultUser is the rig user on every provider.
-const DefaultUser = "amika"
+// User is the rig user on every provider. The embedded lifecycle hooks name
+// it, so it is not configurable.
+const User = "amika"
 
 // MarkerPath records the amikad version that last bootstrapped the machine.
 const MarkerPath = "/var/lib/amikad/runtime-version"
@@ -35,12 +36,10 @@ const MarkerPath = "/var/lib/amikad/runtime-version"
 // gh, the agent CLIs) run on.
 var minimumGlibc = [2]int{2, 28}
 
-// Options selects the rig user.
+// Options configures a bootstrap run.
 type Options struct {
-	// User defaults to DefaultUser.
-	User string
-	// Home is the home directory given to the user when bootstrap creates
-	// it; an existing user keeps its own. Defaults to /home/<user>.
+	// Home is the home directory given to User when bootstrap creates it;
+	// an existing user keeps its own. Defaults to /home/amika.
 	Home string
 	// Version is written to MarkerPath.
 	Version string
@@ -85,11 +84,8 @@ func (b *Bootstrapper) Run(ctx context.Context, options Options) error {
 }
 
 func withDefaults(options Options) Options {
-	if options.User == "" {
-		options.User = DefaultUser
-	}
 	if options.Home == "" {
-		options.Home = "/home/" + options.User
+		options.Home = "/home/" + User
 	}
 	return options
 }
@@ -166,23 +162,23 @@ func (b *Bootstrapper) hasManager(name string) bool {
 // ensureUser returns the rig user, creating it, its group, and its sudo
 // rule when missing.
 func (b *Bootstrapper) ensureUser(ctx context.Context, options Options) (*user.User, error) {
-	account, err := b.System.LookupUser(options.User)
+	account, err := b.System.LookupUser(User)
 	if err != nil {
-		if _, groupErr := b.System.LookupGroup(options.User); groupErr != nil {
-			if err := b.System.Run(ctx, nil, "groupadd", options.User); err != nil {
-				return nil, fmt.Errorf("groupadd %s: %w", options.User, err)
+		if _, groupErr := b.System.LookupGroup(User); groupErr != nil {
+			if err := b.System.Run(ctx, nil, "groupadd", User); err != nil {
+				return nil, fmt.Errorf("groupadd %s: %w", User, err)
 			}
 		}
-		b.logf("creating user %s with home %s", options.User, options.Home)
-		if err := b.System.Run(ctx, nil, "useradd", "-m", "-d", options.Home, "-s", "/bin/bash", "-g", options.User, options.User); err != nil {
-			return nil, fmt.Errorf("useradd %s: %w", options.User, err)
+		b.logf("creating user %s with home %s", User, options.Home)
+		if err := b.System.Run(ctx, nil, "useradd", "-m", "-d", options.Home, "-s", "/bin/bash", "-g", User, User); err != nil {
+			return nil, fmt.Errorf("useradd %s: %w", User, err)
 		}
-		if account, err = b.System.LookupUser(options.User); err != nil {
-			return nil, fmt.Errorf("look up %s after useradd: %w", options.User, err)
+		if account, err = b.System.LookupUser(User); err != nil {
+			return nil, fmt.Errorf("look up %s after useradd: %w", User, err)
 		}
 	}
-	rule := []byte(options.User + " ALL=(ALL) NOPASSWD:ALL\n")
-	if err := b.writeFile("/etc/sudoers.d/90-"+options.User, rule, 0o440, false); err != nil {
+	rule := []byte(User + " ALL=(ALL) NOPASSWD:ALL\n")
+	if err := b.writeFile("/etc/sudoers.d/90-"+User, rule, 0o440, false); err != nil {
 		return nil, err
 	}
 	return account, nil
