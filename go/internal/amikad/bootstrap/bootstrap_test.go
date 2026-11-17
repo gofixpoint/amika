@@ -151,6 +151,23 @@ func TestBootstrapIsIdempotentAndKeepsTheUsersOwnScripts(t *testing.T) {
 	}
 }
 
+func TestBootstrapInstallsSudoWhenTheImageLacksIt(t *testing.T) {
+	system := newFakeSystem()
+	delete(system.commands, "sudo")
+	b := newBootstrapper(t, system)
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "apt-get update -q; apt-get install -y -q --no-install-recommends sudo"
+	if got := strings.Join(system.runs, "; "); !strings.HasPrefix(got, want) {
+		t.Fatalf("runs = %s, want it to start with %s", got, want)
+	}
+	delete(system.commands, "apt-get")
+	if err := b.Run(context.Background(), Options{}); !errors.Is(err, ErrUnsupportedImage) {
+		t.Fatalf("without sudo or a package manager: err = %v", err)
+	}
+}
+
 func TestEnsureOpenSSHServer(t *testing.T) {
 	system := newFakeSystem()
 	b := newBootstrapper(t, system)
