@@ -165,6 +165,31 @@ describe("client.jobs", () => {
     });
   });
 
+  it("round-trips a rigCreate cloud account through the job", async () => {
+    const steps = [
+      {
+        rig_create: { name: "a", cloud_account_name: "prod" },
+        command: "x",
+        timeout_ms: 1,
+      },
+    ];
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: { ...jobWire, steps } },
+      { status: 200, body: jobWire },
+    ]);
+    const client = makeClient(fetch);
+    const job = await client.jobs.get("nightly");
+    expect(job.steps[0]?.rigCreate?.cloudAccount).toEqual({
+      ref: "prod",
+      by: "name",
+    });
+    await client.jobs.update("nightly", { steps: job.steps });
+    expect(JSON.parse(calls[1]?.body ?? "").steps[0].rig_create).toEqual({
+      name: "a",
+      cloud_account_name: "prod",
+    });
+  });
+
   it("decodes a step's rig selector in either spelling", async () => {
     const steps = [
       { rig_name: "a", command: "x", timeout_ms: 1 },

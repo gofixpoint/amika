@@ -210,6 +210,36 @@ chat with its transcript and bound `send`, `sendStream`, and `refresh` methods.
 Chat transcripts are stored on the server and can outlive their rigs; keeping
 a chat record does not keep its rig or filesystem alive.
 
+## Cloud accounts (beta)
+
+By default a cloud rig runs in a provider account that Amika owns and pays for.
+Connect your organization's own account at a sandbox provider, and its rigs
+run on your provider quota and bill instead. Amika stores the API key and
+never returns it. Where cloud accounts are not enabled, these calls get
+`AmikaHTTPError` 404.
+
+```ts
+await client.cloudAccounts.create({
+  provider: "instabox",
+  name: "prod",
+  apiKey: process.env.INSTABOX_API_KEY!,
+  isDefault: true, // rigs that name only the provider land here
+});
+const rig = await client.rigs.create({ provider: "instabox" });
+await client.rigs.create({ provider: "instabox", cloudAccount: "prod" });
+await client.rigs.create({ cloudAccount: { ref: "cacc_123", by: "id" } });
+if (rig.cloudAccount?.name !== "prod")
+  throw new Error(`rig ${rig.name} is not in the prod account`);
+```
+
+An account reference works like a rig reference: a plain string matches the
+account's ID or name, and `{ ref, by }` pins one. The name `amika` means Amika
+Cloud. Names are unique per provider, so `get`, `update`, and `delete` take
+`{ provider }` to narrow a name. Without `cloudAccount`, a rig goes to the
+provider's default account, or to Amika Cloud when it has none.
+`rig.cloudAccount` is `{ id, name }`, or null on Amika Cloud. A control plane
+that predates cloud accounts ignores `cloudAccount`, so check it as above.
+
 ## Snapshots
 
 A snapshot captures a rig's filesystem for later rig creation. Capture returns
