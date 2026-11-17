@@ -379,7 +379,6 @@ func (o *DaemonOperations) Bootstrap(ctx context.Context, options BootstrapOptio
 		Log:    options.Log,
 	}
 	return b.Run(ctx, bootstrap.Options{
-		User:    options.User,
 		Home:    options.Home,
 		Version: buildmeta.AmikadVersion.String(),
 	})

@@ -37,9 +37,8 @@ type SetupSSHDOptions struct {
 
 // BootstrapOptions selects the rig user `amikad bootstrap` sets up.
 type BootstrapOptions struct {
-	// User is the rig user; empty means "amika".
-	User string
-	// Home is the home directory for a user bootstrap creates.
+	// Home is the home directory for the amika user when bootstrap creates
+	// it.
 	Home string
 	// Log receives progress lines.
 	Log io.Writer
@@ -249,16 +248,15 @@ func newBootstrapCommand(operations Operations) *cobra.Command {
 		Use:   "bootstrap",
 		Short: "Install the Amika runtime on a machine without an Amika image",
 		Long: "Install what an Amika base image ships for amikad and the lifecycle\n" +
-			"hooks: the rig user and its sudo rule, the directories, the hooks, and\n" +
-			"the OS packages they need. Run it as root. It is idempotent.",
+			"hooks: sudo, the amika user and its sudo rule, the directories, and the\n" +
+			"hooks. Run it as root. It is idempotent.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			options.Log = cmd.ErrOrStderr()
 			return operations.Bootstrap(cmd.Context(), options)
 		},
 	}
-	command.Flags().StringVar(&options.User, "user", "amika", "the rig user")
-	command.Flags().StringVar(&options.Home, "home", "", "home directory for the rig user when it must be created (default /home/<user>)")
+	command.Flags().StringVar(&options.Home, "home", "", "home directory for the amika user when it must be created (default /home/amika)")
 	return command
 }
 

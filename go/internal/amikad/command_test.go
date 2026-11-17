@@ -133,7 +133,16 @@ func TestBootstrapInstallAndWaitReadyFlags(t *testing.T) {
 	}
 
 	run("", "bootstrap", "--home", "/data/home")
-	if operations.bootstrapOptions.User != "amika" || operations.bootstrapOptions.Home != "/data/home" {
+	if err := func() error {
+		cmd := NewCommand(operations)
+		cmd.SetArgs([]string{"bootstrap", "--user", "bob"})
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		return cmd.Execute()
+	}(); err == nil {
+		t.Fatal("bootstrap accepted --user; the hooks support only amika")
+	}
+	if operations.bootstrapOptions.Home != "/data/home" {
 		t.Fatalf("bootstrap options = %+v", operations.bootstrapOptions)
 	}
 
