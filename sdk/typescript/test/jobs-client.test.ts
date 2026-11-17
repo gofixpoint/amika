@@ -280,6 +280,7 @@ describe("client.jobRuns", () => {
       commandRunIds: [],
       finishCommandRunId: null,
       error: null,
+      cancelRequestedAt: null,
       rigId: null,
       rigName: null,
       createdAt: "2026-11-12T10:00:00Z",
@@ -309,5 +310,23 @@ describe("client.jobRuns", () => {
     const { fetch, calls } = mockFetch([{ status: 200, body: jobRunWire }]);
     await makeClient(fetch).jobRuns.get("jr_1");
     expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/job-runs/jr_1`);
+  });
+
+  it("cancel posts to the job run's cancel path", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 202,
+        body: {
+          ...jobRunWire,
+          status: "running",
+          cancel_requested_at: "2026-11-12T10:01:00Z",
+        },
+      },
+    ]);
+    const run = await makeClient(fetch).jobRuns.cancel("jr_1");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/job-runs/jr_1/cancel`);
+    expect(run.status).toBe("running");
+    expect(run.cancelRequestedAt).toBe("2026-11-12T10:01:00Z");
   });
 });

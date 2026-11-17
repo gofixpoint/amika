@@ -226,6 +226,33 @@ func TestJobRunAndRuns(t *testing.T) {
 	}
 }
 
+func TestJobRunsCancel(t *testing.T) {
+	for _, tt := range []struct {
+		name, status, cancelRequestedAt, want string
+	}{
+		{"pending", "cancelled", `"t"`, "Job run jr_1 cancelled"},
+		{"running", "running", `"t"`, "Cancelling job run jr_1: it ends once its current step stops"},
+		{"ended", "succeeded", "null", "Job run jr_1 is succeeded; nothing to cancel"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			run := `{"id":"jr_1","job_id":"job_1","trigger_kind":"manual","scheduled_at":"t","status":"` + tt.status + `","current_step":0,"step_count":1,"command_run_ids":[],"finish_command_run_id":null,"error":null,"cancel_requested_at":` + tt.cancelRequestedAt + `,"rig_id":null,"rig_name":null,"created_at":"t","updated_at":"t","completed_at":null}`
+			requests := serveJobsAPI(t, func(*http.Request) string { return run })
+
+			out, err := runRootCommandOutput(t, "job", "runs", "cancel", "jr_1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := (*requests)[0]
+			if got.method != "POST" || got.uri != "/api/v0beta1/job-runs/jr_1/cancel" {
+				t.Errorf("got %s %s", got.method, got.uri)
+			}
+			if !strings.Contains(out, tt.want) {
+				t.Errorf("output lacks %q:\n%s", tt.want, out)
+			}
+		})
+	}
+}
+
 func TestJobCreateHelpShowsBothForms(t *testing.T) {
 	out, err := runRootCommandOutput(t, "job", "create", "--help")
 	if err != nil {

@@ -37,7 +37,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `job create`/`list`/`get`/`update`/`pause`/`resume`/`delete`/`run`, `job runs list`/`get`, `auth login --api-key-file`, `auth logout`, `auth api-key create`, and `skill install`. Commands that open a shell or editor (`sandbox connect`, `sandbox open`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `job create`/`list`/`get`/`update`/`pause`/`resume`/`delete`/`run`, `job runs list`/`get`/`cancel`, `auth login --api-key-file`, `auth logout`, `auth api-key create`, and `skill install`. Commands that open a shell or editor (`sandbox connect`, `sandbox open`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika send`
 
@@ -480,6 +480,7 @@ amika job create --file job.json
 amika job run nightly-tests
 amika job runs list --job nightly-tests
 amika job runs get <job-run-id>
+amika job runs cancel <job-run-id>
 
 # Pause, resume, change, and delete
 amika job pause nightly-tests
@@ -521,11 +522,11 @@ The command sends a fresh `Idempotency-Key` on each run. Pass `--idempotency-key
 
 ### `amika job delete <job> [...]`
 
-Deletes each job and its job runs; the Command Runs they created stay. A job with a pending or running job run is refused: pause it, and try again once the run ends. `rm` and `remove` are aliases; `-f`/`--force` skips the confirmation prompt and is required with `-o json`.
+Deletes each job and its job runs; the Command Runs they created stay. A job with a pending or running job run is refused: pause it, cancel the run with `amika job runs cancel`, and try again once the run ends. `rm` and `remove` are aliases; `-f`/`--force` skips the confirmation prompt and is required with `-o json`.
 
-### `amika job run <job>`, `amika job runs list`, `amika job runs get <id>`
+### `amika job run <job>`, `amika job runs list`, `amika job runs get <id>`, `amika job runs cancel <id>`
 
-`run` starts a job run now. It ignores the job's overlap policy and does not move its next scheduled run. `runs list` shows job runs newest first, filtered by `--job`, `--status` (`pending`, `running`, `succeeded`, `failed`, `skipped`), and `--trigger` (`cron`, `manual`), up to `--limit` (default 20). `runs get` shows one job run with its Command Run ids and the error that ended it, if any.
+`run` starts a job run now. It ignores the job's overlap policy and does not move its next scheduled run. `runs list` shows job runs newest first, filtered by `--job`, `--status` (`pending`, `running`, `succeeded`, `failed`, `skipped`, `cancelled`), and `--trigger` (`cron`, `manual`), up to `--limit` (default 20). `runs get` shows one job run with its Command Run ids and the error that ended it, if any. `runs cancel` cancels a pending job run at once. For a running one it stops the current step and starts no more; the job run ends `cancelled` once that step stops and the job's rig status on finish is applied, so follow it with `runs get`. It does nothing to a job run that already ended, and it does not pause the job's schedule.
 
 ---
 

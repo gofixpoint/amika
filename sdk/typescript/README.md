@@ -259,6 +259,7 @@ await client.jobs.create({
 });
 const run = await client.jobRuns.create("nightly-audit"); // run it now
 const { items } = await client.jobRuns.list({ job: "nightly-audit" });
+await client.jobRuns.cancel(run.id); // stop it
 ```
 
 Step 0 names the rig with `rig` (a `RigRef`) or `rigCreate`; later steps run on
@@ -267,6 +268,8 @@ the same rig. `rigCreate.name` is a prefix: each job run creates its own rig.
 `jobs.update(job, changes)` replaces only the fields you pass. `jobs.create`
 sends an `Idempotency-Key`; pass `{ idempotencyKey }` and reuse it on a retry,
 so the retry returns the first job instead of failing on its taken name.
+`jobRuns.cancel(id)` stops a pending or running job run. A running one ends
+`cancelled` after its current step stops, so poll `jobRuns.get(id)` to see it end.
 
 ## Configuration
 
