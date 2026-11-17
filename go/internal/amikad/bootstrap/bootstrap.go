@@ -221,6 +221,10 @@ type directory struct {
 	// keepMode leaves an existing directory's mode alone: the home keeps the
 	// mode the provider gave it.
 	keepMode bool
+	// allowLink accepts a symlink to a directory. Only the home does: sshd
+	// refuses a symlinked .ssh, and amikad never replaces what it did not
+	// create.
+	allowLink bool
 }
 
 // ensureDirectories creates what the image's step 50 creates.
@@ -235,7 +239,7 @@ func (b *Bootstrapper) ensureDirectories(account *user.User) error {
 	}
 	home := account.HomeDir
 	directories := []directory{
-		{path: home, mode: 0o755, userOwned: true, keepMode: true},
+		{path: home, mode: 0o755, userOwned: true, keepMode: true, allowLink: true},
 		{path: path.Join(home, ".ssh"), mode: 0o700, userOwned: true},
 		{path: path.Join(home, "workspace"), mode: 0o755, userOwned: true},
 		{path: "/var/log/amika", mode: 0o755, userOwned: true},
@@ -270,7 +274,13 @@ func (b *Bootstrapper) ensureDirectories(account *user.User) error {
 // refuses a .ssh that is not 0700. It changes nothing that is already right.
 func (b *Bootstrapper) ensureDirectory(dir directory, owner [2]int) error {
 	target := b.path(dir.path)
-	info, err := os.Stat(target)
+	info, err := os.Lstat(target)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		if !dir.allowLink {
+			return fmt.Errorf("%w: %s is a symlink; amikad needs a real directory there", ErrUnsupportedImage, dir.path)
+		}
+		info, err = os.Stat(target)
+	}
 	created := errors.Is(err, fs.ErrNotExist)
 	switch {
 	case created:
@@ -331,14 +341,29 @@ func (b *Bootstrapper) writeHooks() error {
 	return nil
 }
 
+// ensureFileMode sets p's mode when it differs: a hook with the right
+// content but no execute bit still fails to run.
+func (b *Bootstrapper) ensureFileMode(p string, mode os.FileMode) error {
+	target := b.path(p)
+	info, err := os.Stat(target)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm() == mode {
+		return nil
+	}
+	b.logf("set the mode of %s to %o", p, mode)
+	return os.Chmod(target, mode)
+}
+
 // writeFile writes data to p unless it already holds exactly data. With
-// keepExisting, an existing file is left alone whatever it holds (the user's
-// setup.sh, for example).
+// keepExisting, an existing file's content is left alone whatever it holds
+// (the user's setup.sh, for example). Either way, the mode is set.
 func (b *Bootstrapper) writeFile(p string, data []byte, mode os.FileMode, keepExisting bool) error {
 	target := b.path(p)
 	if current, err := os.ReadFile(target); err == nil {
 		if keepExisting || string(current) == string(data) {
-			return nil
+			return b.ensureFileMode(p, mode)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {

@@ -191,6 +191,69 @@ func TestBootstrapRepairsExistingDirectories(t *testing.T) {
 	}
 }
 
+func TestBootstrapRefusesASymlinkedDirectoryButNotASymlinkedHome(t *testing.T) {
+	system := newFakeSystem()
+	system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/data/home"}
+	b := newBootstrapper(t, system)
+	// The home itself may be a link to the provider's disk.
+	if err := os.MkdirAll(b.path("/disk/home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(b.path("/data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(b.path("/disk/home"), b.path("/data/home")); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatalf("symlinked home: %v", err)
+	}
+
+	// sshd refuses a symlinked .ssh, so bootstrap does too.
+	ssh := b.path("/disk/home/.ssh")
+	if err := os.RemoveAll(ssh); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(b.path("/elsewhere"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(b.path("/elsewhere"), ssh); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); !errors.Is(err, ErrUnsupportedImage) {
+		t.Fatalf("symlinked .ssh: err = %v, want ErrUnsupportedImage", err)
+	}
+}
+
+func TestBootstrapRepairsTheModeOfAnUnchangedFile(t *testing.T) {
+	system := newFakeSystem()
+	b := newBootstrapper(t, system)
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	for p, mode := range map[string]os.FileMode{
+		"/usr/lib/amikad/run-hook.sh":          0o644,
+		"/etc/sudoers.d/90-amika":              0o644,
+		"/usr/local/etc/amikad/setup/setup.sh": 0o600,
+	} {
+		if err := os.Chmod(b.path(p), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]os.FileMode{
+		"/usr/lib/amikad/run-hook.sh":          0o755,
+		"/etc/sudoers.d/90-amika":              0o440,
+		"/usr/local/etc/amikad/setup/setup.sh": 0o755,
+	} {
+		if info, _ := os.Stat(b.path(p)); info.Mode().Perm() != want {
+			t.Errorf("%s mode = %v, want %v", p, info.Mode().Perm(), want)
+		}
+	}
+}
+
 func TestBootstrapRefusesAnotherUsersHome(t *testing.T) {
 	cases := map[string]func(*fakeSystem){
 		"amika missing": func(*fakeSystem) {},
