@@ -85,27 +85,55 @@ export function execRequestBody(
   return body;
 }
 
-/**
- * Run `command` and return its result. Output also goes to `handlers` while
- * the command runs, when given.
- */
+/** Run `command` and return its result with all of its output. */
 export async function execInstabox(
   config: InstaboxConfig,
   machineId: string,
   command: string,
   opts: ExecOpts = {},
-  handlers?: StreamCommandHandlers,
 ): Promise<SandboxExecResult> {
+  return collectExecEvents(
+    await openExecStream(config, machineId, command, opts),
+  );
+}
+
+/**
+ * Run `command` and send its output to `handlers` as it arrives. The output
+ * is not kept, so a long or chatty command does not grow memory.
+ */
+export async function streamInstabox(
+  config: InstaboxConfig,
+  machineId: string,
+  command: string,
+  handlers: StreamCommandHandlers,
+): Promise<number> {
+  const result = await collectExecEvents(
+    await openExecStream(config, machineId, command, {}),
+    handlers,
+  );
+  return result.exitCode;
+}
+
+async function openExecStream(
+  config: InstaboxConfig,
+  machineId: string,
+  command: string,
+  opts: ExecOpts,
+): Promise<AsyncIterable<{ event: string; data: string }>> {
   const res = await send(config, "POST", machinePath(machineId, "/exec"), {
     json: execRequestBody(command, opts),
     accept: "text/event-stream",
     timeoutMs: EXEC_REQUEST_TIMEOUT_MS,
   });
   if (!res.body) throw new Error("Instabox exec returned no body");
-  return collectExecEvents(readSse(res.body), handlers);
+  return readSse(res.body);
 }
 
-/** Fold exec stream events into a result. Exported for tests. */
+/**
+ * Fold exec stream events into a result. With `handlers`, each chunk goes to
+ * them and the result carries no output; without, the result keeps it all.
+ * Exported for tests.
+ */
 export async function collectExecEvents(
   events: AsyncIterable<{ event: string; data: string }>,
   handlers?: StreamCommandHandlers,
@@ -116,19 +144,24 @@ export async function collectExecEvents(
     switch (event) {
       case "stdout": {
         const chunk = chunkSchema.parse(JSON.parse(data)).data;
-        stdout += chunk;
-        handlers?.onStdout(chunk);
+        if (handlers) handlers.onStdout(chunk);
+        else stdout += chunk;
         break;
       }
       case "stderr": {
         const chunk = chunkSchema.parse(JSON.parse(data)).data;
-        stderr += chunk;
-        handlers?.onStderr?.(chunk);
+        if (handlers) handlers.onStderr?.(chunk);
+        else stderr += chunk;
         break;
       }
       case "exit": {
         const exit = exitSchema.parse(JSON.parse(data));
-        // The exit event carries empty output; keep any it has anyway.
+        // The exit event carries empty output; pass on any it has anyway.
+        if (handlers) {
+          if (exit.stdout) handlers.onStdout(exit.stdout);
+          if (exit.stderr) handlers.onStderr?.(exit.stderr);
+          return { exitCode: exit.exitCode, stdout: "", stderr: "" };
+        }
         return {
           exitCode: exit.exitCode,
           stdout: stdout + exit.stdout,

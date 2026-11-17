@@ -103,3 +103,38 @@ describe("createInstaboxSandbox cleanup", () => {
     expect(requests).toEqual(["POST /machines"]);
   });
 });
+
+describe("createInstaboxSandbox guest user", () => {
+  /** Capture the create body; refuse the create so the test ends there. */
+  function captureCreateBody(): { body?: Record<string, unknown> } {
+    const seen: { body?: Record<string, unknown> } = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        const path = new URL(url).pathname.replace(/^\/v1/, "");
+        if (path === "/templates")
+          return json(200, { templates: [{ id: "ci" }] });
+        seen.body = JSON.parse(init.body as string) as Record<string, unknown>;
+        return json(409, { error: { code: "name_taken", message: "taken" } });
+      }),
+    );
+    return seen;
+  }
+
+  it("logs a template machine in as amika", async () => {
+    const seen = captureCreateBody();
+    await expect(
+      createInstaboxSandbox(ctx, CONFIG, { ...INPUT, snapshot: "ci" }),
+    ).rejects.toThrow(/name_taken/);
+    expect(seen.body).toMatchObject({ templateId: "ci", guestUser: "amika" });
+  });
+
+  it("keeps a snapshot's own user", async () => {
+    const seen = captureCreateBody();
+    await expect(createInstaboxSandbox(ctx, CONFIG, INPUT)).rejects.toThrow(
+      /name_taken/,
+    );
+    expect(seen.body).toMatchObject({ snapshotId: "sn_base" });
+    expect(seen.body).not.toHaveProperty("guestUser");
+  });
+});

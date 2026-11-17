@@ -51,9 +51,7 @@ describe("collectExecEvents", () => {
     }
   }
 
-  it("keeps the streams apart and sends chunks to the handlers", async () => {
-    const out: string[] = [];
-    const err: string[] = [];
+  it("keeps the streams apart in a buffered run", async () => {
     const result = await collectExecEvents(
       script(
         ["stdout", { data: "first\n" }],
@@ -61,14 +59,28 @@ describe("collectExecEvents", () => {
         ["stdout", { data: "second\n" }],
         ["exit", { exitCode: 3, stdout: "", stderr: "" }],
       ),
-      { onStdout: (c) => out.push(c), onStderr: (c) => err.push(c) },
     );
     expect(result).toEqual({
       exitCode: 3,
       stdout: "first\nsecond\n",
       stderr: "oops\n",
     });
-    expect(out).toEqual(["first\n", "second\n"]);
+  });
+
+  it("sends chunks to the handlers without keeping them", async () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const result = await collectExecEvents(
+      script(
+        ["stdout", { data: "first\n" }],
+        ["stderr", { data: "oops\n" }],
+        ["stdout", { data: "second\n" }],
+        ["exit", { exitCode: 3, stdout: "tail\n", stderr: "" }],
+      ),
+      { onStdout: (c) => out.push(c), onStderr: (c) => err.push(c) },
+    );
+    expect(result).toEqual({ exitCode: 3, stdout: "", stderr: "" });
+    expect(out).toEqual(["first\n", "second\n", "tail\n"]);
     expect(err).toEqual(["oops\n"]);
   });
 

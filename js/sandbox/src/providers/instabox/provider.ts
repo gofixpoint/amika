@@ -15,7 +15,7 @@
 import type { InstaboxConfig } from "./config";
 import { instaboxCapabilities } from "./capabilities";
 import { defineProvider } from "../shared/define-provider";
-import { execInstabox } from "./internal/exec";
+import { execInstabox, streamInstabox } from "./internal/exec";
 import {
   createInstaboxSandbox,
   deleteInstaboxSandbox,
@@ -66,7 +66,7 @@ export default defineProvider(
       stdin: true,
       run: (id, command, opts) => execInstabox(config, id, command, opts),
       stream: async (id, command, handlers) => {
-        await execInstabox(config, id, command, {}, handlers);
+        await streamInstabox(config, id, command, handlers);
       },
     },
 

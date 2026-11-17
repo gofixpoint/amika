@@ -65,6 +65,7 @@ describe("autoSuspendSeconds", () => {
     expect(autoSuspendSeconds(0)).toBe(0);
     expect(autoSuspendSeconds(-1)).toBe(0);
     expect(autoSuspendSeconds(1)).toBe(300);
+    expect(autoSuspendSeconds(7.4)).toBe(420);
     expect(autoSuspendSeconds(15)).toBe(900);
     expect(autoSuspendSeconds(120)).toBe(1800);
   });

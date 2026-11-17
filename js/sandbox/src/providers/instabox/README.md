@@ -25,9 +25,10 @@ REST API (`https://api.instabox.sh/v1`) with the small client in
 
 ## How the contract maps to Instabox
 
-- **User and home.** Commands run as `user` (UID 1000) with
-  `bash -lc`. Home is `/data/home`, on the persistent disk. `sudo` needs no
-  password.
+- **User and home.** A machine created from a template logs in as `amika`
+  (create's `guestUser`), the user on every other provider; one created from
+  a snapshot keeps the snapshot's user. Commands run with `bash -lc`. Home is
+  `/data/home`, on the persistent disk. `sudo` needs no password.
 - **Stop and start.** `stop` is an Instabox stop: programs end, files stay,
   and the next start boots fresh. Instabox also pauses ("suspends") a machine
   after an idle period, and commands, files, and SSH wake it. Instabox cannot

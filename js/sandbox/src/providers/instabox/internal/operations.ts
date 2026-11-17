@@ -50,6 +50,14 @@ const CREATE_ID_METADATA_KEY = "amika-create-id";
 /** The machine user's home (`/data` is the persistent disk). */
 export const INSTABOX_HOME_DIR = "/data/home";
 
+/**
+ * The Linux user exec, SSH, and the terminal log in as. Instabox fixes it at
+ * create (`guestUser`; its default is `user`). We use `amika`, the user on
+ * every other provider, so SSH and the lifecycle hooks need no per-provider
+ * user. A machine created from a snapshot keeps the snapshot's user.
+ */
+export const INSTABOX_GUEST_USER = "amika";
+
 /** Instabox snapshot ids start with this; anything else is a template. */
 const SNAPSHOT_ID_PREFIX = "sn_";
 
@@ -61,8 +69,9 @@ const MAX_AUTO_SUSPEND_MINUTES = 30;
 
 /**
  * Map Amika's idle-stop interval (minutes) to Instabox's idle pause
- * (`autoSuspendAfterSeconds`). Instabox takes 5 to 30 minutes, or 0 for off.
- * `undefined`: keep the Instabox default.
+ * (`autoSuspendAfterSeconds`). Instabox takes 300 to 1800 seconds in whole
+ * minutes, or 0 for off (create API reference). `undefined`: keep the
+ * Instabox default.
  */
 export function autoSuspendSeconds(
   autoStopInterval?: number | null,
@@ -77,18 +86,42 @@ export function autoSuspendSeconds(
 }
 
 /**
- * What a machine boots from: a snapshot id (`sn_…`), the name of one of the
+ * What a machine boots from: a snapshot id (`sn_…`), a template
+ * (`agent-browser`, `ci@<version>`, …), or else the name of one of the
  * account's snapshots (such as an image imported with `instabox snapshot
- * import`), or else a template (`agent-browser`, `ci@<version>`, …).
+ * import`). A template wins over a snapshot with the same name, so a
+ * snapshot cannot shadow the template Amika boots from. Exported for tests.
  */
-async function bootSource(
+export async function bootSource(
   config: InstaboxConfig,
   ref: string,
 ): Promise<{ snapshotId: string } | { templateId: string }> {
   if (!ref) throw new Error("Instabox create needs a snapshot or template");
   if (ref.startsWith(SNAPSHOT_ID_PREFIX)) return { snapshotId: ref };
+  const templateId = ref.split("@", 1)[0];
+  if ((await listInstaboxTemplateIds(config)).has(templateId)) {
+    return { templateId: ref };
+  }
   const snapshot = await findInstaboxSnapshotByRawName(config, ref);
+  // Neither: send it as a template and let Instabox name the error.
   return snapshot ? { snapshotId: snapshot.id } : { templateId: ref };
+}
+
+const templateListSchema = z.object({
+  templates: z.array(z.object({ id: z.string() })),
+});
+
+/** The ids of the templates a machine can start from (`GET /templates`). */
+async function listInstaboxTemplateIds(
+  config: InstaboxConfig,
+): Promise<Set<string>> {
+  const list = await requestJson(
+    config,
+    templateListSchema,
+    "GET",
+    "/templates",
+  );
+  return new Set(list.templates.map((t) => t.id));
 }
 
 /**
@@ -115,6 +148,7 @@ export async function createInstaboxSandbox(
   const body: Record<string, unknown> = {
     name,
     ...source,
+    ...("templateId" in source ? { guestUser: INSTABOX_GUEST_USER } : {}),
     metadata: {
       ...input.labels,
       [INSTABOX_NAME_METADATA_KEY]: input.name,
