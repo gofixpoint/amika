@@ -61,8 +61,9 @@ function fullDef() {
       }),
     ),
     stream: vi.fn(async () => {}),
-    read: vi.fn(async (): Promise<Uint8Array | null> =>
-      new TextEncoder().encode("contents"),
+    read: vi.fn(
+      async (): Promise<Uint8Array | null> =>
+        new TextEncoder().encode("contents"),
     ),
     write: vi.fn(async () => {}),
     mint: vi.fn(async () => ({

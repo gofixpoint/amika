@@ -941,7 +941,8 @@ export interface Sandbox {
    * out of the shared capability descriptor every provider fills.
    */
   readonly persistServiceRestartContext:
-    ((context: ServiceRestartContext) => Promise<void>) | null;
+    | ((context: ServiceRestartContext) => Promise<void>)
+    | null;
   readonly ssh: SandboxSshNamespace | null;
   readonly services: SandboxServiceNamespace | null;
   readonly snapshots: SandboxSnapshotNamespace | null;
