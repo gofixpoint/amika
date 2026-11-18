@@ -61,7 +61,7 @@ export const INSTABOX_GUEST_USER = "amika";
 /** Instabox snapshot ids start with this; anything else is a template. */
 const SNAPSHOT_ID_PREFIX = "sn_";
 
-const MIB_PER_GIB = 1024;
+export const MIB_PER_GIB = 1024;
 
 /** Idle-pause bounds on a paid plan, in minutes. */
 const MIN_AUTO_SUSPEND_MINUTES = 5;

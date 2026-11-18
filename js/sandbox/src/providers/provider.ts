@@ -543,6 +543,15 @@ export interface DockerRegistryCapability {
   deleteRegistry(registryId: string): Promise<void>;
 }
 
+/** What the credentials in use may do at the provider's account level. */
+export interface AccountCapability {
+  /**
+   * The sizes a new sandbox may have with these credentials, the size a
+   * create naming none gets first. Never empty.
+   */
+  listSizes(): Promise<SandboxResources[]>;
+}
+
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -609,6 +618,13 @@ export interface SandboxProviderCapabilities {
    * auto-delete request is rejected at create rather than silently ignored.
    */
   supportsAutoDelete: boolean;
+  /**
+   * The provider reports the sizes the credentials in use may create
+   * (`provider.account` is non-null iff true). The sizes depend on the
+   * account, for example on its plan, so a consumer asks rather than keeps a
+   * table.
+   */
+  accountSizes: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -925,8 +941,7 @@ export interface Sandbox {
    * out of the shared capability descriptor every provider fills.
    */
   readonly persistServiceRestartContext:
-    | ((context: ServiceRestartContext) => Promise<void>)
-    | null;
+    ((context: ServiceRestartContext) => Promise<void>) | null;
   readonly ssh: SandboxSshNamespace | null;
   readonly services: SandboxServiceNamespace | null;
   readonly snapshots: SandboxSnapshotNamespace | null;
@@ -1000,6 +1015,16 @@ export interface DockerNamespace {
   readonly registries: DockerRegistryNamespace;
 }
 
+/** The provider account the credentials in use belong to (`provider.account`). */
+export interface AccountNamespace {
+  /**
+   * The sizes a new sandbox may have with these credentials, as the
+   * provider reports them now. The first is the size a create naming none
+   * gets. Never empty.
+   */
+  sizes(): Promise<readonly SandboxResources[]>;
+}
+
 /**
  * The sandbox-provisioner contract every consumer codes against. Provider-
  * agnostic and free of control-plane concerns. Resolve one through the registry
@@ -1038,4 +1063,6 @@ export interface SandboxProvider {
   readonly snapshots: SnapshotNamespace | null;
   /** Docker registry objects, or null when unsupported. */
   readonly docker: DockerNamespace | null;
+  /** The account's sizes, or null when unsupported (`capabilities.accountSizes`). */
+  readonly account: AccountNamespace | null;
 }

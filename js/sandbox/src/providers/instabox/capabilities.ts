@@ -8,7 +8,8 @@
  * complete. Capture works on a running machine and keeps it running, so
  * full capture is supported. Snapshot ids (`sn_…`) are opaque. Instabox can
  * delete a machine at a fixed time after create, but not after an idle
- * period, so auto-delete is not supported.
+ * period, so auto-delete is not supported. Its API reports the sizes an
+ * API key's workspace may create (`GET /v1/me`), so it lists account sizes.
  */
 import type { SandboxProviderCapabilities } from "../provider";
 
@@ -25,4 +26,5 @@ export const instaboxCapabilities: SandboxProviderCapabilities = {
   dockerRegistries: false,
   snapshotIdsAreOpaque: true,
   supportsAutoDelete: false,
+  accountSizes: true,
 };

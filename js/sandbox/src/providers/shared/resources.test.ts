@@ -21,6 +21,7 @@ const ALL_OFF: SandboxProviderCapabilities = {
   dockerRegistries: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
+  accountSizes: false,
 };
 
 const ALL_ON: SandboxProviderCapabilities = {
@@ -36,6 +37,7 @@ const ALL_ON: SandboxProviderCapabilities = {
   dockerRegistries: true,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
+  accountSizes: false,
 };
 
 /** A fully-capable definition whose every method is a spy we can assert on. */
@@ -59,9 +61,8 @@ function fullDef() {
       }),
     ),
     stream: vi.fn(async () => {}),
-    read: vi.fn(
-      async (): Promise<Uint8Array | null> =>
-        new TextEncoder().encode("contents"),
+    read: vi.fn(async (): Promise<Uint8Array | null> =>
+      new TextEncoder().encode("contents"),
     ),
     write: vi.fn(async () => {}),
     mint: vi.fn(async () => ({

@@ -18,6 +18,7 @@ const ALL_OFF: SandboxProviderCapabilities = {
   dockerRegistries: false,
   snapshotIdsAreOpaque: false,
   supportsAutoDelete: false,
+  accountSizes: false,
 };
 
 /** The always-required `sandbox` namespace, with fake create/delete. */
@@ -103,6 +104,7 @@ describe("defineProvider metadata + defaults", () => {
     expect(sbox.snapshots).toBeNull();
     expect(provider.snapshots).toBeNull();
     expect(provider.docker).toBeNull();
+    expect(provider.account).toBeNull();
   });
 
   it("leaves Sandbox.git null when the clone primitive is omitted", () => {
@@ -150,6 +152,22 @@ describe("defineProvider capability reconciliation", () => {
     expect(() =>
       build(ALL_OFF, { exec: { run: async () => ({}) as never } }),
     ).toThrow(/capability "exec"=false but the definition provides it/);
+  });
+
+  it("reconciles accountSizes with the account namespace both ways", async () => {
+    const account = { listSizes: async () => [] };
+    expect(() => build({ ...ALL_OFF, accountSizes: true })).toThrow(
+      /capability "accountSizes"=true but the definition omits it/,
+    );
+    expect(() => build(ALL_OFF, { account })).toThrow(
+      /capability "accountSizes"=false but the definition provides it/,
+    );
+    const size = { vcpus: 4, memoryGib: 8, diskGib: 20 };
+    const provider = build(
+      { ...ALL_OFF, accountSizes: true },
+      { account: { listSizes: async () => [size] } },
+    );
+    await expect(provider.account!.sizes()).resolves.toEqual([size]);
   });
 
   it("throws when streaming is declared but exec has no stream", () => {
