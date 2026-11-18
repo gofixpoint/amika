@@ -107,6 +107,7 @@ from a counter, so a scenario replays the same way every run.
        dockerRegistries: false,
        snapshotIdsAreOpaque: false,
        supportsAutoDelete: false,
+       accountSizes: false,
      };
      ```
 
@@ -143,8 +144,9 @@ from a counter, so a scenario replays the same way every run.
            mapState: (raw) => (raw === "running" ? "running" : "unknown"),
          },
          exec: { run: (id, command, opts) => acme.exec(id, command, opts) },
-         // omit ssh / services / listing / snapshots / dockerRegistries →
-         // they resolve as unsupported and the flags above must say false.
+         // omit ssh / services / listing / snapshots / dockerRegistries /
+         // account → they resolve as unsupported and the flags above must
+         // say false.
        };
      });
      ```

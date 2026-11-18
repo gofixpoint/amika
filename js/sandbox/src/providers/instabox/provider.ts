@@ -15,6 +15,7 @@
 import type { InstaboxConfig } from "./config";
 import { instaboxCapabilities } from "./capabilities";
 import { defineProvider } from "../shared/define-provider";
+import { listInstaboxSizes } from "./internal/account";
 import { execInstabox, streamInstabox } from "./internal/exec";
 import {
   createInstaboxSandbox,
@@ -100,5 +101,7 @@ export default defineProvider(
       // scrub can remove, so every machine is scrub-safe.
       isEnvScrubbable: () => Promise.resolve(true),
     },
+
+    account: { listSizes: () => listInstaboxSizes(config) },
   }),
 );
