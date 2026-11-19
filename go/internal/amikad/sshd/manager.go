@@ -69,19 +69,19 @@ type Paths struct {
 	// search it before the system database (TERMINFO_DIRS). Empty installs
 	// none: root mode serves rigs whose image ships the entries itself.
 	TerminfoDirectory string
+	// NoAgentForwarding renders AllowAgentForwarding no. The control plane
+	// sets it on a rig that one of an org's end-users owns: a forwarded agent
+	// socket on a rig is a key that anyone with a shell on the rig can use.
+	// amikad.ResolveLayout sets it from the environment;
+	// SetupOptions.NoAgentForwarding also sets it.
+	NoAgentForwarding bool
 }
 
-// EnvManagedUser overrides the account whose UID/GID own the managed sshd's
-// authorized_keys file, and whose home directory it lives under. Empty (the
-// default) uses "amika". This is a single-user override, not multi-user
-// support: everything under DefaultPaths still assumes exactly one managed
-// account.
-const EnvManagedUser = "AMIKA_SSHD_USER"
-
 // DefaultPaths returns the production (root mode) paths owned by amikad, for
-// the managed user named by EnvManagedUser (default "amika").
-func DefaultPaths() Paths {
-	username := os.Getenv(EnvManagedUser)
+// the managed account username. Empty uses "amika". This is a single-user
+// override, not multi-user support: everything here still assumes exactly
+// one managed account.
+func DefaultPaths(username string) Paths {
 	if username == "" {
 		username = "amika"
 	}
@@ -129,6 +129,9 @@ func UserPaths(stateDirectory, username string, port int) Paths {
 // SetupOptions controls replacement of existing non-managed state.
 type SetupOptions struct {
 	ForceOverwrite bool
+	// NoAgentForwarding turns off SSH agent forwarding, also when the paths
+	// leave it on.
+	NoAgentForwarding bool
 }
 
 // GeneratedHostKey holds one in-memory Ed25519 OpenSSH host keypair.
@@ -212,7 +215,9 @@ func (m *Manager) Setup(ctx context.Context, options SetupOptions) error {
 		}
 	}
 
-	desiredConfig := []byte(RenderConfig(m.paths))
+	paths := m.paths
+	paths.NoAgentForwarding = paths.NoAgentForwarding || options.NoAgentForwarding
+	desiredConfig := []byte(RenderConfig(paths))
 	existingConfig, err := m.files.ReadFile(m.paths.Config)
 	switch {
 	case err == nil && bytes.Equal(existingConfig, desiredConfig):
@@ -533,6 +538,10 @@ func RenderConfig(paths Paths) string {
 }
 
 func renderBaseConfig(paths Paths) string {
+	agentForwarding := "yes"
+	if paths.NoAgentForwarding {
+		agentForwarding = "no"
+	}
 	return fmt.Sprintf(`Port %d
 ListenAddress 127.0.0.1
 Protocol 2
@@ -547,7 +556,7 @@ KbdInteractiveAuthentication no
 ChallengeResponseAuthentication no
 PermitRootLogin no
 PermitEmptyPasswords no
-AllowAgentForwarding yes
+AllowAgentForwarding %s
 AllowTcpForwarding local
 GatewayPorts no
 X11Forwarding no
@@ -557,7 +566,7 @@ UsePAM no
 ClientAliveInterval 15
 ClientAliveCountMax 4
 Subsystem sftp internal-sftp
-`, paths.Port, paths.HostPrivateKey, paths.PID, paths.AuthorizedKeys, paths.AllowUser)
+`, paths.Port, paths.HostPrivateKey, paths.PID, paths.AuthorizedKeys, paths.AllowUser, agentForwarding)
 }
 
 // Ed25519KeyGenerator creates a passwordless OpenSSH keypair in memory.

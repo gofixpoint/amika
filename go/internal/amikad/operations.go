@@ -124,7 +124,10 @@ func NewProductionOperations() (*DaemonOperations, error) {
 
 // SetupSSHD installs the managed OpenSSH policy.
 func (o *DaemonOperations) SetupSSHD(ctx context.Context, options SetupSSHDOptions) error {
-	return o.sshd.Setup(ctx, sshd.SetupOptions{ForceOverwrite: options.ForceOverwrite})
+	return o.sshd.Setup(ctx, sshd.SetupOptions{
+		ForceOverwrite:    options.ForceOverwrite,
+		NoAgentForwarding: options.NoAgentForwarding,
+	})
 }
 
 // ShowHostKey prints only the canonical public host key.

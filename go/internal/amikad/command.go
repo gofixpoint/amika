@@ -33,6 +33,9 @@ type ServeOptions struct {
 // user-defined sshd configuration.
 type SetupSSHDOptions struct {
 	ForceOverwrite bool
+	// NoAgentForwarding turns off SSH agent forwarding, as
+	// EnvNoAgentForwarding does.
+	NoAgentForwarding bool
 }
 
 // BootstrapOptions selects the rig user `amikad bootstrap` sets up.
@@ -156,6 +159,12 @@ func NewCommand(operations Operations) *cobra.Command {
 		"force-overwrite",
 		false,
 		"replace an existing user-defined sshd configuration",
+	)
+	setupSSHD.Flags().BoolVar(
+		&setupSSHDOptions.NoAgentForwarding,
+		"no-agent-forwarding",
+		false,
+		"turn off SSH agent forwarding (the same as "+EnvNoAgentForwarding+"=1)",
 	)
 	setup.AddCommand(setupSSHD)
 

@@ -103,6 +103,21 @@ func TestSetupSSHDForceOverwriteFlag(t *testing.T) {
 	}
 }
 
+func TestSetupSSHDNoAgentForwardingFlag(t *testing.T) {
+	operations := &recordingOperations{}
+	cmd := NewCommand(operations)
+	cmd.SetArgs([]string{"setup", "sshd", "--no-agent-forwarding"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !operations.setupOptions.NoAgentForwarding {
+		t.Fatal("NoAgentForwarding = false, want true")
+	}
+}
+
 func TestServeBackgroundFlag(t *testing.T) {
 	operations := &recordingOperations{}
 	cmd := NewCommand(operations)

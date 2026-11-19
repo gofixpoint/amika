@@ -42,6 +42,33 @@ func TestResolveLayoutWithoutStateDirIsRootMode(t *testing.T) {
 	}
 }
 
+func TestResolveLayoutReadsTheManagedUser(t *testing.T) {
+	layout, err := ResolveLayout(testEnv(map[string]string{EnvManagedUser: "builder"}), testUser("operator"))
+	if err != nil {
+		t.Fatalf("ResolveLayout: %v", err)
+	}
+	if layout.SSHD.AllowUser != "builder" {
+		t.Fatalf("AllowUser = %q, want builder", layout.SSHD.AllowUser)
+	}
+}
+
+func TestResolveLayoutReadsNoAgentForwardingInBothModes(t *testing.T) {
+	for value, want := range map[string]bool{"1": true, "": false, "0": false, "yes": false} {
+		for _, env := range []map[string]string{
+			{EnvNoAgentForwarding: value},
+			{EnvNoAgentForwarding: value, EnvStateDir: "/srv/hostd/amikad"},
+		} {
+			layout, err := ResolveLayout(testEnv(env), testUser("operator"))
+			if err != nil {
+				t.Fatalf("ResolveLayout(%v): %v", env, err)
+			}
+			if layout.SSHD.NoAgentForwarding != want {
+				t.Errorf("ResolveLayout(%v): NoAgentForwarding = %v, want %v", env, layout.SSHD.NoAgentForwarding, want)
+			}
+		}
+	}
+}
+
 func TestResolveLayoutRefusesUserModeVariablesWithoutStateDir(t *testing.T) {
 	for _, name := range []string{EnvListen, EnvSSHDPort} {
 		_, err := ResolveLayout(testEnv(map[string]string{name: "127.0.0.1:1234"}), testUser("operator"))
