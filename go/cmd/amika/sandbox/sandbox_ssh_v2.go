@@ -181,7 +181,7 @@ name or ID, or name=<name> / id=<id> (see "amika rig --help").
   claude   register the rig as a Claude Desktop SSH environment
   codex    expose the rig to Codex as an SSH connection
   paseo    print instructions for adding the rig as a Paseo SSH host
-  herdr    add the rig to Herdr as a remote machine
+  herdr    add the rig to Herdr as a remote machine and open a terminal on it
 
 The command creates a managed SSH alias backed by Amika's WebSocket proxy, then
 hands that alias to the selected editor. It requires an SSH identity from
@@ -229,7 +229,7 @@ Examples:
 			return err
 		}
 		pathOverride, _ := cmd.Flags().GetString("path")
-		if pathOverride != "" && (app == "paseo" || app == "herdr") {
+		if pathOverride != "" && app == "paseo" {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --path has no effect with --app=%s\n", app)
 		} else if err := validateBareMetalPath(sshTarget, pathOverride); err != nil {
 			return err

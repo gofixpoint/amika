@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
@@ -457,6 +458,172 @@ func TestOpenSandboxInHerdrRejectsTakenName(t *testing.T) {
 				t.Fatalf("machine add ran with %q, want it skipped", got)
 			}
 		})
+	}
+}
+
+// fakeHerdrAppScript stands in for herdr-app: `status` succeeds only once a
+// file named running sits beside it, and `do` records its argv to do-args.
+const fakeHerdrAppScript = `#!/bin/sh
+dir=$(dirname "$0")
+case "$1" in
+  status) [ -e "$dir/running" ] ;;
+  do) printf '%s\n' "$@" > "$dir/do-args" ;;
+esac
+`
+
+// installFakeHerdrApp puts fakeHerdrAppScript into dir, which is already on
+// PATH, with a window open when running is true.
+func installFakeHerdrApp(t *testing.T, dir string, running bool) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "herdr-app"), []byte(fakeHerdrAppScript), 0o755); err != nil {
+		t.Fatalf("write fake herdr-app: %v", err)
+	}
+	if running {
+		markHerdrAppRunning(t, dir)
+	}
+}
+
+func markHerdrAppRunning(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "running"), nil, 0o644); err != nil {
+		t.Fatalf("write running: %v", err)
+	}
+}
+
+// stubLaunchHerdrApp replaces launchHerdrApp for the duration of a test. The
+// stub counts its calls and, when opens is true, opens the fake window.
+func stubLaunchHerdrApp(t *testing.T, dir string, opens bool) *int {
+	t.Helper()
+	calls := 0
+	prev := launchHerdrApp
+	launchHerdrApp = func() error {
+		calls++
+		if opens {
+			markHerdrAppRunning(t, dir)
+		}
+		return nil
+	}
+	t.Cleanup(func() { launchHerdrApp = prev })
+	return &calls
+}
+
+// herdrDoArgs returns the argv the fake herdr-app recorded for `do`, or nil
+// when it was never run.
+func herdrDoArgs(t *testing.T, dir string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "do-args"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("read do-args: %v", err)
+	}
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+}
+
+var herdrWorkspaceTarget = sandboxSSHAlias{
+	alias:       herdrTestTarget.alias,
+	sandboxName: herdrTestTarget.sandboxName,
+	agentCWD:    "/home/amika/workspace/biz",
+}
+
+// TestOpenSandboxInHerdrOpensSpace opens a terminal on the new machine, in
+// the rig's workspace, through the Herdr window that is already open.
+func TestOpenSandboxInHerdrOpensSpace(t *testing.T) {
+	dir := installFakeHerdr(t, "hc", `{"machines":[]}`)
+	installFakeHerdrApp(t, dir, true)
+	launches := stubLaunchHerdrApp(t, dir, true)
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+
+	if err := openSandboxInEditor(cmd, "herdr", nil, herdrWorkspaceTarget, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+
+	want := []string{"do", "space.new", `{"folder":"/home/amika/workspace/biz","machine":"herdr-setup","name":"herdr-setup"}`}
+	if got := herdrDoArgs(t, dir); !reflect.DeepEqual(got, want) {
+		t.Fatalf("herdr-app args = %q, want %q", got, want)
+	}
+	if *launches != 0 {
+		t.Fatalf("launched Herdr %d times, want 0 with a window open", *launches)
+	}
+	if !strings.Contains(out.String(), `Opened a terminal on rig "herdr-setup" in Herdr`) {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+// TestOpenSandboxInHerdrStartsApp starts Herdr when no window is open, waits
+// for it, then opens the space on the machine Herdr already had, by the name
+// Herdr gave it.
+func TestOpenSandboxInHerdrStartsApp(t *testing.T) {
+	dir := installFakeHerdr(t, "hc", `{"machines":[{"name":"box","target":"`+herdrTestTarget.alias+`"}]}`)
+	installFakeHerdrApp(t, dir, false)
+	launches := stubLaunchHerdrApp(t, dir, true)
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := openSandboxInEditor(cmd, "herdr", nil, herdrWorkspaceTarget, "/srv/app"); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+
+	if *launches != 1 {
+		t.Fatalf("launched Herdr %d times, want 1", *launches)
+	}
+	want := []string{"do", "space.new", `{"folder":"/srv/app","machine":"box","name":"herdr-setup"}`}
+	if got := herdrDoArgs(t, dir); !reflect.DeepEqual(got, want) {
+		t.Fatalf("herdr-app args = %q, want %q", got, want)
+	}
+}
+
+// TestOpenSandboxInHerdrKeepsMachineWhenAppDoesNotOpen still succeeds when
+// the window never answers: the machine is added, and the output says how
+// to reach it.
+func TestOpenSandboxInHerdrKeepsMachineWhenAppDoesNotOpen(t *testing.T) {
+	dir := installFakeHerdr(t, "hc", `{"machines":[]}`)
+	installFakeHerdrApp(t, dir, false)
+	stubLaunchHerdrApp(t, dir, false)
+	prev := herdrAppReadyTimeout
+	herdrAppReadyTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { herdrAppReadyTimeout = prev })
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+
+	if err := openSandboxInEditor(cmd, "herdr", nil, herdrWorkspaceTarget, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+
+	if got := herdrAddArgs(t, dir); got == nil {
+		t.Fatal("machine add did not run")
+	}
+	if got := herdrDoArgs(t, dir); got != nil {
+		t.Fatalf("herdr-app do ran with %q, want it skipped", got)
+	}
+	if !strings.Contains(out.String(), `open Herdr and pick machine "herdr-setup"`) {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+// TestOpenSandboxInHerdrTUIOpensNoWindow leaves the Herdr app alone when the
+// machine went to the Herdr TUI.
+func TestOpenSandboxInHerdrTUIOpensNoWindow(t *testing.T) {
+	dir := installFakeHerdr(t, "herdr", "[]")
+	installFakeHerdrApp(t, dir, true)
+	launches := stubLaunchHerdrApp(t, dir, true)
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	if err := openSandboxInEditor(cmd, "herdr", nil, herdrWorkspaceTarget, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+
+	if got := herdrDoArgs(t, dir); got != nil {
+		t.Fatalf("herdr-app do ran with %q, want it skipped", got)
+	}
+	if *launches != 0 {
+		t.Fatalf("launched Herdr %d times, want 0", *launches)
 	}
 }
 

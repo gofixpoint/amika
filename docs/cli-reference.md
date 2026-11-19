@@ -356,14 +356,16 @@ configures the selected editor:
   Settings > Connections.
 - `paseo` prints the SSH host to add in Paseo under Hosts > Add host >
   Remote SSH.
-- `herdr` adds the sandbox to Herdr as a machine named after the sandbox.
-  With the Herdr app's `hc` CLI in `PATH`, it runs
-  `hc machine add <ssh-host> --name <name>`; otherwise it runs the Herdr TUI's
-  `herdr machine add <ssh-host> --label <name>`. Either connects to the
-  sandbox over SSH and may prompt during setup, e.g. to copy `hc` there. If
-  Herdr already has the sandbox, the command says so and does nothing; if
-  another machine already uses the name, it names that machine to remove.
-  Requires `hc` or `herdr` in `PATH`.
+- `herdr` adds the sandbox to Herdr as a machine named after the sandbox,
+  then opens a terminal on it. With the Herdr app's `hc` CLI in `PATH`, it
+  runs `hc machine add <ssh-host> --name <name>`, starts Herdr if no window
+  is open, and opens a new space on the sandbox in the remote workspace
+  (`--path` overrides it) with `herdr-app do space.new`. Without `hc`, it runs
+  the Herdr TUI's `herdr machine add <ssh-host> --label <name>` and opens
+  nothing. Adding connects to the sandbox over SSH and may prompt, e.g. to
+  copy `hc` there. If Herdr already has the sandbox, it is not added again;
+  if another machine already uses the name, the command names that machine
+  to remove. Requires `hc` or `herdr` in `PATH`.
 
 Before first use, create and upload an SSH key:
 
@@ -372,7 +374,7 @@ amika secret ssh-keygen
 ```
 
 To use an existing key, pass `--import <public-key-file>` instead. `--path` has
-no effect with `paseo` or `herdr`.
+no effect with `paseo`, or with `herdr` when it uses the Herdr TUI.
 
 Without `--path`, the editor opens the directory the rig's agents run in, which
 the API reports as `agent_cwd`: `/home/amika/workspace/<repo>` on a rig built

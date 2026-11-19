@@ -84,7 +84,7 @@ The same forms work wherever a flag such as --rig names a rig.`,
 	// through untouched.
 	sandboxCodeV2Cmd.Flags().String("app", "", "App or editor to open (required): \"cursor\", \"vscode\", \"claude\", \"codex\", \"paseo\", or \"herdr\"")
 	sandboxCodeV2Cmd.Flags().String("editor", "", "Alias for --app")
-	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the rig's home directory; must be absolute on a bare-metal rig); ignored by paseo and herdr")
+	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the rig's home directory; must be absolute on a bare-metal rig); ignored by paseo")
 	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another rig")
 	// --rig-by is superseded by the name=/id= prefixes on the rig reference;
 	// kept, hidden, so existing scripts keep working.

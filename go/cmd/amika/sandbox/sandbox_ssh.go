@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/appcfg"
@@ -90,7 +91,7 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 	case "paseo":
 		return openSandboxInPaseoTarget(cmd, target)
 	case "herdr":
-		return openSandboxInHerdrTarget(cmd, target)
+		return openSandboxInHerdrTarget(cmd, target, pathOverride)
 	default:
 		return fmt.Errorf("unsupported editor %q", editor)
 	}
@@ -300,16 +301,40 @@ var herdrCLIs = []herdrCLI{
 }
 
 // openSandboxInHerdrTarget registers a prepared SSH target as a Herdr machine,
-// named after the sandbox. Herdr dials the alias through the system OpenSSH
-// config, so it reaches the sandbox over the managed ProxyCommand. A sandbox
-// Herdr already has is reported rather than added again, and a name already
-// held by another host is an error: the TUI refuses it, and hc would quietly
-// add the sandbox under a numbered name the user did not ask for.
-func openSandboxInHerdrTarget(cmd *cobra.Command, target sandboxSSHAlias) error {
+// named after the sandbox, then opens a terminal on it in the Herdr app.
+// Herdr dials the alias through the system OpenSSH config, so it reaches the
+// sandbox over the managed ProxyCommand. A sandbox Herdr already has is not
+// added again, and a name already held by another host is an error: the TUI
+// refuses it, and hc would quietly add the sandbox under a numbered name the
+// user did not ask for.
+func openSandboxInHerdrTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
 	cli, ok := findHerdrCLI()
 	if !ok {
 		return fmt.Errorf("herdr CLI (hc or herdr) is not installed or not in PATH; install it from https://herdr.dev")
 	}
+	out := cmd.OutOrStdout()
+	machine, err := addHerdrMachine(cmd, cli, target)
+	if err != nil {
+		return err
+	}
+	if cli.bin != "hc" {
+		// The TUI has no window to open a terminal in from here.
+		if pathOverride != "" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --path has no effect with the Herdr TUI\n")
+		}
+		return nil
+	}
+	if err := openHerdrSpace(machine, target.sandboxName, target.remotePath(pathOverride)); err != nil {
+		fmt.Fprintf(out, "Could not open a terminal in Herdr automatically (%v); open Herdr and pick machine %q.\n", err, machine)
+		return nil
+	}
+	fmt.Fprintf(out, "Opened a terminal on rig %q in Herdr.\n", target.sandboxName)
+	return nil
+}
+
+// addHerdrMachine makes sure Herdr has the sandbox as a machine and returns
+// the machine's name.
+func addHerdrMachine(cmd *cobra.Command, cli herdrCLI, target sandboxSSHAlias) (string, error) {
 	out := cmd.OutOrStdout()
 	machines, err := cli.listMachines()
 	if err != nil {
@@ -319,10 +344,10 @@ func openSandboxInHerdrTarget(cmd *cobra.Command, target sandboxSSHAlias) error 
 	}
 	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.target == target.alias }); i >= 0 {
 		fmt.Fprintf(out, "Rig %q is already a Herdr machine named %q.\n", target.sandboxName, machines[i].name)
-		return nil
+		return machines[i].name, nil
 	}
 	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.name == target.sandboxName }); i >= 0 {
-		return fmt.Errorf("a Herdr machine named %q already exists for a different SSH host (%s); remove it with \"%s %s\" and retry",
+		return "", fmt.Errorf("a Herdr machine named %q already exists for a different SSH host (%s); remove it with \"%s %s\" and retry",
 			target.sandboxName, machines[i].target, cli.removeCmd, machines[i].ref)
 	}
 
@@ -335,9 +360,74 @@ func openSandboxInHerdrTarget(cmd *cobra.Command, target sandboxSSHAlias) error 
 	add.Stdout = out
 	add.Stderr = cmd.ErrOrStderr()
 	if err := add.Run(); err != nil {
-		return fmt.Errorf("%s machine add failed: %w", cli.bin, err)
+		return "", fmt.Errorf("%s machine add failed: %w", cli.bin, err)
+	}
+	return target.sandboxName, nil
+}
+
+// herdrAppReadyTimeout bounds the wait for a Herdr window that amika started.
+var herdrAppReadyTimeout = 20 * time.Second
+
+// openHerdrSpace opens a new Herdr space on machine: a focused terminal in
+// folder (the machine's home when empty). `herdr-app do` talks to a running
+// window, so Herdr is started first when none is open.
+func openHerdrSpace(machine, name, folder string) error {
+	if _, err := exec.LookPath("herdr-app"); err != nil {
+		return fmt.Errorf("herdr-app is not in PATH")
+	}
+	if !herdrAppRunning() {
+		if err := launchHerdrApp(); err != nil {
+			return fmt.Errorf("start Herdr: %w", err)
+		}
+		deadline := time.Now().Add(herdrAppReadyTimeout)
+		for !herdrAppRunning() {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("no Herdr window answered within %s", herdrAppReadyTimeout)
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	space := map[string]string{"machine": machine, "name": name}
+	if folder != "" {
+		space["folder"] = folder
+	}
+	// One JSON object rather than --key value pairs: herdr-app reads a value
+	// that parses as JSON as JSON, so a rig named "123" would become a number.
+	args, err := json.Marshal(space)
+	if err != nil {
+		return err
+	}
+	if output, err := exec.Command("herdr-app", "do", "space.new", string(args)).CombinedOutput(); err != nil {
+		return fmt.Errorf("herdr-app do space.new: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// herdrAppRunning reports whether a Herdr window answers on its control
+// socket; `herdr-app status` fails when none is open.
+func herdrAppRunning() bool {
+	return exec.Command("herdr-app", "status").Run() == nil
+}
+
+// launchHerdrApp starts the Herdr app without waiting for it. A bare
+// `herdr-app` opens the window, or raises one already open. A var so tests
+// can stand in for it.
+var launchHerdrApp = func() error {
+	var c *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		// Through LaunchServices, so Herdr runs as an app, not as a child of
+		// this terminal.
+		c = exec.Command("open", "-a", "Herdr")
+	case "linux":
+		// In its own session, so closing this terminal does not close Herdr.
+		c = exec.Command("setsid", "-f", "herdr-app")
+	case "windows":
+		c = exec.Command("cmd", "/c", "start", "", "herdr-app")
+	default:
+		return fmt.Errorf("unsupported platform %q", runtime.GOOS)
+	}
+	return c.Run()
 }
 
 // findHerdrCLI returns the first Herdr CLI on PATH.
