@@ -51,6 +51,10 @@ type Dialer interface {
 type Config struct {
 	MaxConnections int
 	SSHDAddress    string
+	// RecheckInterval is how often an open session checks its token again.
+	// A session closes when its token no longer verifies, so rotating the
+	// connect token also ends the sessions that the old token opened.
+	RecheckInterval time.Duration
 }
 
 // Dependencies are the handler's security-sensitive boundaries.
@@ -75,6 +79,10 @@ type Handler struct {
 // is left unset.
 const DefaultMaxConnections = 64
 
+// DefaultRecheckInterval is the token recheck interval used when
+// Config.RecheckInterval is left unset.
+const DefaultRecheckInterval = 2 * time.Second
+
 // NewHandler creates a no-relay handler without opening any listener.
 func NewHandler(config Config, deps Dependencies) *Handler {
 	if config.MaxConnections <= 0 {
@@ -82,6 +90,9 @@ func NewHandler(config Config, deps Dependencies) *Handler {
 	}
 	if config.SSHDAddress == "" {
 		config.SSHDAddress = "127.0.0.1:22"
+	}
+	if config.RecheckInterval <= 0 {
+		config.RecheckInterval = DefaultRecheckInterval
 	}
 	if deps.Logger == nil {
 		deps.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -174,7 +185,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	sessionID := newSessionID()
 	startedAt := time.Now()
 	h.log("ssh_bridge_open", slog.String("session_id", sessionID))
+	stopRecheck := h.closeWhenRevoked(token, websocketStream, sshdStream)
 	fromClient, fromSSHD, closeReason := bridge(websocketStream, sshdStream)
+	if stopRecheck() {
+		closeReason = "token_revoked"
+	}
 	h.log(
 		"ssh_bridge_close",
 		slog.String("session_id", sessionID),
@@ -183,6 +198,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		slog.Int64("bytes_from_client", fromClient),
 		slog.Int64("bytes_from_sshd", fromSSHD),
 	)
+}
+
+// closeWhenRevoked closes the streams of one session when its token no
+// longer verifies. The control plane rotates the connect token to revoke
+// access, and this makes the rotation end open sessions too. The returned
+// function stops the check and reports whether the check closed the
+// session.
+func (h *Handler) closeWhenRevoked(token string, streams ...Stream) func() bool {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	var revoked atomic.Bool
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(h.config.RecheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if h.deps.Verifier.Verify(token) {
+					continue
+				}
+				revoked.Store(true)
+				for _, stream := range streams {
+					_ = stream.Close()
+				}
+				return
+			}
+		}
+	}()
+	return func() bool {
+		close(done)
+		<-finished
+		return revoked.Load()
+	}
 }
 
 func requestBearerToken(request *http.Request) (string, bool) {
