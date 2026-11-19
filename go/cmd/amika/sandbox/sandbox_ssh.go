@@ -365,7 +365,8 @@ func addHerdrMachine(cmd *cobra.Command, cli herdrCLI, target sandboxSSHAlias) (
 	return target.sandboxName, nil
 }
 
-// herdrAppReadyTimeout bounds the wait for a Herdr window that amika started.
+// herdrAppReadyTimeout bounds each wait on the Herdr window: for one amika
+// started to open, and for it to know a machine amika just added.
 var herdrAppReadyTimeout = 20 * time.Second
 
 // openHerdrSpace opens a new Herdr space on machine: a focused terminal in
@@ -397,10 +398,20 @@ func openHerdrSpace(machine, name, folder string) error {
 	if err != nil {
 		return err
 	}
-	if output, err := exec.Command("herdr-app", "do", "space.new", string(args)).CombinedOutput(); err != nil {
-		return fmt.Errorf("herdr-app do space.new: %w: %s", err, strings.TrimSpace(string(output)))
+	// The window learns of a machine from its own poll of the core, every few
+	// seconds, and then has to connect to it, so a machine added a moment ago
+	// is "no machine called ..." at first. Retry until the window has it.
+	deadline := time.Now().Add(herdrAppReadyTimeout)
+	for {
+		output, err := exec.Command("herdr-app", "do", "space.new", string(args)).CombinedOutput()
+		if err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("herdr-app do space.new: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	return nil
 }
 
 // herdrAppRunning reports whether a Herdr window answers on its control

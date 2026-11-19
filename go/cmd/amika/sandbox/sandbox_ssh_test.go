@@ -463,11 +463,19 @@ func TestOpenSandboxInHerdrRejectsTakenName(t *testing.T) {
 
 // fakeHerdrAppScript stands in for herdr-app: `status` succeeds only once a
 // file named running sits beside it, and `do` records its argv to do-args.
+// While a file named unknown-machine exists, `do` fails the first time, as a
+// window that has not yet seen a new machine does, and removes the file.
 const fakeHerdrAppScript = `#!/bin/sh
 dir=$(dirname "$0")
 case "$1" in
   status) [ -e "$dir/running" ] ;;
-  do) printf '%s\n' "$@" > "$dir/do-args" ;;
+  do)
+    if [ -e "$dir/unknown-machine" ]; then
+      rm "$dir/unknown-machine"
+      echo '{"error": "Herdr has no machine called herdr-setup."}'
+      exit 1
+    fi
+    printf '%s\n' "$@" > "$dir/do-args" ;;
 esac
 `
 
@@ -548,6 +556,32 @@ func TestOpenSandboxInHerdrOpensSpace(t *testing.T) {
 	}
 	if *launches != 0 {
 		t.Fatalf("launched Herdr %d times, want 0 with a window open", *launches)
+	}
+	if !strings.Contains(out.String(), `Opened a terminal on rig "herdr-setup" in Herdr`) {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+// TestOpenSandboxInHerdrWaitsForNewMachine retries opening the space while
+// the window has not yet picked up the machine just added.
+func TestOpenSandboxInHerdrWaitsForNewMachine(t *testing.T) {
+	dir := installFakeHerdr(t, "hc", `{"machines":[]}`)
+	installFakeHerdrApp(t, dir, true)
+	if err := os.WriteFile(filepath.Join(dir, "unknown-machine"), nil, 0o644); err != nil {
+		t.Fatalf("write unknown-machine: %v", err)
+	}
+	stubLaunchHerdrApp(t, dir, true)
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+
+	if err := openSandboxInEditor(cmd, "herdr", nil, herdrWorkspaceTarget, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+
+	if got := herdrDoArgs(t, dir); got == nil {
+		t.Fatal("herdr-app do space.new never succeeded")
 	}
 	if !strings.Contains(out.String(), `Opened a terminal on rig "herdr-setup" in Herdr`) {
 		t.Fatalf("output = %q", out.String())
