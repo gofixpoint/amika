@@ -15,6 +15,16 @@ export {
   type Rigs,
 } from "./rigs/rig.js";
 export { type TokenSource } from "./token-source.js";
+export {
+  refreshingTokenSource,
+  type ExpiringToken,
+  type RefreshingTokenSourceOptions,
+} from "./refreshing-token-source.js";
+export {
+  type MintPrincipalTokenRequest,
+  type PrincipalToken,
+  type PrincipalTokens,
+} from "./principal-tokens/types.js";
 export { type RefKind, type ResourceRef, type RigRef } from "./resource-ref.js";
 export {
   type AgentSessionDetail,

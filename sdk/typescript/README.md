@@ -240,6 +240,46 @@ provider's default account, or to Amika Cloud when it has none.
 `rig.cloudAccount` is `{ id, name }`, or null on Amika Cloud. A control plane
 that predates cloud accounts ignores `cloudAccount`, so check it as above.
 
+## Your product's end-users (beta)
+
+If you build a product on Amika, your own users can each get their own
+hosts and rigs. Your end-user's client app never holds your organization
+API key. Your backend mints a short-lived principal token for the end-user,
+and the client app uses it. Requests with the token reach only that
+end-user's hosts and rigs.
+
+Your backend needs an organization API key with the `end-users:act-as`
+permission. An organization owner creates it.
+
+```ts
+// Your backend: mint a token for the signed-in user of your product.
+const backend = new AmikaClient({ apiKey: process.env.AMIKA_ACT_AS_KEY! });
+const { token, expiresAt } = await backend.principalTokens.mint({
+  principal: `end_user:${yourUserId}`,
+  ttlSeconds: 3600, // Default 3600; maximum 86400.
+});
+// Return { token, expiresAt } to your client app.
+```
+
+In the client app, `refreshingTokenSource` gets the next token from your
+backend before the current one expires:
+
+```ts
+import { AmikaClient, refreshingTokenSource } from "@amika/sdk";
+
+const client = new AmikaClient({
+  tokenSource: refreshingTokenSource({
+    fetchToken: async () => {
+      const res = await fetch("/api/amika-token", { method: "POST" });
+      return res.json(); // { token, expiresAt }
+    },
+  }),
+});
+const rigs = await client.rigs.list(); // Only this end-user's rigs.
+```
+
+Revoke a token at once with `backend.principalTokens.revoke(id)`.
+
 ## Snapshots
 
 A snapshot captures a rig's filesystem for later rig creation. Capture returns
