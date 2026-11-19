@@ -259,60 +259,143 @@ func (t sandboxSSHAlias) loginUser() string {
 	return apiclient.DefaultSSHUser
 }
 
-// herdrMachine is the subset of a `herdr machine list --json` entry amika reads.
+// herdrMachine is a machine Herdr has saved, as amika reads it from either
+// Herdr CLI: name is what Herdr calls it, and the remove hint names it by ref.
 type herdrMachine struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Target string `json:"target"`
+	name   string
+	ref    string
+	target string
+}
+
+// herdrCLI is one of the two command-line tools that can add a machine to
+// Herdr. They take the same SSH target but differ in binary, flags, and the
+// shape of their machine list.
+type herdrCLI struct {
+	bin       string
+	nameFlag  string
+	listArgs  []string
+	removeCmd string
+	parse     func([]byte) ([]herdrMachine, error)
+}
+
+// herdrCLIs lists the Herdr CLIs in order of preference. The Herdr app from
+// herdr.dev installs `hc` (herdr-core), which names a machine with --name and
+// renames a taken name rather than refusing it. The original Herdr TUI
+// installs `herdr`, which labels a machine with --label.
+var herdrCLIs = []herdrCLI{
+	{
+		bin:       "hc",
+		nameFlag:  "--name",
+		listArgs:  []string{"machine", "ls", "--json"},
+		removeCmd: "hc machine rm",
+		parse:     parseHCMachines,
+	},
+	{
+		bin:       "herdr",
+		nameFlag:  "--label",
+		listArgs:  []string{"machine", "list", "--json"},
+		removeCmd: "herdr machine remove",
+		parse:     parseLegacyHerdrMachines,
+	},
 }
 
 // openSandboxInHerdrTarget registers a prepared SSH target as a Herdr machine,
-// labeled with the sandbox name. Herdr dials the alias through the system
-// OpenSSH config, so it reaches the sandbox over the managed ProxyCommand.
-// Herdr refuses a second machine with the same label, so a sandbox it already
-// has is reported rather than added again.
+// named after the sandbox. Herdr dials the alias through the system OpenSSH
+// config, so it reaches the sandbox over the managed ProxyCommand. A sandbox
+// Herdr already has is reported rather than added again, and a name already
+// held by another host is an error: the TUI refuses it, and hc would quietly
+// add the sandbox under a numbered name the user did not ask for.
 func openSandboxInHerdrTarget(cmd *cobra.Command, target sandboxSSHAlias) error {
-	if _, err := exec.LookPath("herdr"); err != nil {
-		return fmt.Errorf("herdr CLI is not installed or not in PATH; install it from https://herdr.dev")
+	cli, ok := findHerdrCLI()
+	if !ok {
+		return fmt.Errorf("herdr CLI (hc or herdr) is not installed or not in PATH; install it from https://herdr.dev")
 	}
 	out := cmd.OutOrStdout()
-	machines, err := listHerdrMachines()
+	machines, err := cli.listMachines()
 	if err != nil {
-		// Listing only spares a rerun herdr's duplicate-label error; without
-		// it, `machine add` still reports any conflict itself.
+		// Listing only spares a rerun a duplicate; without it, `machine add`
+		// still runs and reports what it does.
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list Herdr machines: %v\n", err)
 	}
-	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.Target == target.alias }); i >= 0 {
-		fmt.Fprintf(out, "Rig %q is already a Herdr machine labeled %q.\n", target.sandboxName, machines[i].Label)
+	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.target == target.alias }); i >= 0 {
+		fmt.Fprintf(out, "Rig %q is already a Herdr machine named %q.\n", target.sandboxName, machines[i].name)
 		return nil
 	}
-	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.Label == target.sandboxName }); i >= 0 {
-		return fmt.Errorf("a Herdr machine labeled %q already exists for a different SSH host (%s); remove it with \"herdr machine remove %s\" and retry",
-			target.sandboxName, machines[i].Target, machines[i].ID)
+	if i := slices.IndexFunc(machines, func(m herdrMachine) bool { return m.name == target.sandboxName }); i >= 0 {
+		return fmt.Errorf("a Herdr machine named %q already exists for a different SSH host (%s); remove it with \"%s %s\" and retry",
+			target.sandboxName, machines[i].target, cli.removeCmd, machines[i].ref)
 	}
 
 	fmt.Fprintf(out, "Adding rig %q to Herdr as a machine via SSH (%s)...\n", target.sandboxName, target.alias)
-	fmt.Fprintf(out, "Running: herdr machine add %s --label %s\n", target.alias, target.sandboxName)
-	add := exec.Command("herdr", "machine", "add", target.alias, "--label", target.sandboxName)
-	// `machine add` may prompt, e.g. to pick a remote session.
+	fmt.Fprintf(out, "Running: %s machine add %s %s %s\n", cli.bin, target.alias, cli.nameFlag, target.sandboxName)
+	add := exec.Command(cli.bin, "machine", "add", target.alias, cli.nameFlag, target.sandboxName)
+	// `machine add` may prompt, e.g. to copy hc to the sandbox or to pick a
+	// remote session.
 	add.Stdin = cmd.InOrStdin()
 	add.Stdout = out
 	add.Stderr = cmd.ErrOrStderr()
 	if err := add.Run(); err != nil {
-		return fmt.Errorf("herdr machine add failed: %w", err)
+		return fmt.Errorf("%s machine add failed: %w", cli.bin, err)
 	}
 	return nil
 }
 
-// listHerdrMachines returns the SSH machines Herdr has saved.
-func listHerdrMachines() ([]herdrMachine, error) {
-	data, err := exec.Command("herdr", "machine", "list", "--json").Output()
+// findHerdrCLI returns the first Herdr CLI on PATH.
+func findHerdrCLI() (herdrCLI, bool) {
+	for _, cli := range herdrCLIs {
+		if _, err := exec.LookPath(cli.bin); err == nil {
+			return cli, true
+		}
+	}
+	return herdrCLI{}, false
+}
+
+// listMachines returns the SSH machines Herdr has saved.
+func (c herdrCLI) listMachines() ([]herdrMachine, error) {
+	data, err := exec.Command(c.bin, c.listArgs...).Output()
 	if err != nil {
 		return nil, err
 	}
-	var machines []herdrMachine
-	if err := json.Unmarshal(data, &machines); err != nil {
-		return nil, fmt.Errorf("parse herdr machine list: %w", err)
+	machines, err := c.parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s machine list: %w", c.bin, err)
+	}
+	return machines, nil
+}
+
+// parseHCMachines reads `hc machine ls --json`: {"machines": [...]}, each
+// removed by its name.
+func parseHCMachines(data []byte) ([]herdrMachine, error) {
+	var list struct {
+		Machines []struct {
+			Name   string `json:"name"`
+			Target string `json:"target"`
+		} `json:"machines"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
+	}
+	machines := make([]herdrMachine, 0, len(list.Machines))
+	for _, m := range list.Machines {
+		machines = append(machines, herdrMachine{name: m.Name, ref: m.Name, target: m.Target})
+	}
+	return machines, nil
+}
+
+// parseLegacyHerdrMachines reads the Herdr TUI's `herdr machine list --json`:
+// a bare array, each removed by its id.
+func parseLegacyHerdrMachines(data []byte) ([]herdrMachine, error) {
+	var list []struct {
+		ID     string `json:"id"`
+		Label  string `json:"label"`
+		Target string `json:"target"`
+	}
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
+	}
+	machines := make([]herdrMachine, 0, len(list))
+	for _, m := range list {
+		machines = append(machines, herdrMachine{name: m.Label, ref: m.ID, target: m.Target})
 	}
 	return machines, nil
 }

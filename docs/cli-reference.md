@@ -356,12 +356,14 @@ configures the selected editor:
   Settings > Connections.
 - `paseo` prints the SSH host to add in Paseo under Hosts > Add host >
   Remote SSH.
-- `herdr` runs `herdr machine add <ssh-host> --label <name>`, which connects
-  to the sandbox over SSH to prepare a remote Herdr server, then saves it as a
-  Herdr machine labeled with the sandbox name. Herdr may prompt during setup.
-  If Herdr already has the sandbox, the command says so and does nothing; if
-  another machine already uses the label, it names that machine to remove.
-  Requires the `herdr` CLI in `PATH`.
+- `herdr` adds the sandbox to Herdr as a machine named after the sandbox.
+  With the Herdr app's `hc` CLI in `PATH`, it runs
+  `hc machine add <ssh-host> --name <name>`; otherwise it runs the Herdr TUI's
+  `herdr machine add <ssh-host> --label <name>`. Either connects to the
+  sandbox over SSH and may prompt during setup, e.g. to copy `hc` there. If
+  Herdr already has the sandbox, the command says so and does nothing; if
+  another machine already uses the name, it names that machine to remove.
+  Requires `hc` or `herdr` in `PATH`.
 
 Before first use, create and upload an SSH key:
 
