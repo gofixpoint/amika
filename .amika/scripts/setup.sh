@@ -39,4 +39,4 @@ echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/golang.sh >
 
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.zshrc
-echo "Installed: $(go version)"
+echo "Installed: $(/usr/local/go/bin/go version)"
