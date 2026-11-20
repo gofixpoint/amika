@@ -161,8 +161,11 @@ export function createUpgradeHandler(
 
   /**
    * Relay the guest's answer to the handshake, through `finishUpgrade`: the
-   * guest may set a cookie of its own there, never one of the gateway's. A
-   * head that does not end within `MAX_ANSWER_HEAD` bytes ends the tunnel.
+   * guest may set a cookie of its own there, never one of the gateway's. All
+   * the heads together, interim ones too, must end within `MAX_ANSWER_HEAD`
+   * bytes, or the tunnel ends. One budget for all of them stops a guest from
+   * sending interim answers without end, which would grow the caller's
+   * write queue while the caller reads slowly.
    *
    * The caller's bytes, `head` first, reach the guest only after its `101`
    * opens the tunnel. Any other final answer refuses the upgrade
@@ -175,6 +178,7 @@ export function createUpgradeHandler(
     head: Buffer,
   ): void {
     let buffered = Buffer.alloc(0);
+    let interimBytes = 0;
     let refused = false;
     upstream.on("close", () => {
       if (!refused) socket.destroy();
@@ -183,7 +187,10 @@ export function createUpgradeHandler(
       buffered = Buffer.concat([buffered, chunk]);
       for (;;) {
         const end = buffered.indexOf("\r\n\r\n");
-        if ((end < 0 ? buffered.length : end) > MAX_ANSWER_HEAD) {
+        if (
+          interimBytes + (end < 0 ? buffered.length : end) >
+          MAX_ANSWER_HEAD
+        ) {
           upstream.destroy();
           return;
         }
@@ -197,6 +204,7 @@ export function createUpgradeHandler(
           // An interim answer, such as `103 Early Hints`. The final one
           // follows it.
           socket.write(`${answer}\r\n\r\n`, "latin1");
+          interimBytes += end + 4;
           buffered = rest;
           continue;
         }

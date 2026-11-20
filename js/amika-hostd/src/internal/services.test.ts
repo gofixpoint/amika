@@ -595,6 +595,18 @@ describe("createUpgradeHandler", () => {
     await vi.waitFor(() => expect(answer).toMatch(/ssh bytes$/));
   });
 
+  it("ends the tunnel when interim answers pass the head limit", async () => {
+    // About 75 KiB of `100 Continue`, more than the 64 KiB for all heads.
+    const target = await guest("HTTP/1.1 100 Continue\r\n\r\n".repeat(3000));
+    const { port } = await hostd(target.port);
+    const socket = await open(port, validPath());
+    let received = 0;
+    socket.on("data", (chunk: Buffer) => (received += chunk.length));
+    socket.on("error", () => {});
+    await once(socket, "close");
+    expect(received).toBeLessThanOrEqual(64 * 1024);
+  });
+
   describe("refused by the guest", () => {
     /**
      * A guest that answers each read with `answer` and keeps the connection
