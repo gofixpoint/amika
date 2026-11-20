@@ -4,6 +4,7 @@ import type {
   ExecResult,
   SandboxAdapter,
 } from "../../shared/adapter";
+import { E2B_RIG_USER, e2bCommandUser } from "./client";
 
 /** Adapter from E2B commands/files to Amika's provisioning seam. */
 export class E2bAdapter implements SandboxAdapter {
@@ -14,7 +15,7 @@ export class E2bAdapter implements SandboxAdapter {
       return await this.sandbox.commands.run(command, {
         cwd: opts?.cwd,
         envs: opts?.env,
-        user: opts?.sudo ? "root" : undefined,
+        user: e2bCommandUser(opts?.sudo),
         timeoutMs: 0,
       });
     } catch (error) {
@@ -26,12 +27,12 @@ export class E2bAdapter implements SandboxAdapter {
   async uploadFile(content: Buffer | string, path: string): Promise<void> {
     const data =
       typeof content === "string" ? content : Uint8Array.from(content).buffer;
-    await this.sandbox.files.write(path, data);
+    await this.sandbox.files.write(path, data, { user: E2B_RIG_USER });
   }
 
   async downloadFile(path: string): Promise<string | null> {
     try {
-      return await this.sandbox.files.read(path);
+      return await this.sandbox.files.read(path, { user: E2B_RIG_USER });
     } catch (error) {
       if (error instanceof FileNotFoundError) return null;
       throw error;

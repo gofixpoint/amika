@@ -36,6 +36,7 @@ export {
 export * from "./config";
 export type { DaytonaConfig } from "./providers/daytona/config";
 export type { E2bConfig } from "./providers/e2b/config";
+export { E2B_STOCK_TEMPLATE } from "./providers/e2b/provider";
 export type { FreestyleConfig } from "./providers/freestyle/config";
 export type { VercelConfig } from "./providers/vercel/config";
 export type { InstaboxConfig } from "./providers/instabox/config";
