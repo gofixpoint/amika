@@ -95,7 +95,11 @@ func ResolveTarget() (Target, error) {
 // UserProfile returns the Windows user profile directory (for example
 // C:\Users\name) by asking cmd.exe to expand %USERPROFILE%.
 func UserProfile() (string, error) {
-	out, err := runInterop("cmd.exe", "/c", "echo", "%USERPROFILE%")
+	cmdExe, err := ResolveWindowsBin("cmd.exe")
+	if err != nil {
+		return "", fmt.Errorf("locate cmd.exe (is WSL interop enabled?): %w", err)
+	}
+	out, err := runInterop(cmdExe, "/c", "echo", "%USERPROFILE%")
 	if err != nil {
 		return "", fmt.Errorf("expand %%USERPROFILE%% (is WSL interop enabled?): %w", err)
 	}
@@ -123,17 +127,23 @@ func EditorExe(cli string) (string, error) {
 		return "", fmt.Errorf("unsupported Windows editor %q", cli)
 	}
 	var candidates []string
-	if where, err := runInterop("where.exe", cli); err == nil {
-		if line := firstLine(where); line != "" {
-			if idx := strings.LastIndexByte(line, '\\'); idx > 2 {
-				dir := line[:idx]
-				// The CLI launcher sits one bin\ or cmd\ level below the application
-				// executable, so search the install root it belongs to.
-				lower := strings.ToLower(dir)
-				if strings.HasSuffix(lower, "\\bin") || strings.HasSuffix(lower, "\\cmd") {
-					dir = dir[:strings.LastIndexByte(dir, '\\')]
+	
+	// --- CHANGED BLOCK START ---
+	if whereExe, err := ResolveWindowsBin("where.exe"); err == nil {
+		if where, err := runInterop(whereExe, cli); err == nil {
+			if line := firstLine(where); line != "" {
+	// --- CHANGED BLOCK END ---
+	
+				if idx := strings.LastIndexByte(line, '\\'); idx > 2 {
+					dir := line[:idx]
+					// The CLI launcher sits one bin\ or cmd\ level below the application
+					// executable, so search the install root it belongs to.
+					lower := strings.ToLower(dir)
+					if strings.HasSuffix(lower, "\\bin") || strings.HasSuffix(lower, "\\cmd") {
+						dir = dir[:strings.LastIndexByte(dir, '\\')]
+					}
+					candidates = append(candidates, dir+"\\"+install.exe)
 				}
-				candidates = append(candidates, dir+"\\"+install.exe)
 			}
 		}
 	}
@@ -206,11 +216,39 @@ func LaunchDetached(windowsExe string, args ...string) error {
 			return err
 		}
 	}
+	
+	cmdExe, err := ResolveWindowsBin("cmd.exe")
+	if err != nil {
+		return fmt.Errorf("locate cmd.exe: %w", err)
+	}
+	
 	startArgs := append([]string{"/c", "start", "", windowsExe}, args...)
-	if err := execDetached("cmd.exe", startArgs...); err != nil {
+	if err := execDetached(cmdExe, startArgs...); err != nil {
 		return fmt.Errorf("launch %s: %w", windowsExe, err)
 	}
 	return nil
+}
+
+// ResolveWindowsBin attempts to locate a core Windows executable (e.g. "cmd.exe").
+// It checks the standard $PATH first. If appendWindowsPath=false in wsl.conf,
+// it falls back to dynamically resolving the mount point for System32 via wslpath.
+func ResolveWindowsBin(binName string) (string, error) {
+	if path, err := exec.LookPath(binName); err == nil {
+		return path, nil
+	}
+
+	// Fallback for strict PATH hygiene: derive mount point via wslpath.
+	winPath := `C:\Windows\System32\` + binName
+	wslPath, err := toWSLPath(winPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s via fallback: %w", binName, err)
+	}
+
+	if info, err := os.Stat(wslPath); err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("fallback %s not found or invalid: %w", wslPath, err)
+	}
+
+	return wslPath, nil
 }
 
 // toWSLPath converts an absolute Windows path to its WSL mount path via
