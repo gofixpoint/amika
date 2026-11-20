@@ -9,4 +9,7 @@ set -euo pipefail
 
 amika_home="$(getent passwd amika | cut -d: -f6 || true)"
 # -H follows the home itself when it is a symlink to the real directory.
-sudo chown -RH amika:amika "${amika_home:-/home/amika}"
+# -h changes each symlink inside the home, not its target. Without it,
+# chown fails on a dangling symlink, such as the ones pnpm 11 leaves
+# in its store.
+sudo chown -RHh amika:amika "${amika_home:-/home/amika}"
