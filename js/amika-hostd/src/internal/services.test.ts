@@ -176,9 +176,17 @@ describe("createUpgradeHandler", () => {
       fetchSite = "same-origin",
       token = "",
       origin = "",
+      /** Bytes sent in the same write as the handshake, after it. */
+      early = "",
+      /** Keep writing after hostd ends its side, as a proxy can. */
+      halfOpen = false,
     } = {},
   ): Promise<Socket> {
-    const socket = connect(port, "127.0.0.1");
+    const socket = connect({
+      port,
+      host: "127.0.0.1",
+      allowHalfOpen: halfOpen,
+    });
     closers.push(() => socket.destroy());
     await once(socket, "connect");
     const keyLine =
@@ -188,7 +196,7 @@ describe("createUpgradeHandler", () => {
       (cookie ? `Cookie: ${cookie}\r\nSec-Fetch-Site: ${fetchSite}\r\n` : "") +
       (origin ? `Origin: ${origin}\r\n` : "");
     socket.write(
-      `${method} ${path} HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: ${upgrade}\r\n${keyLine}${cookieLine}Authorization: ${authorization}\r\n\r\n`,
+      `${method} ${path} HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: ${upgrade}\r\n${keyLine}${cookieLine}Authorization: ${authorization}\r\n\r\n${early}`,
     );
     return socket;
   }
@@ -262,6 +270,15 @@ describe("createUpgradeHandler", () => {
       expect(target.handshake()).toBe("");
     },
   );
+
+  it("closes a connection it refused once the caller is done", async () => {
+    const target = await guest();
+    const { port, tunnels } = await hostd(target.port);
+    const socket = await open(port, validPath(), { key: "", halfOpen: true });
+    expect(await read(socket)).toMatch(/^HTTP\/1\.1 401 /);
+    socket.end(`GET /health HTTP/1.1\r\nHost: hostd.example\r\n\r\n`);
+    await vi.waitFor(() => expect(tunnels.size).toBe(0));
+  });
 
   describe("amikad's SSH upgrade without the key", () => {
     const sshPath = validPath("/v1/ssh-sessions");
@@ -546,5 +563,133 @@ describe("createUpgradeHandler", () => {
     const { port } = await hostd(closed);
     const socket = await open(port, validPath());
     expect(await read(socket)).toMatch(/^HTTP\/1\.1 502 /);
+  });
+
+  it("holds the caller's bytes until the guest opens the tunnel", async () => {
+    const target = await guest();
+    const { port } = await hostd(target.port);
+    const socket = await open(port, validPath(), { early: "early bytes" });
+    let answer = "";
+    socket.on("data", (chunk) => (answer += chunk));
+    await vi.waitFor(() =>
+      expect(answer).toBe(
+        "HTTP/1.1 101 Switching Protocols\r\n\r\nearly bytes",
+      ),
+    );
+    expect(target.handshake()).toMatch(/\r\n\r\n$/);
+  });
+
+  it("relays an interim answer and opens on the 101 after it", async () => {
+    const interim = "HTTP/1.1 103 Early Hints\r\nLink: </app.js>\r\n\r\n";
+    const target = await guest(
+      `${interim}HTTP/1.1 101 Switching Protocols\r\n\r\n`,
+    );
+    const { port } = await hostd(target.port);
+    const socket = await open(port, validPath());
+    let answer = "";
+    socket.on("data", (chunk) => (answer += chunk));
+    await vi.waitFor(() =>
+      expect(answer).toBe(`${interim}HTTP/1.1 101 Switching Protocols\r\n\r\n`),
+    );
+    socket.write("ssh bytes");
+    await vi.waitFor(() => expect(answer).toMatch(/ssh bytes$/));
+  });
+
+  describe("refused by the guest", () => {
+    /**
+     * A guest that answers each read with `answer` and keeps the connection
+     * open, as amikad's HTTP server does after a `401`, recording every byte
+     * it is sent.
+     */
+    async function keepAliveGuest(answer: string) {
+      let received = "";
+      const server = createServer((socket) => {
+        socket.on("data", (chunk) => {
+          received += chunk;
+          socket.write(answer);
+        });
+      });
+      return { port: await listen(server), received: () => received };
+    }
+
+    /** Everything the caller is sent, and whether hostd hung up. */
+    function collect(socket: Socket) {
+      const seen = { answer: "", ended: false };
+      socket.on("data", (chunk) => (seen.answer += chunk));
+      socket.on("end", () => (seen.ended = true));
+      // hostd may close before the caller's late write arrives.
+      socket.on("error", () => {});
+      return seen;
+    }
+
+    const sshPath = validPath("/v1/ssh-sessions");
+    const handshake =
+      "GET /v1/ssh-sessions HTTP/1.1\r\nHost: hostd.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nAuthorization: Bearer connect-token\r\n\r\n";
+    // A proxy's next request on the connection it pooled.
+    const nextRequest = `GET /health HTTP/1.1\r\nHost: hostd.example\r\nX-Amika-Hostd-Key: ${SECRET}\r\n\r\n`;
+
+    it("ends the caller's connection with the answer", async () => {
+      const target = await keepAliveGuest(
+        "HTTP/1.1 401 Unauthorized\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n" +
+          "Content-Length: 9\r\n\r\nbad token",
+      );
+      const { port, tunnels } = await hostd(target.port);
+      const socket = await open(port, sshPath, { key: "", halfOpen: true });
+      const seen = collect(socket);
+      await vi.waitFor(() => expect(seen.ended).toBe(true));
+      expect(seen.answer).toBe(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 9\r\nConnection: close\r\n\r\nbad token",
+      );
+      // Sent before the proxy read `Connection: close`. hostd drops it, and
+      // the connection closes once the caller is done too.
+      socket.end(nextRequest);
+      await vi.waitFor(() => expect(tunnels.size).toBe(0));
+      expect(target.received()).toBe(handshake);
+    });
+
+    it("never sends the guest a request pipelined behind the handshake", async () => {
+      const target = await keepAliveGuest(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n",
+      );
+      const { port } = await hostd(target.port);
+      const socket = await open(port, sshPath, {
+        key: "",
+        early: "GET /v1/status HTTP/1.1\r\nHost: hostd.example\r\n\r\n",
+      });
+      const seen = collect(socket);
+      await vi.waitFor(() => expect(seen.ended).toBe(true));
+      expect(seen.answer).toBe(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+      );
+      expect(target.received()).toBe(handshake);
+    });
+
+    it("ends the connection after a chunked answer's last chunk", async () => {
+      const body = "4\r\nbad \r\n5\r\ntoken\r\n0\r\nX-Trailer: 1\r\n\r\n";
+      const target = await keepAliveGuest(
+        `HTTP/1.1 403 Forbidden\r\nTransfer-Encoding: chunked\r\n\r\n${body}`,
+      );
+      const { port } = await hostd(target.port);
+      const socket = await open(port, validPath());
+      const seen = collect(socket);
+      await vi.waitFor(() => expect(seen.ended).toBe(true));
+      expect(seen.answer).toBe(
+        `HTTP/1.1 403 Forbidden\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n${body}`,
+      );
+    });
+
+    it("keeps the answer from setting the gateway's cookies", async () => {
+      const target = await keepAliveGuest(
+        "HTTP/1.1 401 Unauthorized\r\nSet-Cookie: __Host-amika-session=forged; Path=/\r\n" +
+          "Content-Length: 0\r\n\r\n",
+      );
+      const { port } = await hostd(target.port);
+      const socket = await open(port, validPath());
+      const seen = collect(socket);
+      await vi.waitFor(() => expect(seen.ended).toBe(true));
+      expect(seen.answer).toBe(
+        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+      );
+    });
   });
 });

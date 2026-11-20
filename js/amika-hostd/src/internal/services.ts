@@ -28,6 +28,7 @@ import { isHostdPath } from "./hostd-paths.js";
 import { namedRoute } from "./tunnel-rig-route.js";
 import type { ServiceRegistry } from "./service-registry.js";
 import type { MachineRuntime } from "./machine-runtime.js";
+import { answerBody, answerStatus, closingHead } from "./upgrade-answer.js";
 
 /** amikad's guest port, as Amika registers it. */
 export const AMIKAD_PORT = 60999;
@@ -42,10 +43,11 @@ export function hostdGateway(secretKey: string, amikaUrl?: string): Gateway {
 
 /**
  * Handle Node's `upgrade` event: pipe a WebSocket (or any other upgrade)
- * handshake and everything after it to the guest port the route names. The
- * guest answers the handshake itself; hostd only moves bytes, but for any
- * cookie of the gateway's the answer tries to set. Tunnels are tracked so
- * shutdown can end them, since `server.close` does not.
+ * handshake to the guest port the route names, and everything after it once
+ * the guest accepts. The guest answers the handshake itself; hostd only
+ * moves bytes, but for any cookie of the gateway's the answer tries to set,
+ * and it ends the connection after an answer that refuses. Tunnels are
+ * tracked so shutdown can end them, since `server.close` does not.
  */
 export function createUpgradeHandler(
   secretKey: string,
@@ -106,15 +108,13 @@ export function createUpgradeHandler(
           incoming.named ? incoming.url.host : undefined,
         ),
       );
-      if (head.length) upstream.write(head);
-      socket.pipe(upstream);
-      relayAnswer(upstream, socket);
+      relayAnswer(upstream, socket, request.method ?? "GET", head);
     });
+    // Once connected, a failure closes the upstream, which `relayAnswer`
+    // handles.
     upstream.on("error", () => {
-      if (connected) socket.destroy();
-      else refuse(socket, 502);
+      if (!connected) refuse(socket, 502);
     });
-    upstream.on("close", () => socket.destroy());
     socket.on("close", () => upstream.destroy());
   }
 
@@ -160,32 +160,117 @@ export function createUpgradeHandler(
   }
 
   /**
-   * Pipe the guest's side of the tunnel to the caller, its answer to the
-   * handshake through `finishUpgrade` first: the guest may set a cookie of
-   * its own there, never one of the gateway's. A head that does not end
-   * within `MAX_ANSWER_HEAD` bytes ends the tunnel.
+   * Relay the guest's answer to the handshake, through `finishUpgrade`: the
+   * guest may set a cookie of its own there, never one of the gateway's. A
+   * head that does not end within `MAX_ANSWER_HEAD` bytes ends the tunnel.
+   *
+   * The caller's bytes, `head` first, reach the guest only after its `101`
+   * opens the tunnel. Any other final answer refuses the upgrade
+   * (`relayRefusal`).
    */
-  function relayAnswer(upstream: Socket, socket: Duplex): void {
+  function relayAnswer(
+    upstream: Socket,
+    socket: Duplex,
+    method: string,
+    head: Buffer,
+  ): void {
     let buffered = Buffer.alloc(0);
+    let refused = false;
+    upstream.on("close", () => {
+      if (!refused) socket.destroy();
+    });
     const onData = (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
-      const end = buffered.indexOf("\r\n\r\n");
-      if ((end < 0 ? buffered.length : end) > MAX_ANSWER_HEAD) {
+      for (;;) {
+        const end = buffered.indexOf("\r\n\r\n");
+        if ((end < 0 ? buffered.length : end) > MAX_ANSWER_HEAD) {
+          upstream.destroy();
+          return;
+        }
+        if (end < 0) return;
+        const answer = gateway.finishUpgrade(
+          buffered.subarray(0, end).toString("latin1"),
+        );
+        const rest = buffered.subarray(end + 4);
+        const status = answerStatus(answer);
+        if (status !== null && status < 200 && status !== 101) {
+          // An interim answer, such as `103 Early Hints`. The final one
+          // follows it.
+          socket.write(`${answer}\r\n\r\n`, "latin1");
+          buffered = rest;
+          continue;
+        }
+        upstream.off("data", onData);
+        upstream.pause();
+        if (status === 101) {
+          socket.write(
+            Buffer.concat([Buffer.from(`${answer}\r\n\r\n`, "latin1"), rest]),
+          );
+          upstream.pipe(socket);
+          if (head.length) upstream.write(head);
+          socket.pipe(upstream);
+        } else {
+          refused = true;
+          relayRefusal(upstream, socket, answer, rest, method);
+        }
+        return;
+      }
+    };
+    upstream.on("data", onData);
+  }
+
+  /**
+   * Relay a guest's refusal of the upgrade, body and all, then end the
+   * caller's connection, and say so in the answer (`Connection: close`).
+   * hostd no longer parses that connection, so a request sent next on it
+   * would reach the guest unrouted and unchecked. A proxy in front of hostd
+   * pools its connections, so that request could be anyone's.
+   */
+  function relayRefusal(
+    upstream: Socket,
+    socket: Duplex,
+    answer: string,
+    rest: Buffer,
+    method: string,
+  ): void {
+    const body = answerBody(answer, method);
+    if (body === null) {
+      socket.destroy();
+      upstream.destroy();
+      return;
+    }
+    socket.write(`${closingHead(answer)}\r\n\r\n`, "latin1");
+    let done = false;
+    const finish = () => {
+      done = true;
+      upstream.off("data", relay);
+      upstream.destroy();
+      endConnection(socket);
+    };
+    const relay = (chunk: Buffer) => {
+      const taken = body.take(chunk);
+      if (taken === null) {
+        done = true;
+        socket.destroy();
         upstream.destroy();
         return;
       }
-      if (end < 0) return;
-      upstream.off("data", onData);
-      upstream.pause();
-      const answer = gateway.finishUpgrade(
-        buffered.subarray(0, end).toString("latin1"),
-      );
-      socket.write(
-        Buffer.concat([Buffer.from(answer, "latin1"), buffered.subarray(end)]),
-      );
-      upstream.pipe(socket);
+      if (taken.length > 0 && !socket.write(chunk.subarray(0, taken.length))) {
+        upstream.pause();
+        socket.once("drain", () => upstream.resume());
+      }
+      if (taken.done) finish();
     };
-    upstream.on("data", onData);
+    upstream.on("close", () => {
+      if (done) return;
+      // Only a body that ends with the connection is whole here.
+      if (body.untilClose) endConnection(socket);
+      else socket.destroy();
+    });
+    upstream.on("data", relay);
+    // Resuming flows on a later tick, so `rest` is relayed first.
+    upstream.resume();
+    relay(rest);
   }
 }
 
@@ -228,9 +313,19 @@ const REFUSAL_REASONS = {
 
 function refuse(socket: Duplex, status: keyof typeof REFUSAL_REASONS): void {
   if (socket.destroyed) return;
-  socket.end(
+  socket.write(
     `HTTP/1.1 ${status} ${REFUSAL_REASONS[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
   );
+  endConnection(socket);
+}
+
+/**
+ * End a connection hostd has answered. Whatever the caller sends after is
+ * read and dropped, so its close is seen even when it sent more first.
+ */
+function endConnection(socket: Duplex): void {
+  socket.end();
+  socket.resume();
 }
 
 /**
