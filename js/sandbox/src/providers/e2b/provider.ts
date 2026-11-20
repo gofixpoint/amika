@@ -26,7 +26,7 @@ import {
   waitForE2bSnapshotActive,
 } from "./internal/snapshot-operations";
 
-export { openE2bAdapter } from "./internal/operations";
+export { E2B_STOCK_TEMPLATE, openE2bAdapter } from "./internal/operations";
 
 export interface E2bProviderConfig {
   config: E2bConfig;
