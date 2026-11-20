@@ -28,6 +28,8 @@ vi.mock("e2b", () => ({
 import {
   createE2bSandbox,
   deleteE2bSandbox,
+  E2B_STOCK_TEMPLATE,
+  executeE2bCommand,
   e2bRouteRestoreCommand,
   e2bRouteSyncCommand,
   getE2bSandboxState,
@@ -37,6 +39,7 @@ import {
   startE2bSandbox,
   stopE2bSandbox,
   syncE2bRoutes,
+  writeE2bFile,
 } from "./operations";
 
 it("maps Amika's filesystem-only E2B pause to stopped", () => {
@@ -85,6 +88,52 @@ describe("E2B lifecycle operations", () => {
       providerSandboxId: "sbx_1",
       envVars: { CALLER_MODE: "enabled" },
     });
+  });
+
+  it("creates no user on one of Amika's templates", async () => {
+    const run = vi.fn();
+    sdk.create.mockResolvedValue({ sandboxId: "sbx_1", commands: { run } });
+
+    await createE2bSandbox({ logger: { info: vi.fn() } } as never, CONFIG, {
+      name: "demo",
+      snapshot: "tpl_coder_xs",
+    } as never);
+
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("creates the amika user on E2B's stock template", async () => {
+    const run = vi.fn().mockResolvedValue({ exitCode: 0 });
+    sdk.create.mockResolvedValue({ sandboxId: "sbx_1", commands: { run } });
+
+    await createE2bSandbox({ logger: { info: vi.fn() } } as never, CONFIG, {
+      name: "demo",
+      snapshot: E2B_STOCK_TEMPLATE,
+    } as never);
+
+    expect(run).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "useradd --create-home --home-dir /home/amika --shell /bin/bash amika",
+      ),
+      { user: "root" },
+    );
+  });
+
+  it("kills a stock sandbox whose user cannot be created", async () => {
+    const kill = vi.fn().mockResolvedValue(undefined);
+    sdk.create.mockResolvedValue({
+      sandboxId: "sbx_1",
+      commands: { run: vi.fn().mockRejectedValue(new Error("no useradd")) },
+      kill,
+    });
+
+    await expect(
+      createE2bSandbox({ logger: { info: vi.fn() } } as never, CONFIG, {
+        name: "demo",
+        snapshot: E2B_STOCK_TEMPLATE,
+      } as never),
+    ).rejects.toThrow("no useradd");
+    expect(kill).toHaveBeenCalled();
   });
 
   it("rejects creation without a prepared template", async () => {
@@ -251,5 +300,31 @@ describe("E2B services and listing", () => {
       "/sandboxes/{sandboxID}",
       { params: { path: { sandboxID: "sbx_new" } } },
     );
+  });
+});
+
+describe("E2B commands and files", () => {
+  // E2B's stock template defaults to its own `user`, so the rig user is
+  // named on every call rather than left to the template.
+  it("runs a command as amika, or as root with sudo", async () => {
+    const run = vi.fn().mockResolvedValue({ exitCode: 0 });
+    sdk.connect.mockResolvedValue({ commands: { run } });
+
+    await executeE2bCommand(CONFIG, "sbx_1", "id");
+    await executeE2bCommand(CONFIG, "sbx_1", "id", { sudo: true });
+
+    expect(run.mock.calls[0]![1]).toMatchObject({ user: "amika" });
+    expect(run.mock.calls[1]![1]).toMatchObject({ user: "root" });
+  });
+
+  it("writes a file as amika", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    sdk.connect.mockResolvedValue({ files: { write } });
+
+    await writeE2bFile(CONFIG, "sbx_1", "/home/amika/a.txt", "hi");
+
+    expect(write).toHaveBeenCalledWith("/home/amika/a.txt", "hi", {
+      user: "amika",
+    });
   });
 });

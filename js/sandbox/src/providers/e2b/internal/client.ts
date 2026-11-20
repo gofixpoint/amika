@@ -1,6 +1,18 @@
 import { ApiClient, ConnectionConfig, Sandbox } from "e2b";
 import type { E2bConfig } from "../config";
 
+/**
+ * The user commands and file operations run as. Named on every call, not
+ * left to the template's default: Amika's templates default to `amika`, but
+ * E2B's stock template defaults to `user`.
+ */
+export const E2B_RIG_USER = "amika";
+
+/** The user for a command: root when it asks for sudo, else the rig user. */
+export function e2bCommandUser(sudo: boolean | undefined): string {
+  return sudo ? "root" : E2B_RIG_USER;
+}
+
 /** Options shared by E2B's static sandbox API calls. */
 export function e2bApiOptions(config: E2bConfig): {
   apiKey: string;
