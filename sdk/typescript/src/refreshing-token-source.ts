@@ -18,8 +18,8 @@ export interface RefreshingTokenSourceOptions {
   fetchToken: () => Promise<ExpiringToken>;
   /**
    * Get the next token this many seconds before the current one expires.
-   * Default 60. For a token that lives less than twice this, the source
-   * gets the next one halfway through its life.
+   * Default 60, and never negative. For a token that lives less than twice
+   * this, the source gets the next one halfway through its life.
    */
   refreshBeforeSeconds?: number;
   /** The clock, in milliseconds since the epoch. Default `Date.now`. */
@@ -52,7 +52,14 @@ export function refreshingTokenSource(
       "refreshingTokenSource: fetchToken must be a function",
     );
   }
-  const marginMs = (options.refreshBeforeSeconds ?? 60) * 1000;
+  const marginSeconds = options.refreshBeforeSeconds ?? 60;
+  // A negative margin would serve a token after it expires.
+  if (!Number.isFinite(marginSeconds) || marginSeconds < 0) {
+    throw new AmikaError(
+      "refreshingTokenSource: refreshBeforeSeconds must be a number, 0 or more",
+    );
+  }
+  const marginMs = marginSeconds * 1000;
   const now = options.now ?? Date.now;
 
   let current: {
@@ -62,33 +69,40 @@ export function refreshingTokenSource(
   } | null = null;
   let inFlight: Promise<string> | null = null;
 
+  const fetchNext = async (): Promise<string> => {
+    const fetchedAtMs = now();
+    const next = await options.fetchToken();
+    const expiresAtMs = new Date(next.expiresAt).getTime();
+    if (
+      typeof next.token !== "string" ||
+      next.token.length === 0 ||
+      Number.isNaN(expiresAtMs)
+    ) {
+      throw new AmikaError(
+        "refreshingTokenSource: fetchToken must return a token and a valid expiresAt",
+      );
+    }
+    const lifeMs = expiresAtMs - fetchedAtMs;
+    current = {
+      token: next.token,
+      expiresAtMs,
+      refreshAtMs: expiresAtMs - Math.min(marginMs, lifeMs / 2),
+    };
+    return next.token;
+  };
+
   const refresh = (): Promise<string> => {
-    inFlight ??= (async () => {
-      try {
-        const fetchedAtMs = now();
-        const next = await options.fetchToken();
-        const expiresAtMs = new Date(next.expiresAt).getTime();
-        if (
-          typeof next.token !== "string" ||
-          next.token.length === 0 ||
-          Number.isNaN(expiresAtMs)
-        ) {
-          throw new AmikaError(
-            "refreshingTokenSource: fetchToken must return a token and a valid expiresAt",
-          );
-        }
-        const lifeMs = expiresAtMs - fetchedAtMs;
-        current = {
-          token: next.token,
-          expiresAtMs,
-          refreshAtMs: expiresAtMs - Math.min(marginMs, lifeMs / 2),
-        };
-        return next.token;
-      } finally {
-        inFlight = null;
-      }
-    })();
-    return inFlight;
+    if (inFlight) return inFlight;
+    // Clear the shared call only after it is stored. A `finally` inside the
+    // call runs before the store when `fetchToken` throws before it returns
+    // a promise, and the failed call would then stay cached for good.
+    const call = fetchNext();
+    inFlight = call;
+    const clear = () => {
+      if (inFlight === call) inFlight = null;
+    };
+    call.then(clear, clear);
+    return call;
   };
 
   return {

@@ -98,6 +98,34 @@ describe("refreshingTokenSource", () => {
     expect(await source.token()).toBe("amk_pt_token_2");
   });
 
+  it("tries again after fetchToken throws before it returns a promise", async () => {
+    let calls = 0;
+    const source = refreshingTokenSource({
+      fetchToken: () => {
+        calls += 1;
+        if (calls === 1) throw new Error("not ready");
+        return Promise.resolve({
+          token: "amk_pt_after",
+          expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        });
+      },
+    });
+    await expect(source.token()).rejects.toThrow("not ready");
+    expect(await source.token()).toBe("amk_pt_after");
+  });
+
+  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "refuses refreshBeforeSeconds %s",
+    (refreshBeforeSeconds) => {
+      expect(() =>
+        refreshingTokenSource({
+          fetchToken: async () => ({ token: "t", expiresAt: new Date() }),
+          refreshBeforeSeconds,
+        }),
+      ).toThrow(AmikaError);
+    },
+  );
+
   it("refuses a fetched token with no expiry", async () => {
     const source = refreshingTokenSource({
       fetchToken: async () => ({ token: "amk_pt_x", expiresAt: "not a date" }),
