@@ -168,7 +168,13 @@ async function example() {
   );
   assert.deepEqual(
     Object.keys(runtime).sort(),
-    ["AmikaClient", "AmikaError", "AmikaHTTPError", "AmikaWaitError"].sort(),
+    [
+      "AmikaClient",
+      "AmikaError",
+      "AmikaHTTPError",
+      "AmikaWaitError",
+      "refreshingTokenSource",
+    ].sort(),
   );
   function checkMaps(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
