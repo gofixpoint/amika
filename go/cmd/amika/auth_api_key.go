@@ -45,8 +45,8 @@ unless --force is given.
 
 --scope picks who owns the key:
 
-  organization  owned by your organization; it keeps working if you leave it
-                (the default)
+  organization  owned by your organization, with full access to it
+                (org:access); it keeps working if you leave it (the default)
   user          owned by you; it acts as you, and an organization-scoped API
                 key cannot create one
 
@@ -105,7 +105,11 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	created, err := runmode.NewRemoteClient().CreateAPIKey(apiclient.CreateAPIKeyRequest{Name: name, Scope: scope})
+	req := apiclient.CreateAPIKeyRequest{Name: name, Scope: scope}
+	if scope != apiclient.APIKeyScopeUser {
+		req.Permissions = []string{apiclient.APIKeyPermissionOrgAccess}
+	}
+	created, err := runmode.NewRemoteClient().CreateAPIKey(req)
 	if err != nil {
 		removeOnFail()
 		var httpErr *apiclient.HTTPError

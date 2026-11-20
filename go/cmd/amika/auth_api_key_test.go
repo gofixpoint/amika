@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -105,7 +106,8 @@ func dirEntries(t *testing.T, dir string) []string {
 
 // A successful create writes exactly the key and a newline to a 0600 file,
 // reports the key's id and obfuscated value, and never prints the key. With
-// no --scope the request omits the field so the server default applies.
+// no --scope the request omits the field so the server default applies, and
+// asks for org:access, which the API requires an organization key to name.
 func TestAuthAPIKeyCreateWritesKeyFileOnly(t *testing.T) {
 	stub := stubAPIKeyAPI(t)
 	out := filepath.Join(t.TempDir(), "key")
@@ -149,6 +151,28 @@ func TestAuthAPIKeyCreateWritesKeyFileOnly(t *testing.T) {
 	if _, ok := reqs[0]["scope"]; ok {
 		t.Errorf("scope sent = %v, want it omitted so the server default applies", reqs[0]["scope"])
 	}
+	if got := fmt.Sprint(reqs[0]["permissions"]); got != "[org:access]" {
+		t.Errorf("permissions sent = %s, want [org:access]", got)
+	}
+}
+
+// An explicit --scope organization asks for org:access too.
+func TestAuthAPIKeyCreateOrganizationScopeSendsOrgAccess(t *testing.T) {
+	stub := stubAPIKeyAPI(t)
+	out := filepath.Join(t.TempDir(), "key")
+
+	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "ci", "--scope", "organization", "--out", out)
+	assertNoKey(t, got, err)
+	if err != nil {
+		t.Fatalf("create: %v\n%s", err, got)
+	}
+	reqs := stub.requests()
+	if len(reqs) != 1 || reqs[0]["scope"] != "organization" {
+		t.Fatalf("requests = %v, want one with scope organization", reqs)
+	}
+	if got := fmt.Sprint(reqs[0]["permissions"]); got != "[org:access]" {
+		t.Errorf("permissions sent = %s, want [org:access]", got)
+	}
 }
 
 // -o json emits the API's ApiKeySummary shape, camelCase and with a null
@@ -182,8 +206,12 @@ func TestAuthAPIKeyCreateJSONOmitsValue(t *testing.T) {
 	if string(fields["scope"]) != `"user"` {
 		t.Errorf("scope = %s, want \"user\"", fields["scope"])
 	}
-	if reqs := stub.requests(); len(reqs) != 1 || reqs[0]["scope"] != "user" {
+	reqs := stub.requests()
+	if len(reqs) != 1 || reqs[0]["scope"] != "user" {
 		t.Fatalf("requests = %v, want one with scope user", reqs)
+	}
+	if _, ok := reqs[0]["permissions"]; ok {
+		t.Errorf("permissions sent = %v, want none for a user key", reqs[0]["permissions"])
 	}
 	if data, _ := os.ReadFile(out); string(data) != testAPIKeyValue+"\n" {
 		t.Fatalf("file contents = %q", data)
