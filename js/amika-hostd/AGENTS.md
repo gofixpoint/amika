@@ -87,7 +87,9 @@ Each of these is stated in full, with its reason, in the doc it links to.
   strings from `@amika/tunnel-protocol`, because the runtime's answer
   covers relayed WebSockets too and a bare `ping` would swallow a
   service's own heartbeat. A closed laptop lid leaves a socket that looks
-  alive, and only an unanswered round trip finds it.
+  alive. End the socket if no relay message answers the ping before its
+  deadline. Accept any relay message as an answer. A `PONG` can wait behind
+  stream data on a busy connection.
 - **Shutdown closes the WebSocket**, which is what makes the relay give
   up the route. Dropping the connection loses every request sent before the
   relay notices.
@@ -102,6 +104,12 @@ Each of these is stated in full, with its reason, in the doc it links to.
   Node has taken the bytes, and hostd never sends past what the relay
   granted. The relay cannot push back on a caller, so this is what bounds
   a download in its memory.
+- **A v3 session can survive a socket failure.** Keep its streams during
+  the recovery window. Validate the relay's received count before removing
+  acknowledged frames. Reset the streams if recovery fails or the window
+  expires. Stop all sessions when hostd stops. Set
+  `AMIKA_HOSTD_TUNNEL_RESUME=0` to offer v2 only.
+  See [Session recovery](docs/tunnel.md#session-recovery).
 
 **Credentials reaching hostd**
 
