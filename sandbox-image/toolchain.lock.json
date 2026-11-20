@@ -1,14 +1,14 @@
 {
   "schema": 2,
-  "npm_before": "2026-11-17T19:45:18Z",
+  "npm_before": "2026-11-20T23:28:24Z",
   "amikad": {
     "name": "amikad",
-    "version": "0.4.0",
+    "version": "0.5.0-beta.1",
     "kind": "archive",
     "artifacts": {
       "linux/amd64": {
-        "url": "https://github.com/gofixpoint/amika/releases/download/amikad@v0.4.0/amikad_0.4.0_linux_amd64.tar.gz",
-        "sha256": "abb3490750fb9143fa5510f4d1a28fa009f0d84c9f9b5b7d4d3455b263491af6",
+        "url": "https://github.com/gofixpoint/amika/releases/download/amikad@v0.5.0-beta.1/amikad_0.5.0-beta.1_linux_amd64.tar.gz",
+        "sha256": "ecb2066f3ec27f9c7b485f874daa1b297f1b8a9ed4e863da4e38b40128081dc3",
         "format": "tar.gz",
         "strip": 1,
         "bins": [
@@ -18,8 +18,8 @@
         ]
       },
       "linux/arm64": {
-        "url": "https://github.com/gofixpoint/amika/releases/download/amikad@v0.4.0/amikad_0.4.0_linux_arm64.tar.gz",
-        "sha256": "4d490e5869e5b526d4aa590d3a65f11ce56346d0221ccb6feb282c78dd45628c",
+        "url": "https://github.com/gofixpoint/amika/releases/download/amikad@v0.5.0-beta.1/amikad_0.5.0-beta.1_linux_arm64.tar.gz",
+        "sha256": "d296f9c60f15570b7b4ad7f559f02df707ea5c09dc44a1c581d8a4da688634b5",
         "format": "tar.gz",
         "strip": 1,
         "bins": [
