@@ -317,7 +317,13 @@ func TestE2ECases(t *testing.T) {
 			// for any resource a case managed to register before a later
 			// step failed or the test panicked.
 			t.Cleanup(func() {
-				results := runner.Cleanup(bin, r.Ledger().Entries(), r.CleanupEnv())
+				cleanupCtx := context.Background()
+				if deadline, ok := t.Deadline(); ok {
+					var cancel context.CancelFunc
+					cleanupCtx, cancel = context.WithDeadline(cleanupCtx, deadline.Add(-5*time.Second))
+					defer cancel()
+				}
+				results := runner.CleanupContext(cleanupCtx, bin, r.Ledger().Entries(), r.CleanupEnv())
 				if err := runner.WriteCleanupResults(runDir, results); err != nil {
 					t.Logf("write cleanup results: %v", err)
 				}

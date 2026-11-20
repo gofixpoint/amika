@@ -164,7 +164,7 @@ func unreclaimedEntries(caseDir string) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return entries, nil
+	return PendingEntries(entries), nil
 }
 
 // SweepResult is the outcome of reclaiming one stale case directory.

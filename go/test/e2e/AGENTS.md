@@ -10,9 +10,15 @@ importing implementation packages.
   behind both `AMIKA_RUN_E2E=1` and `AMIKA_RUN_E2E_API=1`.
 - Register every created resource immediately so the reverse-order cleanup
   ledger can delete it after a later failure.
+- Give every resource a `verify_gone` check: `rig get` + `not_found` for
+  rigs, `absent_from` over a listing for kinds with no `get`. Without it the
+  run can only trust the delete's exit status.
 - Preserve enough timeout headroom for cleanup. A `go test` timeout kills the
   process before deferred cleanup can run.
 - Use run-unique names for upserted remote resources.
+- Name a resource up front (`{{run_slug}}` for DNS-label names) and set
+  `register_on_failure: true` when the create command can fail after the
+  resource exists, as every `rig create` in the `api-*` cases does.
 - Never put API keys or other secret values in case argv, transcripts, wrapper
   files, or committed fixtures.
 

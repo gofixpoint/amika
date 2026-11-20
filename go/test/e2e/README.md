@@ -130,21 +130,29 @@ steps:
       type: sandbox
       name: "{{sandbox_name}}"
       cleanup: [rig, delete, "{{sandbox_name}}", --force, -o, json]
+      verify_gone:                                          # optional: confirm the delete (see "Verifying a delete")
+        cmd: [rig, get, "{{sandbox_name}}", -o, json]
+        not_found: "HTTP 404"
       register_on_failure: false                            # optional: set true to register even on an unexpected exit (default false)
     release_resource:                                      # optional: retire a consumed resource after this step passes
       type: sandbox
       name: "{{sandbox_name}}"
 ```
 
-Every field except `name` and `cmd` is optional on a step. `name` is
+Every field except `name` and `cmd` is optional on a step. `LoadCase` also
+rejects a `resource` block whose `name`, `cleanup`, or `verify_gone.cmd` uses
+a `{{var}}` that no runner value, declared var, or capture up to that step
+defines, so a typo cannot keep a created resource off the ledger. `name` is
 required at both the case and step level; every step needs a non-empty
 `cmd`. `LoadCase` validates this before running anything.
 
-`release_resource` removes a matching prior `resource` entry from the cleanup
-ledger only after the command and every assertion succeed. Use it when the
-operation under test consumes a resource, such as `snapshot create --mode
-scrub_and_delete` deleting its source sandbox. If the step fails, the ledger
-entry remains available for best-effort cleanup.
+`release_resource` hands a prior `resource` back from cleanup after the
+command and every assertion succeed. Use it when the operation under test
+consumes a resource, such as `snapshot create --mode scrub_and_delete`
+deleting its source sandbox. When the resource has a `verify_gone` check, the
+runner runs it first; if the resource is not confirmed gone, it stays with
+cleanup and the step fails. A released entry is marked, not removed: it stays
+in `ledger.json` as history, while cleanup and the sweep skip it.
 
 ### Remote commands (`rig ssh`)
 
@@ -178,8 +186,10 @@ the login user's shell. Write the script directly, as above.
 
 ### Variable substitution
 
-Two variables are predefined: `{{run_id}}`, a timestamp unique to the whole
-run, and `{{sandbox_provider}}`, the provider selected for the run. A case that creates a **named** remote resource should build the name
+Three variables are predefined: `{{run_id}}`, a timestamp unique to the
+whole run; `{{run_slug}}`, the same value reduced to lowercase letters and
+digits so it can be part of a DNS label such as a rig name; and
+`{{sandbox_provider}}`, the provider selected for the run. A case that creates a **named** remote resource should build the name
 from it (`--name e2e-ssh-key-{{run_id}}`). Names are frequently upserted
 rather than rejected, so a fixed name lets a case adopt, mutate, and then
 delete a resource the account already had, and lets two concurrent runs
@@ -338,12 +348,29 @@ disk and can be cleaned up by hand or by a future run.
 A resource is registered when its step exits as expected, even if a later
 capture or content assertion in that same step then fails, so a resource
 that was really created is never orphaned. When the step exits with an
-**unexpected** status the outcome is ambiguous (the command may have failed
-before creating anything, such as a name collision), so the resource is
-registered only if the block sets `register_on_failure: true`. Leave that
-off unless the command is known to create the resource before it can fail;
-otherwise cleanup could delete a pre-existing resource this run does not
-own.
+**unexpected** status, or is killed (an interrupt, the step timeout, the run
+deadline), the outcome is ambiguous (the command may have failed before
+creating anything, such as a name collision), so the resource is registered
+only if the block sets `register_on_failure: true`. A killed step registers
+with whatever the command printed before it died.
+
+Use `register_on_failure` only with a name that is unique to the run, so
+cleanup can never delete a resource another run owns. That is how every
+`rig create` in the `api-*` cases works: `rig create` prints its JSON only
+after provisioning finishes, so a create that fails while waiting never
+reports its name. The cases name the rig up front instead:
+
+```yaml
+  - name: create a remote sandbox
+    cmd: [rig, create, "e2e-{{run_slug}}-lifecycle", --remote, ..., -o, json]
+    capture:
+      sandbox_name: $.name
+    resource:
+      type: sandbox
+      register_on_failure: true
+      name: "e2e-{{run_slug}}-lifecycle"
+      cleanup: [rig, delete, "e2e-{{run_slug}}-lifecycle", --remote, --force, -o, json]
+```
 
 `e2e_test.go` registers `t.Cleanup` for every case *before* running it, so
 cleanup always fires, even if the case fails partway through. Cleanup
@@ -351,6 +378,74 @@ replays the ledger in **reverse** registration order (last-created
 resources are deleted first) and keeps going even if one cleanup command
 fails, logging the failure via `t.Log` and recording it in
 `cleanup-results.json`.
+
+### Verifying a delete
+
+A delete command that exits 0 is not proof the resource is gone. Give the
+resource a `verify_gone` check. There are two forms; use exactly one.
+
+**Direct lookup**, for a resource kind with a `get` command:
+
+```yaml
+    resource:
+      type: sandbox
+      name: "{{sandbox_name}}"
+      cleanup: [rig, delete, "{{sandbox_name}}", --force, -o, json]
+      verify_gone:
+        cmd: [rig, get, "{{sandbox_name}}", -o, json]
+        not_found: "HTTP 404"
+```
+
+The command must **fail** and its stderr must contain `not_found`. That is
+the only result read as "gone". A command that succeeds means the resource
+still exists. A command that fails any other way (an auth error, a network
+error) answers nothing, and the cleanup is recorded as `unchecked`, never
+`gone`. This is what stops an API outage from making a leaked resource look
+deleted.
+
+**Exact match over a listing**, for a resource kind with only a `list`
+command:
+
+```yaml
+      verify_gone:
+        cmd: [snapshot, list, -o, json]
+        absent_from: "$.items[*].snapshot"
+```
+
+The command must succeed and print JSON. `absent_from` is a JSONPath with
+one `[*]` wildcard; the resource is gone when no value at that path equals
+the resource `name` exactly. Every element must have that field: an element
+without it makes the check `unchecked`, so a misspelled field or a changed
+response shape cannot read as an empty listing. This is a structured comparison, not a text
+search, so a name mentioned in some other field (a snapshot's source rig, for
+example) cannot be mistaken for the resource itself.
+
+Deletion is asynchronous on every provider, so both forms poll every 5
+seconds for up to 2 minutes.
+
+A cleanup delete that fails is checked once too. Cases often delete a
+resource themselves and leave it registered, so cleanup's delete gets a 404.
+If the check then says the resource does not exist, the cleanup counts as
+done: `verified` is `gone`, and the delete's error is kept in
+`delete_error`. Any other answer keeps the failure. Each `cleanup-results.json` entry records the
+result as `verified`:
+
+| Value           | Meaning                                                                          |
+| --------------- | -------------------------------------------------------------------------------- |
+| `gone`          | The check gave a positive "does not exist" answer.                               |
+| `unsupported`   | The resource has no `verify_gone`; only the delete's exit status is known.       |
+| `still_present` | The resource still existed when the poll gave up. Counts as a failure.           |
+| `unchecked`     | The delete failed, or the check could not answer. Counts as a failure.           |
+
+What this proves: the control plane no longer has the resource. For rigs that
+is a strong statement, because the server deletes the provider sandbox first
+and refuses to drop its row if that fails (`rig delete --force` only skips the
+confirmation prompt; it never asks the server to forget). Vendor-side state is
+checked directly by the provider contract suite, not here.
+
+The `api-*` cases use `rig get` + `not_found` for rigs, and `absent_from` on
+`$.items[*].snapshot`, `$[*].id`, and `$[*].service` for snapshots, SSH keys,
+and services. Do the same for new resources.
 
 ### Finishing before `go test` kills the run
 
@@ -364,6 +459,13 @@ ahead of that deadline rather than being surprised by it.
 without a further 5m of runway, so the run stops with a clear message naming
 how many cases went unrun instead of dying mid-step. Raise `-timeout` (see
 `E2E_API_TIMEOUT`) when that happens.
+
+Cleanup shares one 110-second budget across all pending resources, bounded
+also by the test deadline minus five seconds for recording results. Each
+resource gets a share of the remaining time for its delete and verification;
+a slow lookup or polling sleep cannot consume the older resources' shares.
+Delete and verification subprocesses are canceled when their share expires,
+and an interrupted check counts as unconfirmed, never gone.
 
 Independently, every step is bounded by `Options.StepTimeout` (10m by
 default), so one wedged command fails its own step instead of consuming the
