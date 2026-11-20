@@ -835,7 +835,9 @@ response without its `value`), in the API's camelCase spelling:
 | `--force`, `-f`   | `false`        | Replace `--out` if it already exists                                         |
 
 A user-scoped key acts as you, and an organization-scoped API key has no user
-behind it, so it cannot create one.
+behind it, so it cannot create one. An organization key gets the `org:access`
+permission: full access to your organization. To make a key that acts as your
+end-users (`end-users:act-as`), use the API.
 
 Requires `amika auth login` or `AMIKA_API_KEY`. When `--scope` is omitted, the
 request leaves the field out and the API applies its default, `organization`.

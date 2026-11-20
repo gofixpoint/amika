@@ -13,11 +13,18 @@ const (
 	APIKeyScopeUser = "user"
 )
 
+// APIKeyPermissionOrgAccess lets an organization-scoped key act as the
+// organization, with full access.
+const APIKeyPermissionOrgAccess = "org:access"
+
 // CreateAPIKeyRequest is the request body for POST /api/v0beta1/api-keys. An
 // empty Scope is omitted, so the server applies its default (organization).
+// The API requires Permissions for an organization-scoped key and refuses
+// them for a user-scoped one.
 type CreateAPIKeyRequest struct {
-	Name  string `json:"name"`
-	Scope string `json:"scope,omitempty"`
+	Name        string   `json:"name"`
+	Scope       string   `json:"scope,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 // APIKey mirrors the API's ApiKeySummary schema: everything about a key
