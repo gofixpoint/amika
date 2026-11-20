@@ -744,6 +744,7 @@ func TestEnsureSessionConfigCompletesLegacyWSLMigration(t *testing.T) {
 	t.Cleanup(func() {
 		isWSL, resolveWSLTarget, runIcacls = previousIsWSL, previousResolve, previousIcacls
 	})
+	stubWindowsUserSID(t)
 	originalStartAgent := startAgent
 	t.Cleanup(func() { startAgent = originalStartAgent })
 	startAgent = func(socketPath string) error {
@@ -832,6 +833,7 @@ func TestRecordSessionUserRewritesWindowsMirror(t *testing.T) {
 	t.Cleanup(func() {
 		isWSL, resolveWSLTarget, runIcacls = previousIsWSL, previousResolve, previousIcacls
 	})
+	stubWindowsUserSID(t)
 	originalStartAgent := startAgent
 	t.Cleanup(func() { startAgent = originalStartAgent })
 	startAgent = func(socketPath string) error {
