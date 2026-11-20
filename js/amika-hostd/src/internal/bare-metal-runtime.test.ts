@@ -351,6 +351,16 @@ describe("bareMetalRuntime: exec", () => {
     ["newline", sh("amikad host-key show\nid")],
     ["other case", sh("AMIKAD HOST-KEY SHOW")],
     ["partial serve", sh("amikad serve --beta-no-relay")],
+    [
+      "environment prefix",
+      sh(
+        "AMIKA_SSHD_NO_AGENT_FORWARDING=1 amikad setup sshd --force-overwrite",
+      ),
+    ],
+    [
+      "reordered flag",
+      sh("amikad setup sshd --no-agent-forwarding --force-overwrite"),
+    ],
     ["arbitrary command", sh("id")],
     ["prototype key", sh("constructor")],
     ["another shell", ["/bin/bash", "-c", "amikad host-key show"]],
