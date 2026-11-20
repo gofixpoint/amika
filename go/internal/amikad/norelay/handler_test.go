@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -215,4 +216,132 @@ func TestHandlerRejectsMalformedAuthorizationBeforeUpgrade(t *testing.T) {
 			t.Fatalf("header %q reached status=%d upgrade=%d dial=%d", header, response.Code, upgrader.calls, dialer.calls)
 		}
 	}
+}
+
+// switchVerifier accepts one token until it is revoked. It is safe for the
+// concurrent recheck.
+type switchVerifier struct {
+	revoked atomic.Bool
+}
+
+func (v *switchVerifier) Verify(token string) bool {
+	return token == "secret-token" && !v.revoked.Load()
+}
+
+// openSession starts one authenticated session that stays open until its
+// streams close. It returns the channel that closes when ServeHTTP returns.
+func openSession(t *testing.T, handler *Handler) <-chan struct{} {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		request := httptest.NewRequest(http.MethodGet, SSHSessionsPath, nil)
+		request.Header.Set("Authorization", "Bearer secret-token")
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for handler.ActiveConnections() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if handler.ActiveConnections() != 1 {
+		t.Fatal("session did not open")
+	}
+	return done
+}
+
+func TestHandlerClosesSessionWhenTokenIsRevoked(t *testing.T) {
+	var logs syncBuffer
+	verifier := &switchVerifier{}
+	handler := NewHandler(Config{RecheckInterval: 5 * time.Millisecond}, Dependencies{
+		Verifier: verifier,
+		Upgrader: &fakeUpgrader{stream: newBlockingStream()},
+		Dialer:   &fakeDialer{stream: newBlockingStream()},
+		Logger:   slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	done := openSession(t, handler)
+
+	verifier.revoked.Store(true)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("session stayed open after its token was revoked")
+	}
+	if !strings.Contains(logs.String(), "reason=token_revoked") {
+		t.Fatalf("close log = %q, want reason=token_revoked", logs.String())
+	}
+}
+
+// slowCloseStream is a WebSocket whose Close waits, as a close handshake
+// with a client that does not answer does.
+type slowCloseStream struct {
+	*blockingStream
+	release chan struct{}
+}
+
+func (s *slowCloseStream) Close() error {
+	<-s.release
+	return s.blockingStream.Close()
+}
+
+func TestHandlerClosesSSHDBeforeAWaitingWebSocket(t *testing.T) {
+	verifier := &switchVerifier{}
+	websocket := &slowCloseStream{
+		blockingStream: newBlockingStream(),
+		release:        make(chan struct{}),
+	}
+	sshd := newBlockingStream()
+	handler := NewHandler(Config{RecheckInterval: 5 * time.Millisecond}, Dependencies{
+		Verifier: verifier,
+		Upgrader: &fakeUpgrader{stream: websocket},
+		Dialer:   &fakeDialer{stream: sshd},
+		Logger:   testLogger(),
+	})
+	done := openSession(t, handler)
+
+	verifier.revoked.Store(true)
+	select {
+	case <-sshd.closed:
+	case <-time.After(time.Second):
+		t.Fatal("sshd stream stayed open while the WebSocket close waited")
+	}
+	close(websocket.release)
+	<-done
+}
+
+func TestHandlerKeepsSessionWhileTokenVerifies(t *testing.T) {
+	websocket := newBlockingStream()
+	handler := NewHandler(Config{RecheckInterval: 5 * time.Millisecond}, Dependencies{
+		Verifier: &switchVerifier{},
+		Upgrader: &fakeUpgrader{stream: websocket},
+		Dialer:   &fakeDialer{stream: newBlockingStream()},
+		Logger:   testLogger(),
+	})
+	done := openSession(t, handler)
+
+	select {
+	case <-done:
+		t.Fatal("session closed while its token still verified")
+	case <-time.After(50 * time.Millisecond):
+	}
+	websocket.Close()
+	<-done
+}
+
+// syncBuffer is a bytes.Buffer that the session goroutine and the test can
+// share.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
