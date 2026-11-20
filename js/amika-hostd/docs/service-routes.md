@@ -108,7 +108,7 @@ with a session cookie instead, set after Amika vouched for its user
   session and B's preview cookie, so A reads and acts on B as the user.
   Services on one host already share the origin's cookies and storage.
   Isolating previews from each other needs an origin per preview, which a
-  tunnel host's named rig hostnames (`<service>--<rig>.r.<org>.o.<zone>`)
+  tunnel host's named rig hostnames (`s-<service>--<rig>--<org>.<zone>`)
   give; until then, keep code you do not trust off a host whose other
   previews you open.
 - A service worker script requested from the root through the preview

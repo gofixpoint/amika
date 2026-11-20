@@ -241,7 +241,7 @@ export function createApp(
   const gateway = hostdGateway(secretKey, amikaUrl);
   const checkSecretKey = requireSecretKey(secretKey);
   // A request the tunnel named by its hostname is that service's, whatever
-  // its path: `/v0beta1/rigs` on `web--rig.r.org.o.<zone>` is the rig's own
+  // its path: `/v0beta1/rigs` on `s-web--rig--org.<zone>` is the rig's own
   // page, never this daemon's machine list. So it goes to the service
   // before any route here can match it, but for the login endpoints, which
   // are how a browser logs in to that origin.
