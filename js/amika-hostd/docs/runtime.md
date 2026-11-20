@@ -308,6 +308,7 @@ rig's runtime, which the machine index recorded at create, and never by the
 request: `command` must be exactly
 `["/bin/sh", "-c", C]` with `C`, byte for byte, one of
 `amikad connect-token set`, `amikad setup sshd --force-overwrite`,
+`amikad setup sshd --force-overwrite --no-agent-forwarding`,
 `amikad authorized-keys set`, `amikad authorized-keys clear`,
 `amikad host-key show` and `amikad serve --beta-no-relay --bg`. Anything else
 is `403` and runs nothing. hostd never invokes a shell: it spawns the amikad
