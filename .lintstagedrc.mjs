@@ -26,6 +26,7 @@ const PACKAGE_BY_PREFIX = [
   ["js/amika-hostd/", "@amika/hostd"],
   ["js/service-auth/", "@amika/service-auth"],
   ["js/tunnel-protocol/", "@amika/tunnel-protocol"],
+  ["js/iroh-rules/", "@amika/iroh-rules"],
 ];
 
 function normalizePath(path) {
