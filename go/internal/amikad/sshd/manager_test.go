@@ -360,3 +360,37 @@ func skipUnlessSecureWrites(t *testing.T) {
 		t.Skip("amikad sensitive writes require Linux or macOS")
 	}
 }
+
+func TestRenderConfigTurnsOffAgentForwardingForAnEndUserRig(t *testing.T) {
+	paths := UserPaths(t.TempDir(), "amika", constants.ManagedSSHDPort)
+	if config := RenderConfig(paths); !strings.Contains(config, "AllowAgentForwarding yes\n") {
+		t.Fatalf("forwarding should stay on by default:\n%s", config)
+	}
+	paths.NoAgentForwarding = true
+	config := RenderConfig(paths)
+	if !strings.Contains(config, "AllowAgentForwarding no\n") {
+		t.Fatalf("config does not turn off agent forwarding:\n%s", config)
+	}
+	if strings.Contains(config, "AllowAgentForwarding yes") {
+		t.Fatalf("config still allows agent forwarding:\n%s", config)
+	}
+	// Port forwarding and the terminal still work on an end-user's rig.
+	if !strings.Contains(config, "AllowTcpForwarding local\n") {
+		t.Fatalf("config lost local port forwarding:\n%s", config)
+	}
+}
+
+func TestSetupNoAgentForwardingOptionTurnsItOff(t *testing.T) {
+	skipUnlessSecureWrites(t)
+	manager, paths, _, _ := testManager(t)
+	if err := manager.Setup(context.Background(), SetupOptions{NoAgentForwarding: true}); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	config, err := os.ReadFile(paths.Config)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(config), "AllowAgentForwarding no\n") {
+		t.Fatalf("config does not turn off agent forwarding:\n%s", config)
+	}
+}
