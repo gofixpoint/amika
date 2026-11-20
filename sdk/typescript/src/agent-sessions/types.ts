@@ -10,10 +10,10 @@ export type AgentSendRequest = Pick<
 export type AgentSendResponse = AgentSessionSendResponse;
 
 /**
- * Request body for POST /api/v0beta1/agent-sessions. Only `message` is
- * required: `sessionId` continues an existing chat, `rig` routes into a
- * specific rig, and `repoUrl` is used only when a rig has to be
- * created behind the scenes.
+ * Request body for POST /api/v0beta1/agent-sessions. `message` is always
+ * required, and `agent` is required to start a new chat (see `agent`).
+ * `sessionId` continues an existing chat, `rig` routes into a specific rig,
+ * and `repoUrl` is used only when a rig has to be created behind the scenes.
  *
  * `rigId` and `sandboxId` are deprecated ID-only spellings of `rig`. When more
  * than one is set, the first non-empty of `rig`, `rigId`, `sandboxId` wins.
@@ -21,7 +21,13 @@ export type AgentSendResponse = AgentSessionSendResponse;
 export interface AgentSessionSendRequest {
   /** User prompt to send to the coding agent. */
   message: string;
-  /** Agent name, such as claude or codex. Omission uses the server-selected agent. */
+  /**
+   * Agent name: claude or codex. Required to start a new chat: with neither
+   * `sessionId` nor `rig`, with `newSession`, or for a `rig` that has no chat
+   * yet. A continued chat (by `sessionId`, or a rig's latest chat) keeps its
+   * own agent, so this may be omitted there; if given, it must match or the
+   * server returns 400.
+   */
   agent?: string;
   /** Server-supported model; omitted inherits, null resets to the agent default. */
   model?: string | null;
@@ -223,7 +229,11 @@ export interface AgentSessions {
   get(sessionId: string): Promise<AgentSession>;
 }
 
-/** A prompt continuing the selected chat, with optional agent/model overrides. */
+/**
+ * A prompt continuing the selected chat. `agent` may be omitted (the chat
+ * keeps its own) and must match the chat's agent if given; `model` and
+ * `effort` are optional overrides.
+ */
 export type ContinueAgentSessionRequest = Pick<
   AgentSessionSendRequest,
   "message" | "agent" | "model" | "effort"
