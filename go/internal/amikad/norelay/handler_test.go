@@ -271,6 +271,43 @@ func TestHandlerClosesSessionWhenTokenIsRevoked(t *testing.T) {
 	}
 }
 
+// slowCloseStream is a WebSocket whose Close waits, as a close handshake
+// with a client that does not answer does.
+type slowCloseStream struct {
+	*blockingStream
+	release chan struct{}
+}
+
+func (s *slowCloseStream) Close() error {
+	<-s.release
+	return s.blockingStream.Close()
+}
+
+func TestHandlerClosesSSHDBeforeAWaitingWebSocket(t *testing.T) {
+	verifier := &switchVerifier{}
+	websocket := &slowCloseStream{
+		blockingStream: newBlockingStream(),
+		release:        make(chan struct{}),
+	}
+	sshd := newBlockingStream()
+	handler := NewHandler(Config{RecheckInterval: 5 * time.Millisecond}, Dependencies{
+		Verifier: verifier,
+		Upgrader: &fakeUpgrader{stream: websocket},
+		Dialer:   &fakeDialer{stream: sshd},
+		Logger:   testLogger(),
+	})
+	done := openSession(t, handler)
+
+	verifier.revoked.Store(true)
+	select {
+	case <-sshd.closed:
+	case <-time.After(time.Second):
+		t.Fatal("sshd stream stayed open while the WebSocket close waited")
+	}
+	close(websocket.release)
+	<-done
+}
+
 func TestHandlerKeepsSessionWhileTokenVerifies(t *testing.T) {
 	websocket := newBlockingStream()
 	handler := NewHandler(Config{RecheckInterval: 5 * time.Millisecond}, Dependencies{

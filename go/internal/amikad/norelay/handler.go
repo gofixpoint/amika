@@ -185,7 +185,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	sessionID := newSessionID()
 	startedAt := time.Now()
 	h.log("ssh_bridge_open", slog.String("session_id", sessionID))
-	stopRecheck := h.closeWhenRevoked(token, websocketStream, sshdStream)
+	stopRecheck := h.closeWhenRevoked(token, sshdStream, websocketStream)
 	fromClient, fromSSHD, closeReason := bridge(websocketStream, sshdStream)
 	if stopRecheck() {
 		closeReason = "token_revoked"
@@ -202,10 +202,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 
 // closeWhenRevoked closes the streams of one session when its token no
 // longer verifies. The control plane rotates the connect token to revoke
-// access, and this makes the rotation end open sessions too. The returned
-// function stops the check and reports whether the check closed the
-// session.
-func (h *Handler) closeWhenRevoked(token string, streams ...Stream) func() bool {
+// access, and this makes the rotation end open sessions too. It closes the
+// sshd stream first: a WebSocket close can wait seconds for the client's
+// close handshake, and bytes from the client must not reach sshd during
+// that wait. The returned function stops the check and reports whether the
+// check closed the session.
+func (h *Handler) closeWhenRevoked(token string, sshd, websocket Stream) func() bool {
 	done := make(chan struct{})
 	finished := make(chan struct{})
 	var revoked atomic.Bool
@@ -222,9 +224,8 @@ func (h *Handler) closeWhenRevoked(token string, streams ...Stream) func() bool 
 					continue
 				}
 				revoked.Store(true)
-				for _, stream := range streams {
-					_ = stream.Close()
-				}
+				_ = sshd.Close()
+				_ = websocket.Close()
 				return
 			}
 		}
