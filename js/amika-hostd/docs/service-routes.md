@@ -37,9 +37,10 @@ needs the key like any other path hostd does not serve.
   service route carries a `hint` saying where a token goes, except for
   `amikad`; it names no CLI command until the CLI has one. `GET /health` lists `service-tokens` in `features` so a control
   plane knows the host takes them (KAPRO-1038).
-- One request needs no key: the SSH WebSocket that `amika sandbox ssh`
-  opens, exactly `GET .../services/amikad/v1/ssh-sessions` as an upgrade,
-  to a running rig whose `amikad` is on port 60999. `amikad` checks the
+- The SSH WebSocket that `amika sandbox ssh` opens needs no host key. It
+  uses exactly `GET .../services/amikad/v1/ssh-sessions` (or the
+  resumable `/v2/ssh-sessions`) as an upgrade, to a running rig whose
+  `amikad` is on port 60999. `amikad` checks the
   connect token the control plane gave the CLI; the key never leaves the
   control plane. Everything else still needs the key.
 - Create takes `services: [{ name, port }]`. The `smol` provider publishes

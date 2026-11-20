@@ -90,16 +90,31 @@ describe("createGateway", () => {
   });
 
   // Only an upgrade may be amikad's SSH WebSocket, never a plain request.
-  it("lets amikad's SSH upgrade through without the key only as an upgrade", async () => {
-    const ssh = request("/v0beta1/rigs/demo/services/amikad/v1/ssh-sessions", {
+  // `/v2` is the resumable route, authenticated the same way.
+  it.each(["v1", "v2"])(
+    "lets amikad's %s SSH upgrade through without the key only as an upgrade",
+    async (version) => {
+      const ssh = request(
+        `/v0beta1/rigs/demo/services/amikad/${version}/ssh-sessions`,
+        { Connection: "Upgrade", Upgrade: "websocket" },
+      );
+      expect(await gateway.authorize(ssh, { upgrade: true })).toMatchObject({
+        kind: "forward",
+        keyless: true,
+      });
+      expect(await gateway.authorize(ssh)).toMatchObject({
+        kind: "refuse",
+        status: 401,
+      });
+    },
+  );
+
+  it("still requires the key on another amikad SSH version", async () => {
+    const ssh = request("/v0beta1/rigs/demo/services/amikad/v3/ssh-sessions", {
       Connection: "Upgrade",
       Upgrade: "websocket",
     });
     expect(await gateway.authorize(ssh, { upgrade: true })).toMatchObject({
-      kind: "forward",
-      keyless: true,
-    });
-    expect(await gateway.authorize(ssh)).toMatchObject({
       kind: "refuse",
       status: 401,
     });
