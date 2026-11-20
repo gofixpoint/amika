@@ -82,6 +82,13 @@ export function refreshingTokenSource(
         "refreshingTokenSource: fetchToken must return a token and a valid expiresAt",
       );
     }
+    // A stale token, or a short one that expired while the call ran, would
+    // only get 401s.
+    if (expiresAtMs <= now()) {
+      throw new AmikaError(
+        "refreshingTokenSource: fetchToken returned a token that has expired",
+      );
+    }
     const lifeMs = expiresAtMs - fetchedAtMs;
     current = {
       token: next.token,

@@ -133,6 +133,29 @@ describe("refreshingTokenSource", () => {
     await expect(source.token()).rejects.toBeInstanceOf(AmikaError);
   });
 
+  it("refuses a token that expired before the fetch returned", async () => {
+    const c = clock();
+    const stale = refreshingTokenSource({
+      fetchToken: async () => ({
+        token: "amk_pt_stale",
+        expiresAt: new Date(c.now() - 1000).toISOString(),
+      }),
+      now: c.now,
+    });
+    await expect(stale.token()).rejects.toBeInstanceOf(AmikaError);
+
+    // Valid when asked for, expired when the slow call returns.
+    const slow = refreshingTokenSource({
+      fetchToken: async () => {
+        const expiresAt = new Date(c.now() + 5000).toISOString();
+        c.advance(10);
+        return { token: "amk_pt_slow", expiresAt };
+      },
+      now: c.now,
+    });
+    await expect(slow.token()).rejects.toBeInstanceOf(AmikaError);
+  });
+
   it("sends the current token as the client's bearer", async () => {
     const c = clock();
     const fetchToken = tokens(30, 30);
