@@ -127,10 +127,13 @@ func (p *resumeProxy) run(ctx context.Context, stdin io.Reader, stdout io.Writer
 func (p *resumeProxy) dialNew(ctx context.Context) (sshresume.Transport, sshresume.Frame, error) {
 	transport, welcome, err := p.dial(ctx, sshresume.Frame{Type: sshresume.FrameHello, Mode: sshresume.HelloNew}, p.timing.DialTimeout)
 	var status *DialStatusError
+	var irohErr *irohDialError
 	switch {
 	case errors.As(err, &status) && (status.StatusCode == http.StatusNotFound || status.StatusCode == http.StatusUnauthorized):
 		p.events.Info("ssh_resume_refused", slog.String("reason", "route_unsupported"), slog.Int("status", status.StatusCode))
 		return nil, sshresume.Frame{}, errResumeUnsupported
+	case errors.As(err, &irohErr):
+		return nil, sshresume.Frame{}, err
 	case err != nil:
 		return nil, sshresume.Frame{}, errors.New("failed to connect direct SSH transport")
 	}
