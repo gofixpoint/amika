@@ -592,13 +592,16 @@ func TestResumeURLReplacesOnlyTheRouteSuffix(t *testing.T) {
 	for in, want := range map[string]string{
 		"wss://sandbox.example/v1/ssh-sessions":                                  "wss://sandbox.example/v2/ssh-sessions",
 		"wss://h.example/base/v0beta1/rigs/demo/services/amikad/v1/ssh-sessions": "wss://h.example/base/v0beta1/rigs/demo/services/amikad/v2/ssh-sessions",
+		"wss://sandbox.example/v1/ssh-sessions?_token=ibp_AbC-123_xyz":           "wss://sandbox.example/v2/ssh-sessions?_token=ibp_AbC-123_xyz",
 	} {
 		if got, ok := resumeURL(in); !ok || got != want {
 			t.Errorf("resumeURL(%q) = %q, %v", in, got, ok)
 		}
 	}
-	if _, ok := resumeURL("wss://sandbox.example/v1/other"); ok {
-		t.Error("a URL without the /v1 route was accepted")
+	for _, in := range []string{"wss://sandbox.example/v1/other", "wss://sandbox.example/v1/other?x=/v1/ssh-sessions"} {
+		if _, ok := resumeURL(in); ok {
+			t.Errorf("resumeURL(%q) accepted a URL without the /v1 route", in)
+		}
 	}
 }
 

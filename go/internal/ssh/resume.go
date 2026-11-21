@@ -57,11 +57,16 @@ const (
 // at once, then longer, each with full jitter.
 var resumeBackoff = []time.Duration{0, 250 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second}
 
-// resumeURL returns the resumable route beside a descriptor's /v1 route.
+// resumeURL returns the resumable route beside a descriptor's /v1 route. It
+// keeps the query: an Instabox port answers only with its _token there.
 func resumeURL(connectURL string) (string, bool) {
-	base, ok := strings.CutSuffix(connectURL, v1SessionsSuffix)
+	path, query, hasQuery := strings.Cut(connectURL, "?")
+	base, ok := strings.CutSuffix(path, v1SessionsSuffix)
 	if !ok {
 		return "", false
+	}
+	if hasQuery {
+		return base + v2SessionsSuffix + "?" + query, true
 	}
 	return base + v2SessionsSuffix, true
 }
