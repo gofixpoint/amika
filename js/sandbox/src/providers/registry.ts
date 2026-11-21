@@ -25,6 +25,8 @@ import type { FreestyleConfig } from "./freestyle/config";
 import type { VercelConfig } from "./vercel/config";
 import type { InstaboxConfig } from "./instabox/config";
 import instaboxProvider, { openInstaboxAdapter } from "./instabox/provider";
+import type { GcpConfig } from "./gcp/config";
+import gcpProvider, { openGcpAdapter } from "./gcp/provider";
 import type { SimulateConfig } from "./simulate/config";
 import simulateProvider, { openSimulateAdapter } from "./simulate/provider";
 import type { SandboxProvider, SnapshotIdResolver } from "./provider";
@@ -58,6 +60,8 @@ export interface SandboxProviderDeps {
   vercel: VercelConfig | null;
   /** Absent means the same as `null`: not configured. */
   instabox?: InstaboxConfig | null;
+  /** Absent means the same as `null`: not configured. */
+  gcp?: GcpConfig | null;
   smol: SmolConfig | null;
   /** Absent means the same as `null`: not configured. */
   lume?: LumeConfig | null;
@@ -103,6 +107,8 @@ const E2B_HINT =
   "E2B provider is not configured (set E2B_ENABLED=true and E2B_API_KEY)";
 const INSTABOX_HINT =
   "Instabox provider is not configured (set INSTABOX_ENABLED=true and INSTABOX_API_KEY)";
+const GCP_HINT =
+  "GCP provider is not configured (set GCP_ENABLED=true and its credentials)";
 const SIMULATE_HINT =
   "Simulate provider is not configured (set SIMULATE_ENABLED=true)";
 
@@ -179,6 +185,13 @@ const PROVIDERS = {
           requireConfig(deps.instabox ?? null, INSTABOX_HINT),
           id,
         ),
+      ),
+  },
+  gcp: {
+    create: (deps) => gcpProvider(requireConfig(deps.gcp ?? null, GCP_HINT)),
+    openAdapter: (deps, id) =>
+      Promise.resolve(
+        openGcpAdapter(requireConfig(deps.gcp ?? null, GCP_HINT), id),
       ),
   },
   simulate: {
