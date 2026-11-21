@@ -23,10 +23,10 @@ amika-mono's `specs/035-host-connection-drops.d/resumable-tunnel.md`.
   applies. A head that breaks it is decoded as `MalformedHeadError`, which
   names the stream, so a receiver can refuse that stream alone.
 - **A change to the wire format is a new subprotocol.** Hosts and the
-  relay ship separately, so an incompatible change under the same name
-  fails in silence. Either negotiate the new name beside the old one on the
-  same path, as v3 does beside v2, or bump the path and make the gateway
-  refuse the old one with `426`.
+  relay ship separately. An incompatible change under the same name fails
+  in silence. Use one of two methods. Negotiate the new name beside the old
+  one on the same path, as v3 does beside v2. Or bump the path, and make
+  the gateway refuse the old one with `426`.
 - **v3 allows stream id 0 for `ACK` only.** Read v3 with `decodeFrameV3`.
   `decodeFrame` reads v2 and refuses an `ACK`.
 - **Bound replay payloads and frame counts.** Keep at most 65,536 frames,

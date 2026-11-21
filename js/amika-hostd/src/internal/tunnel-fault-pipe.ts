@@ -184,19 +184,6 @@ export class FaultPipe {
   }
 }
 
-function lane(): Lane {
-  return { queue: [], queuedBytes: 0, budget: 0, refilledAt: Date.now() };
-}
-
-function sizeOf(data: Uint8Array | string): number {
-  return typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
-}
-
-const CONNECTING = 0;
-const OPEN = 1;
-const CLOSING = 2;
-const CLOSED = 3;
-
 /** The subset of `ws`'s client that `TunnelLink` and the dial use. */
 export class FakeHostSocket extends EventEmitter {
   readonly CONNECTING = CONNECTING;
@@ -232,21 +219,28 @@ export class FakeHostSocket extends EventEmitter {
     this.paused = true;
   }
 
+  /** Like `ws`, emit held messages later, not inside this call. */
   resume(): void {
     this.paused = false;
-    const held = this.held;
-    this.held = [];
-    for (const data of held) this.deliver(data);
+    queueMicrotask(() => this.flush());
   }
 
   /** One message from the relay arrives. */
   deliver(data: Uint8Array | string): void {
     if (this.readyState !== OPEN) return;
-    if (this.paused) {
+    if (this.paused || this.held.length > 0) {
       this.held.push(data);
       return;
     }
     this.emit("message", data, typeof data !== "string");
+  }
+
+  private flush(): void {
+    while (!this.paused && this.readyState === OPEN) {
+      const data = this.held.shift();
+      if (data === undefined) return;
+      this.emit("message", data, typeof data !== "string");
+    }
   }
 
   close(code = 1005): void {
@@ -268,3 +262,16 @@ export class FakeHostSocket extends EventEmitter {
     this.emit("close", code, Buffer.from(reason));
   }
 }
+
+function lane(): Lane {
+  return { queue: [], queuedBytes: 0, budget: 0, refilledAt: Date.now() };
+}
+
+function sizeOf(data: Uint8Array | string): number {
+  return typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
+}
+
+const CONNECTING = 0;
+const OPEN = 1;
+const CLOSING = 2;
+const CLOSED = 3;

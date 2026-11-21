@@ -91,9 +91,9 @@ Each of these is stated in full, with its reason, in the doc it links to.
   strings from `@amika/tunnel-protocol`, because the runtime's answer
   covers relayed WebSockets too and a bare `ping` would swallow a
   service's own heartbeat. A closed laptop lid leaves a socket that looks
-  alive. End the socket if no relay message answers the ping before its
-  deadline. Accept any relay message as an answer. A `PONG` can wait behind
-  stream data on a busy connection.
+  alive. End the socket when too many pings in a row get no answer before
+  their deadline: two for v2, one for v3. Accept any relay message as an
+  answer. A `PONG` can wait behind stream data on a busy connection.
 - **Shutdown closes the WebSocket**, which is what makes the relay give
   up the route. Dropping the connection loses every request sent before the
   relay notices.

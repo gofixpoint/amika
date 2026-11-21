@@ -142,7 +142,7 @@ export const ACK_DELAY_MS = 200;
 export const RESUME_GRACE_MS = 60_000;
 /**
  * v3: hostd's keep-alive. With resume, ending a socket early costs a resume
- * and not every stream, so a v3 socket ends at its first missed `PONG`, and
+ * and not every stream, so a v3 socket ends at its first missed ping, and
  * a silent break is found in about 15 s.
  */
 export const RESUME_KEEP_ALIVE_INTERVAL_MS = 10_000;

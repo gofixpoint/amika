@@ -766,6 +766,22 @@ describe("when the session cannot go on", () => {
     expect(relay.closes).toEqual([CLOSE_SESSION_ENDED]);
     expect(ofType(events, "tunnel_session_ended")[0]?.reason).toBe("stopped");
   });
+
+  it("drains and closes when a ping sent before shutdown goes unanswered", async () => {
+    const { relay, client, events } = await attach();
+    await upgraded(relay);
+    relay.answerPings = false;
+    const view = client as unknown as {
+      session?: { link?: { pending?: unknown } };
+    };
+    while (view.session?.link?.pending === undefined) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    // The drain waits for the open stream, past the ping's deadline.
+    await client.stop();
+    expect(relay.closes).toEqual([CLOSE_SESSION_ENDED]);
+    expect(ofType(events, "tunnel_detached")).toEqual([]);
+  });
 });
 
 describe("with resume off, or a relay that does not resume", () => {
