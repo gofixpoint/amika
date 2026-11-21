@@ -7,7 +7,7 @@ import {
   createBoatSandbox,
   mapBoatSandboxState,
 } from "./operations";
-import { collectFrames } from "./shell";
+import { collectFrames, exitCodeOf } from "./shell";
 
 const CONFIG = { apiKey: "boat_test", apiUrl: "https://boat.test/api/v1" };
 const logger = moduleLogger({ test: "boat" });
@@ -39,6 +39,12 @@ describe("collectFrames", () => {
       lines({ type: "exit", exitCode: null, timedOut: true }),
     );
     expect(result.exitCode).toBe(124);
+  });
+
+  it("reports a signal, not a time out, for a killed command", () => {
+    expect(exitCodeOf({ exitCode: null, signal: "SIGTERM" })).toBe(143);
+    expect(exitCodeOf({ exitCode: null, oomKilled: true })).toBe(137);
+    expect(exitCodeOf({ exitCode: 0, timedOut: false })).toBe(0);
   });
 
   it("throws on an error frame or a stream with no exit", async () => {

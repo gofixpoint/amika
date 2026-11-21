@@ -36,6 +36,8 @@ const frameSchema = z.object({
   data: z.string().optional(),
   exitCode: z.number().nullish(),
   timedOut: z.boolean().optional(),
+  signal: z.string().nullish(),
+  oomKilled: z.boolean().optional(),
   error: z.string().optional(),
   message: z.string().optional(),
 });
@@ -114,13 +116,7 @@ export async function collectFrames(
         else stderr += frame.data ?? "";
         break;
       case "exit":
-        return {
-          exitCode: frame.timedOut
-            ? TIMED_OUT_EXIT
-            : (frame.exitCode ?? TIMED_OUT_EXIT),
-          stdout,
-          stderr,
-        };
+        return { exitCode: exitCodeOf(frame), stdout, stderr };
       case "error":
         throw new BoatApiError(
           0,
@@ -133,4 +129,34 @@ export async function collectFrames(
     }
   }
   throw new Error("boat command stream ended without an exit frame");
+}
+
+/** POSIX signal numbers boat may name in an `exit` frame. */
+const SIGNAL_NUMBERS: Record<string, number> = {
+  SIGHUP: 1,
+  SIGINT: 2,
+  SIGQUIT: 3,
+  SIGABRT: 6,
+  SIGKILL: 9,
+  SIGSEGV: 11,
+  SIGPIPE: 13,
+  SIGTERM: 15,
+};
+
+/**
+ * The exit code of an `exit` frame: its code when it has one; 124 for a
+ * time out, as `timeout` reports; 137 for the OOM killer (SIGKILL); else
+ * 128 + the signal's number, as a shell reports. Exported for tests.
+ */
+export function exitCodeOf(frame: {
+  exitCode?: number | null;
+  timedOut?: boolean;
+  signal?: string | null;
+  oomKilled?: boolean;
+}): number {
+  if (frame.exitCode != null) return frame.exitCode;
+  if (frame.timedOut) return TIMED_OUT_EXIT;
+  if (frame.oomKilled) return 128 + SIGNAL_NUMBERS.SIGKILL;
+  const signal = frame.signal ? SIGNAL_NUMBERS[frame.signal] : undefined;
+  return 128 + (signal ?? 0);
 }

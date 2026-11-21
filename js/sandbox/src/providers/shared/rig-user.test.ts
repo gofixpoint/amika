@@ -85,6 +85,14 @@ describe("rigUserOps over a real shell", () => {
     });
   });
 
+  it("keeps a command's own exit code when it reads only part of stdin", async () => {
+    const ops = rigUserOps(shell);
+    const result = await ops.exec("head -c 1 >/dev/null; exit 0", {
+      input: "x".repeat(512 * 1024),
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
   it("delivers stdin and removes the staged input", async () => {
     const ops = rigUserOps(shell);
     const result = await ops.exec("tr a-z A-Z", { input: "secret input" });
@@ -161,5 +169,8 @@ describe("command lines", () => {
     expect(script).toContain("--home-dir '/home/amika'");
     expect(script).toContain("/etc/sudoers.d/90-amika");
     expect(script).toMatch(/if ! id -u 'amika'/);
+    // Command lines carry secrets, so sudo must not log them.
+    expect(script).toContain("Defaults !syslog, !logfile");
+    expect(script).toContain("visudo -cqf");
   });
 });

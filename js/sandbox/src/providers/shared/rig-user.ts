@@ -18,7 +18,12 @@
  *   machine user does on the other providers.
  * - **Read** runs `base64` as `amika`, so a file `amika` cannot read is
  *   refused, as it would be on the other providers.
- * - **Stdin** stages the input as a file and pipes it to the command.
+ * - **Stdin** stages the input as a file and redirects it to the command.
+ * - **Logging.** Every command goes through `sudo`, which logs each command
+ *   line to syslog by default, and command lines carry secrets (a clone
+ *   URL with a token, `env` values). {@link ensureRigUserScript} turns
+ *   sudo's logging off, so they do not land in the machine's logs or in a
+ *   capture of its disk.
  *
  * The provider calls {@link RigUserOps.ensureRigUser} when it creates a
  * sandbox, before any other call. It makes `amika` with home
@@ -41,6 +46,9 @@ export const RIG_USER = "amika";
 
 /** The rig user's home on a vendor whose own user is someone else. */
 export const RIG_USER_HOME = DEFAULT_HOME_DIR;
+
+/** Turns off sudo's own command log (syslog and log file). */
+const SUDO_NO_LOG_RULE = "Defaults !syslog, !logfile";
 
 /** Command input larger than this is refused, as on the other providers. */
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -109,10 +117,12 @@ export function rigUserOps(shell: VendorShell): RigUserOps {
       if (Buffer.byteLength(opts.input, "utf8") > MAX_INPUT_BYTES) {
         throw new Error("Command input exceeds the 1 MiB limit");
       }
+      // The vendor user's shell opens the staged file, which it owns, and
+      // hands it to the command as stdin. A redirect, not a pipe from
+      // `cat`: a command that stops reading early must not turn into a
+      // SIGPIPE exit code.
       return withStaged(shell, opts.input, (staged) =>
-        shell.run(
-          `set -o pipefail; sudo -n cat -- ${shellQuote(staged)} | ${line}`,
-        ),
+        shell.run(`${line} < ${shellQuote(staged)}`),
       );
     },
 
@@ -161,8 +171,9 @@ export function rigUserOps(shell: VendorShell): RigUserOps {
 
 /**
  * The script that makes `amika`: a user and group with home
- * {@link RIG_USER_HOME}, a login shell, and passwordless `sudo`. It changes
- * nothing when the user exists. Exported for tests.
+ * {@link RIG_USER_HOME}, a login shell, and passwordless `sudo`, and turns
+ * off sudo's command log. It changes nothing when that is all in place.
+ * Exported for tests.
  */
 export function ensureRigUserScript(): string {
   const user = shellQuote(RIG_USER);
@@ -174,6 +185,14 @@ export function ensureRigUserScript(): string {
     "fi",
     `echo ${shellQuote(`${RIG_USER} ALL=(ALL) NOPASSWD:ALL`)} | sudo -n tee /etc/sudoers.d/90-amika >/dev/null`,
     "sudo -n chmod 0440 /etc/sudoers.d/90-amika",
+    // No sudo command log: the command lines carry secrets. Installed only
+    // when visudo accepts it, since a bad sudoers file disables sudo.
+    'quiet="$(mktemp)"',
+    `printf '%s\\n' ${shellQuote(SUDO_NO_LOG_RULE)} > "$quiet"`,
+    'if sudo -n visudo -cqf "$quiet"; then',
+    '  sudo -n install -m 0440 -o root -g root "$quiet" /etc/sudoers.d/89-amika-no-log',
+    "fi",
+    'rm -f "$quiet"',
   ].join("\n");
 }
 
