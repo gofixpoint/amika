@@ -41,6 +41,7 @@ type Case struct {
 // so a provider added in one place cannot be silently unknown in the other.
 var SupportedSandboxProviders = map[string]bool{
 	"boat":      true,
+	"boxd":      true,
 	"daytona":   true,
 	"e2b":       true,
 	"freestyle": true,

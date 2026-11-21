@@ -14,6 +14,7 @@ export const SANDBOX_PROVIDER_NAMES = [
   "freestyle",
   "vercel",
   "instabox",
+  "boxd",
   "orble",
   "runtime",
   "boat",
