@@ -13,6 +13,7 @@ import { DEFAULT_HOME_DIR } from "../../constants";
 import type { SimulateConfig } from "./config";
 import { simulateCapabilities } from "./capabilities";
 import { defineProvider } from "../shared/define-provider";
+import { DEFAULT_SIMULATE_RESOURCES } from "./internal/world";
 import {
   captureSimulateSnapshot,
   createSimulateImageSnapshot,
@@ -106,6 +107,10 @@ export default defineProvider(
         capture: (id, name, opts) =>
           captureSimulateSnapshot(world, id, name, opts),
         isEnvScrubbable: (id) => isSimulateEnvScrubbable(world, id),
+      },
+      // One size, the one a create naming none gets.
+      account: {
+        listSizes: async () => [{ ...DEFAULT_SIMULATE_RESOURCES }],
       },
     };
   },

@@ -22,6 +22,7 @@ package amikad
 // the control-plane side: generation, hashing, and per-start rotation.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,10 +40,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofixpoint/amika/go/internal/amikad/bootstrap"
 	"github.com/gofixpoint/amika/go/internal/amikad/norelay"
 	"github.com/gofixpoint/amika/go/internal/amikad/platform"
 	"github.com/gofixpoint/amika/go/internal/amikad/sshd"
 	"github.com/gofixpoint/amika/go/internal/amikad/state"
+	"github.com/gofixpoint/amika/go/internal/amikad/toolchain"
+	"github.com/gofixpoint/amika/go/internal/buildmeta"
+	"github.com/gofixpoint/amika/go/internal/sandbox"
 )
 
 // ErrNoServeMode marks a serve invocation with no explicitly enabled
@@ -119,7 +124,10 @@ func NewProductionOperations() (*DaemonOperations, error) {
 
 // SetupSSHD installs the managed OpenSSH policy.
 func (o *DaemonOperations) SetupSSHD(ctx context.Context, options SetupSSHDOptions) error {
-	return o.sshd.Setup(ctx, sshd.SetupOptions{ForceOverwrite: options.ForceOverwrite})
+	return o.sshd.Setup(ctx, sshd.SetupOptions{
+		ForceOverwrite:    options.ForceOverwrite,
+		NoAgentForwarding: options.NoAgentForwarding,
+	})
 }
 
 // ShowHostKey prints only the canonical public host key.
@@ -359,4 +367,153 @@ func serveReady(ctx context.Context, listen serveListen) bool {
 		return false
 	}
 	return status.Mode == "beta_no_relay" && status.Port == listen.port
+}
+
+// Bootstrap installs the Amika runtime onto a machine that booted the
+// provider's own image. It needs root.
+func (o *DaemonOperations) Bootstrap(ctx context.Context, options BootstrapOptions) error {
+	if os.Geteuid() != 0 {
+		return errors.New("amikad bootstrap must run as root")
+	}
+	useStandardUmask()
+	b := &bootstrap.Bootstrapper{
+		Root:   "/",
+		System: bootstrap.OSSystem{Output: options.Log},
+		Hooks:  sandbox.LifecycleHookFS(),
+		Log:    options.Log,
+	}
+	return b.Run(ctx, bootstrap.Options{
+		Home:    options.Home,
+		Version: buildmeta.AmikadVersion.String(),
+	})
+}
+
+// installLogPath receives a background install's output.
+const installLogPath = "/var/log/amikad/install.log"
+
+// InstallToolchain installs the defaults plus options.Deps, minus
+// options.Without, from the lockfile. It needs root.
+func (o *DaemonOperations) InstallToolchain(ctx context.Context, options InstallOptions, stdin io.Reader) error {
+	if os.Geteuid() != 0 {
+		return errors.New("amikad install must run as root")
+	}
+	useStandardUmask()
+	data, err := readLockfile(options.Lockfile, stdin)
+	if err != nil {
+		return err
+	}
+	if options.DeleteLockfile && options.Lockfile != "-" {
+		_ = os.Remove(options.Lockfile)
+	}
+	lock, err := toolchain.Parse(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	// Refuse unknown names before detaching, so the caller sees the error.
+	selection, err := toolchain.Select(lock, options.Deps, options.Without)
+	if err != nil {
+		return err
+	}
+	if options.Background {
+		return installInBackground(data, options)
+	}
+	b := &bootstrap.Bootstrapper{
+		Root:   "/",
+		System: bootstrap.OSSystem{Output: options.Log},
+		Log:    options.Log,
+	}
+	encoder := json.NewEncoder(options.Out)
+	return toolchain.Install(ctx, selection, toolchain.Options{
+		EnsureOpenSSHServer: b.EnsureOpenSSHServer,
+		Report:              func(timing toolchain.Timing) { _ = encoder.Encode(timing) },
+		Log:                 options.Log,
+	})
+}
+
+// maxLockfileBytes bounds the lockfile read; Parse refuses anything larger.
+const maxLockfileBytes = 1 << 20
+
+func readLockfile(path string, stdin io.Reader) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(io.LimitReader(stdin, maxLockfileBytes+1))
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, maxLockfileBytes+1))
+}
+
+// installInBackground copies the lockfile beside amikad's state and starts a
+// detached `amikad install` on it, which removes the copy once read. When
+// the install does not start, the copy is removed here.
+func installInBackground(lockfile []byte, options InstallOptions) (err error) {
+	copyFile, err := os.CreateTemp(platform.StateDirectory, "install-*.lock.json")
+	if err != nil {
+		return fmt.Errorf("stage the lockfile: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(copyFile.Name())
+		}
+	}()
+	if _, err := copyFile.Write(lockfile); err != nil {
+		copyFile.Close()
+		return err
+	}
+	if err := copyFile.Close(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(installLogPath), 0o755); err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(installLogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open the install log: %w", err)
+	}
+	defer logFile.Close()
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	args := []string{"install", "--lockfile", copyFile.Name(), "--delete-lockfile"}
+	for _, dep := range options.Deps {
+		args = append(args, "--dep", dep)
+	}
+	for _, dep := range options.Without {
+		args = append(args, "--without", dep)
+	}
+	command := exec.Command(executable, args...)
+	command.Stdout = logFile
+	command.Stderr = logFile
+	if err := platform.Current().DetachProcess(command); err != nil {
+		return err
+	}
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("start the background install: %w", err)
+	}
+	return command.Process.Release()
+}
+
+// WaitReady polls amikad serve's status endpoint until it answers for
+// options.Port, replacing a python3 poll the control plane used to run.
+func (o *DaemonOperations) WaitReady(ctx context.Context, options WaitReadyOptions) error {
+	listen := o.resolveListen(options.Port)
+	deadline := time.NewTimer(options.Timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if serveReady(ctx, listen) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("amikad did not answer on %s within %s", listen.probe, options.Timeout)
+		case <-ticker.C:
+		}
+	}
 }

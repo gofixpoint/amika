@@ -17,10 +17,12 @@ import (
 	"github.com/gofixpoint/amika/go/internal/constants"
 )
 
-// Environment variables that select and configure user mode. amikad has no
-// flag for user mode: amika-hostd selects it on a bare-metal host through the
-// environment it runs amikad with, so the control plane's commands are the
-// same for every rig.
+// Environment variables that configure amikad. ResolveLayout reads each of
+// them. Do not read amikad configuration from the environment anywhere else.
+//
+// The user-mode variables have no flag: amika-hostd selects user mode on a
+// bare-metal host through the environment it runs amikad with, so the
+// control plane's commands are the same for every rig.
 const (
 	// EnvStateDir, when set, selects user mode and roots all amikad state.
 	EnvStateDir = "AMIKAD_STATE_DIR"
@@ -29,6 +31,15 @@ const (
 	EnvListen = "AMIKAD_LISTEN"
 	// EnvSSHDPort is the managed sshd's loopback port in user mode.
 	EnvSSHDPort = "AMIKAD_SSHD_PORT"
+	// EnvManagedUser, in root mode, names the account that the managed sshd
+	// admits, and that owns its authorized_keys file. Empty uses "amika".
+	EnvManagedUser = "AMIKA_SSHD_USER"
+	// EnvNoAgentForwarding turns off SSH agent forwarding when it is "1".
+	// Any other value leaves forwarding on. `amikad setup sshd
+	// --no-agent-forwarding` does the same. The control plane sends the
+	// variable, not the flag: an older amikad ignores the variable and still
+	// starts, but refuses a flag that it does not know.
+	EnvNoAgentForwarding = "AMIKA_SSHD_NO_AGENT_FORWARDING"
 )
 
 const (
@@ -59,20 +70,32 @@ type Layout struct {
 	SSHD       sshd.Paths
 }
 
-// RootLayout is the layout amikad has always used inside a rig VM.
-func RootLayout() Layout {
+// RootLayout is the layout amikad has always used inside a rig VM, for the
+// managed account username ("" uses "amika").
+func RootLayout(username string) Layout {
 	return Layout{
 		ManifestPath: rootManifestPath,
 		TokenPath:    rootTokenPath,
 		ServeLogPath: rootServeLogPath,
-		SSHD:         sshd.DefaultPaths(),
+		SSHD:         sshd.DefaultPaths(username),
 	}
 }
 
-// ResolveLayout selects root or user mode from the environment. Without
-// EnvStateDir it returns RootLayout, and refuses the other user-mode
-// variables rather than silently ignoring them.
+// ResolveLayout reads amikad's configuration from the environment. It
+// selects root or user mode, then applies the settings of both modes.
 func ResolveLayout(getenv func(string) string, currentUser func() (*user.User, error)) (Layout, error) {
+	layout, err := resolveModeLayout(getenv, currentUser)
+	if err != nil {
+		return Layout{}, err
+	}
+	layout.SSHD.NoAgentForwarding = getenv(EnvNoAgentForwarding) == "1"
+	return layout, nil
+}
+
+// resolveModeLayout selects root or user mode. Without EnvStateDir it
+// returns RootLayout, and refuses the other user-mode variables rather than
+// silently ignoring them.
+func resolveModeLayout(getenv func(string) string, currentUser func() (*user.User, error)) (Layout, error) {
 	stateDirectory := getenv(EnvStateDir)
 	if stateDirectory == "" {
 		for _, name := range []string{EnvListen, EnvSSHDPort} {
@@ -80,7 +103,7 @@ func ResolveLayout(getenv func(string) string, currentUser func() (*user.User, e
 				return Layout{}, fmt.Errorf("%w: %s requires %s", ErrInvalidEnvironment, name, EnvStateDir)
 			}
 		}
-		return RootLayout(), nil
+		return RootLayout(getenv(EnvManagedUser)), nil
 	}
 	return resolveUserLayout(stateDirectory, getenv, currentUser)
 }

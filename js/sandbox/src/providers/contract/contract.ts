@@ -377,6 +377,17 @@ export function describeProviderContract(target: ProviderContractTarget): void {
       });
     });
 
+    describe.skipIf(!caps.accountSizes)("account sizes", () => {
+      it("lists the sizes a sandbox may have, each with CPUs and memory", async () => {
+        const sizes = await provider.account!.sizes();
+        expect(sizes.length).toBeGreaterThan(0);
+        for (const size of sizes) {
+          expect(size.vcpus).toBeGreaterThan(0);
+          expect(size.memoryGib).toBeGreaterThan(0);
+        }
+      });
+    });
+
     describe.skipIf(!caps.ssh)("ssh", () => {
       it("mints access that expires later and can be revoked", async () => {
         const sandbox = await createSandbox();

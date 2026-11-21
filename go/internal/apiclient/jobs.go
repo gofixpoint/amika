@@ -129,6 +129,7 @@ type JobRun struct {
 	CommandRunIDs      []string `json:"command_run_ids"`
 	FinishCommandRunID *string  `json:"finish_command_run_id"`
 	Error              *string  `json:"error"`
+	CancelRequestedAt  *string  `json:"cancel_requested_at"`
 	RigID              *string  `json:"rig_id"`
 	RigName            *string  `json:"rig_name"`
 	CreatedAt          string   `json:"created_at"`
@@ -254,6 +255,17 @@ func (c *Client) ListJobRuns(q ListJobRunsQuery) (*ListJobRunsResponse, error) {
 func (c *Client) GetJobRun(id string) (*JobRun, error) {
 	var out JobRun
 	if err := c.doJSON("GET", apiBasePath+"/job-runs/"+url.PathEscape(id), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CancelJobRun calls POST /api/v0beta1/job-runs/{id}/cancel. A pending job
+// run comes back cancelled. A running one comes back still running, with
+// CancelRequestedAt set, and ends cancelled once its current step stops.
+func (c *Client) CancelJobRun(id string) (*JobRun, error) {
+	var out JobRun
+	if err := c.doJSON("POST", apiBasePath+"/job-runs/"+url.PathEscape(id)+"/cancel", nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

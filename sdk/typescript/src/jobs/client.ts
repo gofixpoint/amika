@@ -126,6 +126,13 @@ export function createJobRuns(http: HTTPClient): JobRuns {
           `${base}/${pathSegment(id, "job run id")}`,
         )) ?? {},
       ),
+    cancel: async (id) =>
+      jobRunFromWire(
+        (await http.doJSON<Record<string, unknown>>(
+          "POST",
+          `${base}/${pathSegment(id, "job run id")}/cancel`,
+        )) ?? {},
+      ),
   };
 }
 

@@ -87,6 +87,15 @@ export interface CreateSandboxProviderInput {
   resources?: SandboxResources;
   /** Non-secret environment variables that must exist in the provider image. */
   envVars?: Record<string, string>;
+  /**
+   * Minutes with no activity before the sandbox stops. This is an idle
+   * timeout, not a hard limit: activity resets the timer. `0` means never
+   * stop. Absent means the provider's default.
+   *
+   * Map it to the vendor's idle timer. If the vendor has only a fixed
+   * session timeout (like E2B and Vercel), a sandbox in use can stop.
+   * Say so in the provider's docs.
+   */
   autoStopInterval?: number;
   autoDeleteInterval?: number;
   /** The caller-ordered service list to expose and return unchanged by identity. */
@@ -534,6 +543,15 @@ export interface DockerRegistryCapability {
   deleteRegistry(registryId: string): Promise<void>;
 }
 
+/** What the credentials in use may do at the provider's account level. */
+export interface AccountCapability {
+  /**
+   * The sizes a new sandbox may have with these credentials, the size a
+   * create naming none gets first. Never empty.
+   */
+  listSizes(): Promise<SandboxResources[]>;
+}
+
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -600,6 +618,13 @@ export interface SandboxProviderCapabilities {
    * auto-delete request is rejected at create rather than silently ignored.
    */
   supportsAutoDelete: boolean;
+  /**
+   * The provider reports the sizes the credentials in use may create
+   * (`provider.account` is non-null iff true). The sizes depend on the
+   * account, for example on its plan, so a consumer asks rather than keeps a
+   * table.
+   */
+  accountSizes: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -635,6 +660,7 @@ export interface SandboxCapability {
   // on a lifecycle provider; all absent on a create/delete-only one.
   start?(
     providerSandboxId: string,
+    /** Same meaning as `CreateSandboxProviderInput.autoStopInterval`. */
     autoStopInterval?: number | null,
   ): Promise<void>;
   stop?(providerSandboxId: string): Promise<void>;
@@ -878,6 +904,7 @@ export interface Sandbox {
   readonly provider: SandboxProviderName;
   /** The creation result, present only on a `Sandbox` returned from `create`. */
   readonly created?: CreatedProviderSandbox;
+  /** `autoStopInterval` has the same meaning as on create. */
   start(autoStopInterval?: number | null): Promise<void>;
   stop(): Promise<void>;
   delete(): Promise<void>;
@@ -989,6 +1016,16 @@ export interface DockerNamespace {
   readonly registries: DockerRegistryNamespace;
 }
 
+/** The provider account the credentials in use belong to (`provider.account`). */
+export interface AccountNamespace {
+  /**
+   * The sizes a new sandbox may have with these credentials, as the
+   * provider reports them now. The first is the size a create naming none
+   * gets. Never empty.
+   */
+  sizes(): Promise<readonly SandboxResources[]>;
+}
+
 /**
  * The sandbox-provisioner contract every consumer codes against. Provider-
  * agnostic and free of control-plane concerns. Resolve one through the registry
@@ -1027,4 +1064,6 @@ export interface SandboxProvider {
   readonly snapshots: SnapshotNamespace | null;
   /** Docker registry objects, or null when unsupported. */
   readonly docker: DockerNamespace | null;
+  /** The account's sizes, or null when unsupported (`capabilities.accountSizes`). */
+  readonly account: AccountNamespace | null;
 }

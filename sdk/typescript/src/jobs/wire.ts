@@ -150,6 +150,7 @@ export function jobRunFromWire(w: Record<string, unknown>): JobRun {
     commandRunIds: strArray(w["command_run_ids"]),
     finishCommandRunId: nullableStr(w["finish_command_run_id"]),
     error: nullableStr(w["error"]),
+    cancelRequestedAt: nullableStr(w["cancel_requested_at"]),
     rigId: nullableStr(w["rig_id"]),
     rigName: nullableStr(w["rig_name"]),
     createdAt: str(w["created_at"]),

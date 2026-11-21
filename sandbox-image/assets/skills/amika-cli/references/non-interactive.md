@@ -10,8 +10,8 @@ name=$(amika rig create --no-git -o json | jq -r .name)
 amika rig list -o json | jq -r '.[].name'
 ```
 
-Most list commands return a bare array (`[]` when empty). `snapshot list`
-returns `{"items": [...]}`. Batch mutations return an array of item results;
+Most list commands return a bare array (`[]` when empty). `snapshot list`,
+`job list`, and `cloud-account list` return `{"items": [...]}`. Batch mutations return an array of item results;
 inspect each item's `status` and `error`.
 
 ## Prompts
@@ -22,10 +22,15 @@ JSON mode never prompts. Pass the bypass flag when required:
 | ----------------------- | ---------------------------------------------- |
 | `rig delete`            | `--force`                                      |
 | `host delete`           | `--force` / `-f`                               |
+| `cloud-account delete`  | `--force` / `-f`                               |
 | `snapshot create`       | `--no-interactive`, plus `--mode` and `--name` |
 | `snapshot delete`       | `--force` / `-f`                               |
 | `service delete`        | `--force` / `-f`                               |
 | `secret ssh-key delete` | `--force` / `-f`                               |
+
+`cloud-account create` and `update` never prompt for the provider API key.
+Pass it with `--api-key-file <path>` (`-` reads stdin) or
+`--api-key-env <var>`.
 
 `secret push` and `secret extract --push` have no bypass flag and prompt on
 stdin. If the operation is intended, pipe the confirmation:

@@ -42,12 +42,15 @@ func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient
 // sandboxSSHAlias is the stable Amika-managed SSH alias for a sandbox plus the
 // identity needed to label and locate it, shared by every editor `sandbox open` opens.
 // bareMetal marks a rig on a bare-metal host, which has no /home/amika
-// workspace to open.
+// workspace to open. agentCWD is the API's agent_cwd, and sshUser the login
+// account the SSH session reported; either is empty when unknown.
 type sandboxSSHAlias struct {
 	alias       string
 	sandboxName string
 	repoName    string
 	bareMetal   bool
+	agentCWD    string
+	sshUser     string
 }
 
 // remotePath is the remote folder an editor opens for this target, or "" for
@@ -61,7 +64,7 @@ func (t sandboxSSHAlias) remotePath(pathOverride string) string {
 		}
 		return ""
 	}
-	return resolveRemoteWorkspacePath(t.repoName, pathOverride)
+	return resolveRemoteWorkspacePath(t.agentCWD, t.repoName, pathOverride)
 }
 
 // validateBareMetalPath rejects a relative --path for a bare-metal rig, where
@@ -237,12 +240,23 @@ func openSandboxInPaseoTarget(cmd *cobra.Command, target sandboxSSHAlias) error 
 	fmt.Fprintln(out)
 	// A bare-metal rig's login account is the host's own, which the managed
 	// SSH config already names for this alias, so the URL leaves it out.
+	// Any other rig names the account its SSH session reported: amika on a
+	// rig built from Amika's images, the provider's own on one that is not.
 	if target.bareMetal {
 		fmt.Fprintf(out, "ssh://%s\n", target.alias)
 	} else {
-		fmt.Fprintf(out, "ssh://amika@%s\n", target.alias)
+		fmt.Fprintf(out, "ssh://%s@%s\n", target.loginUser(), target.alias)
 	}
 	return nil
+}
+
+// loginUser is the account the rig's SSH session logs in as, or
+// apiclient.DefaultSSHUser when the session did not say.
+func (t sandboxSSHAlias) loginUser() string {
+	if t.sshUser != "" {
+		return t.sshUser
+	}
+	return apiclient.DefaultSSHUser
 }
 
 // herdrMachine is the subset of a `herdr machine list --json` entry amika reads.
@@ -304,22 +318,60 @@ func listHerdrMachines() ([]herdrMachine, error) {
 }
 
 // resolveRemoteWorkspacePath computes the remote path to open in the editor.
-// An absolute pathOverride is used verbatim; a relative one is joined onto
-// /home/amika so that e.g. "workspace/biz" → "/home/amika/workspace/biz".
-// When pathOverride is empty the default workspace path is used, optionally
-// extended with the repo name.
-func resolveRemoteWorkspacePath(repoName, pathOverride string) string {
+// agentCWD is the API's agent_cwd: the directory agents run in, which the
+// server builds as <home>/workspace[/<repo>] from the provider's own home
+// directory. An absolute pathOverride is used verbatim; a relative one is
+// joined onto the rig's home, so that e.g. "workspace/biz" →
+// "<home>/workspace/biz". With no pathOverride, agentCWD is used.
+//
+// A control plane that does not report agent_cwd sends none, and the rig is
+// then taken to be one built from Amika's images: home /home/amika, and the
+// workspace path extended with the repo name.
+func resolveRemoteWorkspacePath(agentCWD, repoName, pathOverride string) string {
+	home := rigHomeDir(agentCWD, repoName)
 	if pathOverride != "" {
 		if path.IsAbs(pathOverride) {
 			return pathOverride
 		}
-		return path.Join("/home/amika", pathOverride)
+		return path.Join(home, pathOverride)
 	}
-	remotePath := "/home/amika/workspace"
+	if path.IsAbs(agentCWD) {
+		return agentCWD
+	}
+	remotePath := path.Join(home, "workspace")
 	if repoName != "" {
 		remotePath = remotePath + "/" + repoName
 	}
 	return remotePath
+}
+
+// defaultRigHome is the login account's home on a rig built from Amika's
+// images. A provider's own image can put it elsewhere (InstaBox uses
+// /data/home), which agent_cwd reports.
+const defaultRigHome = "/home/amika"
+
+// rigHomeDir derives the rig's home from agentCWD, which the server builds as
+// <home>/workspace or <home>/workspace/<repo> (getRepoDir in @amika/sandbox).
+// The repo is absent when the rig has none, or when cloning it failed. It
+// returns defaultRigHome when agentCWD is empty or has another shape.
+func rigHomeDir(agentCWD, repoName string) string {
+	if !path.IsAbs(agentCWD) {
+		return defaultRigHome
+	}
+	dir := path.Clean(agentCWD)
+	suffixes := []string{"/workspace"}
+	if repoName != "" {
+		suffixes = append([]string{"/workspace/" + repoName}, suffixes...)
+	}
+	for _, suffix := range suffixes {
+		if home, ok := strings.CutSuffix(dir, suffix); ok {
+			if home == "" {
+				return "/"
+			}
+			return home
+		}
+	}
+	return defaultRigHome
 }
 
 // openApp hands a URL scheme to the OS so the associated desktop app launches

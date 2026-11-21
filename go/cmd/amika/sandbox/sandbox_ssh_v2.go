@@ -295,12 +295,29 @@ func resolveSandboxV2SSHAlias(client sshV2Client, paths basedir.Paths, ref rigre
 	if sandbox.RepoName != nil {
 		repoName = *sandbox.RepoName
 	}
+	sshUser, err := sessionHostUser(paths, alias)
+	if err != nil {
+		return sandboxSSHAlias{}, fmt.Errorf("read SSH login user: %w", err)
+	}
 	return sandboxSSHAlias{
 		alias:       alias,
 		sandboxName: sandbox.Name,
 		repoName:    repoName,
 		bareMetal:   sandbox.IsBareMetal(),
+		agentCWD:    deref(sandbox.AgentCWD),
+		sshUser:     sshUser,
 	}, nil
+}
+
+// sessionHostUser reads the login account that prepareSessionTarget recorded
+// for alias from the SSH session it opened. A seam so tests can stand in for
+// a session that reported an account.
+var sessionHostUser = func(paths basedir.Paths, alias string) (string, error) {
+	state, err := ssh.LoadState(paths)
+	if err != nil {
+		return "", err
+	}
+	return state.SessionHostUser(alias), nil
 }
 
 // connectSandbox opens an interactive shell using the same transport as rig ssh.

@@ -171,7 +171,8 @@ export type JobRunStatus =
   | "running"
   | "succeeded"
   | "failed"
-  | "skipped";
+  | "skipped"
+  | "cancelled";
 
 /** What started a job run: a scheduled slot, or a `jobRuns.create` call. */
 export type JobRunTriggerKind = "cron" | "manual";
@@ -192,8 +193,13 @@ export interface JobRun {
   commandRunIds: string[];
   /** The Command Run that applied `rigStatusOnFinish` when the last step could not. */
   finishCommandRunId: string | null;
-  /** Why the job run was skipped or failed. */
+  /** Why the job run was skipped, failed, or cancelled. */
   error: string | null;
+  /**
+   * When someone asked to cancel the job run, or null. A running job run
+   * with this set starts no more steps.
+   */
+  cancelRequestedAt: string | null;
   /** The rig step 0 ran on; null before it ran, and once the rig is deleted. */
   rigId: string | null;
   rigName: string | null;
@@ -201,7 +207,7 @@ export interface JobRun {
   createdAt: string;
   /** Last-update timestamp returned by the server. */
   updatedAt: string;
-  /** When it reached succeeded, failed, or skipped. */
+  /** When it reached succeeded, failed, skipped, or cancelled. */
   completedAt: string | null;
 }
 
@@ -238,4 +244,13 @@ export interface JobRuns {
 
   /** Read one job run by ID. */
   get(id: string): Promise<JobRun>;
+
+  /**
+   * Cancel a job run. A pending one becomes `cancelled` at once. A running
+   * one stops its current step and starts no more; it becomes `cancelled`
+   * once that step stops and the job's `rigStatusOnFinish` is applied. The
+   * returned job run can therefore still be `running`, with
+   * `cancelRequestedAt` set. Does nothing to a job run that already ended.
+   */
+  cancel(id: string): Promise<JobRun>;
 }

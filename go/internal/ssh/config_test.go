@@ -249,6 +249,21 @@ func TestSaveStateRejectsUnsafeSessionHostUser(t *testing.T) {
 	}
 }
 
+func TestSessionHostUser(t *testing.T) {
+	var state HostsState
+	if got := state.SessionHostUser("vm.sb_vm.prod.amika"); got != "amika" {
+		t.Fatalf("unrecorded alias = %q, want the default account", got)
+	}
+	state.SetSessionHostUser("box.sb_box.prod.amika", "ubuntu")
+	state.UpsertSessionHost("vm.sb_vm.prod.amika")
+	if got := state.SessionHostUser("box.sb_box.prod.amika"); got != "ubuntu" {
+		t.Fatalf("recorded alias = %q, want ubuntu", got)
+	}
+	if got := state.SessionHostUser("vm.sb_vm.prod.amika"); got != "amika" {
+		t.Fatalf("alias with no user = %q, want the default account", got)
+	}
+}
+
 func TestSetSessionHostUser(t *testing.T) {
 	var state HostsState
 	if state.SetSessionHostUser("vm.sb_vm.prod.amika", "amika") || len(state.SessionHosts) != 0 {

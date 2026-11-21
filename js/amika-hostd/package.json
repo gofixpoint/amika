@@ -20,12 +20,12 @@
     "@amika/sandbox": "workspace:*",
     "@amika/service-auth": "workspace:*",
     "@amika/tunnel-protocol": "workspace:*",
-    "@hono/node-server": "1.19.15",
-    "hono": "4.13.11",
+    "@hono/node-server": "2.1.7",
+    "hono": "4.13.18",
     "smol-toml": "1.9.0",
     "smolmachines": "1.22.2",
-    "ws": "8.20.1",
-    "zod": "4.4.3"
+    "ws": "8.22.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",

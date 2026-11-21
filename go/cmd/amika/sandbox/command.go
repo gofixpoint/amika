@@ -62,6 +62,7 @@ The same forms work wherever a flag such as --rig names a rig.`,
 		"Mount a git repo into the rig. Accepts a local path or a git URL (HTTPS, SSH). If omitted and the cwd is in a git repo, that repo is used automatically.",
 		"Skip git repo auto-detection; create a rig without mounting any repo.")
 	sandboxCreateCmd.Flags().String("host", "", "Run the rig on one of your organization's own hosts, by hostname or id (see \"amika host list\"). Omit it to run on Amika Cloud.")
+	sandboxCreateCmd.Flags().String("cloud-account", "", "Run the rig in one of your organization's own provider accounts (see \"amika cloud-account list\"): a name or id, or name=<name> / id=<id> to match one field; \"amika\" names Amika Cloud")
 	sandboxCreateCmd.Flags().String("size", "", "Rig size, e.g. \"m\" or \"a1.medium\"; the API validates it and lists what your provider offers (default \"m\"). With --host, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB.")
 	sandboxCreateCmd.Flags().String("snapshot", "", "Fork the rig from a captured snapshot slug")
 	sandboxCreateCmd.Flags().String("runtime", "", "With --host, the host runtime to run the rig on (\"smol\" for Linux VMs, \"lume\" for macOS VMs, \"bare_metal\" for the host machine itself). Omit it to use the preset's default runtime on that host, or the host's only runtime.")
@@ -76,14 +77,14 @@ The same forms work wherever a flag such as --rig names a rig.`,
 	sandboxCreateCmd.Flags().String("branch", "", "Check out this git branch, or create it if it doesn't exist.")
 	sandboxCreateCmd.Flags().String("new-branch", "", "Create a new git branch. With --branch, starts from that branch; otherwise starts from the current checkout.")
 	sandboxCreateCmd.Flags().String("github-auth-mode", "", "GitHub auth mode for the rig runtime: pat, app_token, or app-token (unset uses server default)")
-	sandboxListCmd.Flags().BoolP("long", "l", false, "Show additional columns (ID, RUNTIME, BASE_SNAPSHOT, PORTS, CREATED)")
+	sandboxListCmd.Flags().BoolP("long", "l", false, "Show additional columns (ID, PROVIDER as <provider>/<account>, RUNTIME, BASE_SNAPSHOT, PORTS, CREATED)")
 	sandboxDeleteCmd.Flags().Bool("force", false, "Skip confirmation prompt")
 	// `ssh` registers no flags of its own: it forwards everything after the
 	// subcommand to ssh, so ssh's own -t (and every other option) passes
 	// through untouched.
 	sandboxCodeV2Cmd.Flags().String("app", "", "App or editor to open (required): \"cursor\", \"vscode\", \"claude\", \"codex\", \"paseo\", or \"herdr\"")
 	sandboxCodeV2Cmd.Flags().String("editor", "", "Alias for --app")
-	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the rig workspace root; must be absolute on a bare-metal rig); ignored by paseo and herdr")
+	sandboxCodeV2Cmd.Flags().String("path", "", "Override the remote path to open (absolute, or relative to the rig's home directory; must be absolute on a bare-metal rig); ignored by paseo and herdr")
 	sandboxBindCmd.Flags().Bool("rebind", false, "Move an existing branch binding from another rig")
 	// --rig-by is superseded by the name=/id= prefixes on the rig reference;
 	// kept, hidden, so existing scripts keep working.
@@ -100,8 +101,5 @@ The same forms work wherever a flag such as --rig names a rig.`,
 }
 
 func addProviderFlag(command *cobra.Command) {
-	command.Flags().String("provider", "", "Rig provider")
-	// Provider selection is an internal/testing override for remote sandboxes.
-	// Normal users should let the control plane choose its configured default.
-	command.Flags().MarkHidden("provider")
+	command.Flags().String("provider", "", "Sandbox provider to run the rig at, e.g. instabox; the rig goes to your organization's default account there, or to Amika Cloud. Omit it to use the server's default provider, or the --cloud-account's.")
 }

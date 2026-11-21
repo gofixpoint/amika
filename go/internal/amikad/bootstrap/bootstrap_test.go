@@ -1,0 +1,500 @@
+package bootstrap
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"strings"
+	"testing"
+	"testing/fstest"
+)
+
+// fakeSystem records commands and serves accounts and commands from maps.
+type fakeSystem struct {
+	users    map[string]*user.User
+	groups   map[string]bool
+	commands map[string]bool
+	glibc    [2]int
+	glibcErr error
+	runs     []string
+	chowns   []string
+	// owners maps a path to its uid and gid; an existing path missing here
+	// belongs to root.
+	owners map[string][2]int
+}
+
+func newFakeSystem() *fakeSystem {
+	return &fakeSystem{
+		users:    map[string]*user.User{},
+		groups:   map[string]bool{},
+		commands: map[string]bool{"sshd": true, "git": true, "sudo": true, "curl": true, "apt-get": true},
+		glibc:    [2]int{2, 39},
+		owners:   map[string][2]int{},
+	}
+}
+
+func (f *fakeSystem) LookupUser(name string) (*user.User, error) {
+	if account, ok := f.users[name]; ok {
+		return account, nil
+	}
+	return nil, user.UnknownUserError(name)
+}
+
+func (f *fakeSystem) LookupGroup(name string) (*user.Group, error) {
+	if f.groups[name] {
+		return &user.Group{Name: name, Gid: "1000"}, nil
+	}
+	return nil, user.UnknownGroupError(name)
+}
+
+func (f *fakeSystem) LookPath(name string) (string, error) {
+	if f.commands[name] {
+		return "/usr/bin/" + name, nil
+	}
+	return "", exec.ErrNotFound
+}
+
+func (f *fakeSystem) Run(_ context.Context, _ []string, name string, args ...string) error {
+	f.runs = append(f.runs, strings.TrimSpace(name+" "+strings.Join(args, " ")))
+	if name == "groupadd" {
+		f.groups[args[len(args)-1]] = true
+	}
+	if name == "useradd" {
+		username := args[len(args)-1]
+		f.users[username] = &user.User{Username: username, Uid: "1000", Gid: "1000", HomeDir: args[2]}
+	}
+	return nil
+}
+
+func (f *fakeSystem) Chown(path string, uid, gid int) error {
+	f.chowns = append(f.chowns, path)
+	f.owners[path] = [2]int{uid, gid}
+	return nil
+}
+
+func (f *fakeSystem) Owner(path string) (int, int, error) {
+	if _, err := os.Stat(path); err != nil {
+		return 0, 0, err
+	}
+	owner := f.owners[path]
+	return owner[0], owner[1], nil
+}
+
+func (f *fakeSystem) Glibc() ([2]int, error) { return f.glibc, f.glibcErr }
+
+var testHooks = fstest.MapFS{
+	"pre-setup.sh":                     {Data: []byte("#!/bin/bash\necho pre\n")},
+	"run-hook.sh":                      {Data: []byte("#!/bin/bash\necho run\n")},
+	"amika-restore-setuid.service":     {Data: []byte("[Unit]\n")},
+	"amika-ipv4-options-guard.service": {Data: []byte("[Unit]\n")},
+}
+
+func newBootstrapper(t *testing.T, system *fakeSystem) *Bootstrapper {
+	t.Helper()
+	root := t.TempDir()
+	// A stock image ships the CA bundle.
+	certs := filepath.Join(root, "etc", "ssl", "certs")
+	if err := os.MkdirAll(certs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(certs, "ca-certificates.crt"), []byte("ca"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return &Bootstrapper{Root: root, System: system, Hooks: testHooks}
+}
+
+func TestBootstrapCreatesTheRuntimeOnAStockImage(t *testing.T) {
+	system := newFakeSystem()
+	b := newBootstrapper(t, system)
+	if err := b.Run(context.Background(), Options{Home: "/data/home", Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(system.runs, "; "); got != "groupadd amika; useradd -m -d /data/home -s /bin/bash -g amika amika" {
+		t.Fatalf("runs = %s", got)
+	}
+	for _, p := range []string{
+		"/etc/sudoers.d/90-amika",
+		"/usr/lib/amikad/pre-setup.sh",
+		"/usr/lib/amikad/run-hook.sh",
+		"/usr/local/etc/amikad/setup/setup.sh",
+		"/usr/local/etc/amikad/setup/start.sh",
+		"/usr/local/etc/amika",
+		"/var/log/amikad",
+		"/run/sshd",
+		"/data/home/workspace",
+		MarkerPath,
+	} {
+		if _, err := os.Stat(b.path(p)); err != nil {
+			t.Errorf("missing %s: %v", p, err)
+		}
+	}
+	if _, err := os.Stat(b.path("/usr/lib/amikad/amika-restore-setuid.service")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("systemd units belong to Amika's own images and must not be written")
+	}
+	rule, _ := os.ReadFile(b.path("/etc/sudoers.d/90-amika"))
+	if string(rule) != "amika ALL=(ALL) NOPASSWD:ALL\n" {
+		t.Fatalf("sudoers rule = %q", rule)
+	}
+	info, _ := os.Stat(b.path("/etc/sudoers.d/90-amika"))
+	if info.Mode().Perm() != 0o440 {
+		t.Fatalf("sudoers mode = %v, want 0440", info.Mode().Perm())
+	}
+}
+
+func TestBootstrapIsIdempotentAndKeepsTheUsersOwnScripts(t *testing.T) {
+	system := newFakeSystem()
+	system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/data/home"}
+	b := newBootstrapper(t, system)
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	setup := b.path("/usr/local/etc/amikad/setup/setup.sh")
+	if err := os.WriteFile(setup, []byte("pnpm install\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	system.runs, system.chowns = nil, nil
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(system.runs) != 0 || len(system.chowns) != 0 {
+		t.Fatalf("second run changed the machine: runs=%v chowns=%v", system.runs, system.chowns)
+	}
+	if data, _ := os.ReadFile(setup); string(data) != "pnpm install\n" {
+		t.Fatalf("setup.sh replaced: %q", data)
+	}
+}
+
+func TestBootstrapRepairsExistingDirectories(t *testing.T) {
+	system := newFakeSystem()
+	system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/data/home"}
+	b := newBootstrapper(t, system)
+	home, ssh := b.path("/data/home"), b.path("/data/home/.ssh")
+	if err := os.MkdirAll(ssh, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	system.owners[home] = [2]int{1000, 1000}
+
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(ssh); info.Mode().Perm() != 0o700 {
+		t.Fatalf(".ssh mode = %v, want 0700 (amikad's sshd refuses anything else)", info.Mode().Perm())
+	}
+	if system.owners[ssh] != [2]int{1000, 1000} {
+		t.Fatalf(".ssh owner = %v, want amika", system.owners[ssh])
+	}
+	if info, _ := os.Stat(home); info.Mode().Perm() != 0o750 {
+		t.Fatalf("home mode = %v, want the provider's 0750 kept", info.Mode().Perm())
+	}
+}
+
+func TestBootstrapRefusesASymlinkedDirectoryButNotASymlinkedHome(t *testing.T) {
+	system := newFakeSystem()
+	system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/data/home"}
+	b := newBootstrapper(t, system)
+	// The home itself may be a link to the provider's disk.
+	if err := os.MkdirAll(b.path("/disk/home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(b.path("/data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(b.path("/disk/home"), b.path("/data/home")); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatalf("symlinked home: %v", err)
+	}
+
+	// sshd refuses a symlinked .ssh, so bootstrap does too.
+	ssh := b.path("/disk/home/.ssh")
+	if err := os.RemoveAll(ssh); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(b.path("/elsewhere"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(b.path("/elsewhere"), ssh); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); !errors.Is(err, ErrUnsupportedImage) {
+		t.Fatalf("symlinked .ssh: err = %v, want ErrUnsupportedImage", err)
+	}
+}
+
+func TestBootstrapRepairsTheModeOfAnUnchangedFile(t *testing.T) {
+	system := newFakeSystem()
+	b := newBootstrapper(t, system)
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	for p, mode := range map[string]os.FileMode{
+		"/usr/lib/amikad/run-hook.sh":          0o644,
+		"/etc/sudoers.d/90-amika":              0o644,
+		"/usr/local/etc/amikad/setup/setup.sh": 0o600,
+	} {
+		if err := os.Chmod(b.path(p), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]os.FileMode{
+		"/usr/lib/amikad/run-hook.sh":          0o755,
+		"/etc/sudoers.d/90-amika":              0o440,
+		"/usr/local/etc/amikad/setup/setup.sh": 0o755,
+	} {
+		if info, _ := os.Stat(b.path(p)); info.Mode().Perm() != want {
+			t.Errorf("%s mode = %v, want %v", p, info.Mode().Perm(), want)
+		}
+	}
+}
+
+func TestEnsureOpenSSHServerTurnsOffThePackagesOwnService(t *testing.T) {
+	system := newFakeSystem()
+	delete(system.commands, "sshd")
+	system.commands["systemctl"] = true
+	b := newBootstrapper(t, system)
+	if installed, err := b.EnsureOpenSSHServer(context.Background()); err != nil || !installed {
+		t.Fatalf("installed=%v err=%v", installed, err)
+	}
+	got := strings.Join(system.runs, "; ")
+	for _, unit := range []string{"ssh.socket", "ssh.service", "sshd.service"} {
+		if !strings.Contains(got, "systemctl disable --now "+unit) {
+			t.Errorf("runs = %s, want %s turned off", got, unit)
+		}
+	}
+}
+
+func TestBootstrapRefusesAnUnsafeHome(t *testing.T) {
+	for _, home := range []string{"/", "/data", "/etc/amika", "/usr/local/amika", "/var/lib", "/root/amika", "/tmp/amika", "data/home", "/data/../home", "/data/home/"} {
+		t.Run("new amika "+home, func(t *testing.T) {
+			system := newFakeSystem()
+			err := newBootstrapper(t, system).Run(context.Background(), Options{Home: home})
+			if !errors.Is(err, ErrUnsupportedImage) {
+				t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+			}
+			if len(system.runs) != 0 || len(system.chowns) != 0 {
+				t.Fatalf("bootstrap changed the machine: runs=%v chowns=%v", system.runs, system.chowns)
+			}
+		})
+	}
+	t.Run("existing amika with home /", func(t *testing.T) {
+		system := newFakeSystem()
+		system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/"}
+		err := newBootstrapper(t, system).Run(context.Background(), Options{})
+		if !errors.Is(err, ErrUnsupportedImage) {
+			t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+		}
+		if len(system.chowns) != 0 {
+			t.Fatalf("bootstrap changed owners: %v", system.chowns)
+		}
+	})
+}
+
+func TestBootstrapRefusesAHomeThatLinksSomewhereUnsafe(t *testing.T) {
+	for name, target := range map[string]string{"/": "/", "/etc": "/etc/amika"} {
+		t.Run(name, func(t *testing.T) {
+			system := newFakeSystem()
+			system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/home/amika"}
+			b := newBootstrapper(t, system)
+			if err := os.MkdirAll(b.path(target), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(b.path("/home"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(b.path(target), b.path("/home/amika")); err != nil {
+				t.Fatal(err)
+			}
+			err := b.Run(context.Background(), Options{})
+			if !errors.Is(err, ErrUnsupportedImage) {
+				t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+			}
+			if len(system.chowns) != 0 {
+				t.Fatalf("bootstrap changed owners: %v", system.chowns)
+			}
+		})
+	}
+}
+
+func TestBootstrapReplacesAManagedFileThatIsASymlink(t *testing.T) {
+	system := newFakeSystem()
+	b := newBootstrapper(t, system)
+	// The image left the sudo rule's path as a link to another file.
+	elsewhere := b.path("/etc/elsewhere")
+	if err := os.MkdirAll(filepath.Dir(elsewhere), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(elsewhere, []byte("amika ALL=(ALL) NOPASSWD:ALL\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rule := b.path("/etc/sudoers.d/90-amika")
+	if err := os.MkdirAll(filepath.Dir(rule), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, rule); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(rule); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o440 {
+		t.Fatalf("sudo rule = %v, %v; want a 0440 regular file", info, err)
+	}
+	if info, _ := os.Stat(elsewhere); info.Mode().Perm() != 0o644 {
+		t.Fatalf("the link's target changed mode to %v", info.Mode().Perm())
+	}
+}
+
+func TestBootstrapRefusesANewUsersHomeThatHoldsFiles(t *testing.T) {
+	system := newFakeSystem()
+	b := newBootstrapper(t, system)
+	// A root-owned directory holding other users' homes.
+	writeTestFile(t, b.path("/data/home/alice/notes"), "mine")
+	err := b.Run(context.Background(), Options{Home: "/data/home"})
+	if !errors.Is(err, ErrUnsupportedImage) {
+		t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+	}
+	if len(system.runs) != 0 || len(system.chowns) != 0 {
+		t.Fatalf("bootstrap changed the machine: runs=%v chowns=%v", system.runs, system.chowns)
+	}
+}
+
+func TestBootstrapLeavesASymlinkedWorkspaceAlone(t *testing.T) {
+	system := newFakeSystem()
+	system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/data/home"}
+	b := newBootstrapper(t, system)
+	if err := os.MkdirAll(b.path("/data/repo"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(b.path("/data/home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(b.path("/data/repo"), b.path("/data/home/workspace")); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+			t.Fatalf("a symlinked workspace stopped bootstrap: %v", err)
+		}
+	}
+	if info, _ := os.Stat(b.path("/data/repo")); info.Mode().Perm() != 0o700 {
+		t.Fatalf("the workspace link's target changed mode to %v", info.Mode().Perm())
+	}
+}
+
+func TestBootstrapAddsTheAmikaGroupForAnExistingUser(t *testing.T) {
+	system := newFakeSystem()
+	system.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "100", HomeDir: "/data/home"}
+	if err := newBootstrapper(t, system).Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if !system.groups["amika"] {
+		t.Fatalf("runs = %v, want the amika group the hooks chown to", system.runs)
+	}
+}
+
+func writeTestFile(t *testing.T, p, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBootstrapRefusesAnotherUsersHome(t *testing.T) {
+	cases := map[string]func(*fakeSystem){
+		"amika missing": func(*fakeSystem) {},
+		"amika present": func(s *fakeSystem) {
+			s.users["amika"] = &user.User{Username: "amika", Uid: "1000", Gid: "1000", HomeDir: "/data/home"}
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			system := newFakeSystem()
+			setup(system)
+			b := newBootstrapper(t, system)
+			home := b.path("/data/home")
+			if err := os.MkdirAll(home, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			system.owners[home] = [2]int{1001, 1001}
+
+			err := b.Run(context.Background(), Options{Home: "/data/home"})
+			if !errors.Is(err, ErrUnsupportedImage) {
+				t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+			}
+			if len(system.runs) != 0 || len(system.chowns) != 0 {
+				t.Fatalf("bootstrap changed the machine before refusing: runs=%v chowns=%v", system.runs, system.chowns)
+			}
+		})
+	}
+}
+
+func TestBootstrapInstallsSudoWhenTheImageLacksIt(t *testing.T) {
+	system := newFakeSystem()
+	delete(system.commands, "sudo")
+	b := newBootstrapper(t, system)
+	if err := b.Run(context.Background(), Options{Version: "0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "apt-get -o DPkg::Lock::Timeout=120 update -q; apt-get -o DPkg::Lock::Timeout=120 install -y -q --no-install-recommends sudo"
+	if got := strings.Join(system.runs, "; "); !strings.HasPrefix(got, want) {
+		t.Fatalf("runs = %s, want it to start with %s", got, want)
+	}
+	delete(system.commands, "apt-get")
+	if err := b.Run(context.Background(), Options{}); !errors.Is(err, ErrUnsupportedImage) {
+		t.Fatalf("without sudo or a package manager: err = %v", err)
+	}
+}
+
+func TestEnsureOpenSSHServer(t *testing.T) {
+	system := newFakeSystem()
+	b := newBootstrapper(t, system)
+	if installed, err := b.EnsureOpenSSHServer(context.Background()); err != nil || installed {
+		t.Fatalf("with sshd present: installed=%v err=%v", installed, err)
+	}
+	delete(system.commands, "sshd")
+	installed, err := b.EnsureOpenSSHServer(context.Background())
+	if err != nil || !installed {
+		t.Fatalf("without sshd: installed=%v err=%v", installed, err)
+	}
+	want := []string{
+		"apt-get -o DPkg::Lock::Timeout=120 update -q",
+		"apt-get -o DPkg::Lock::Timeout=120 install -y -q --no-install-recommends openssh-server",
+	}
+	if strings.Join(system.runs, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("runs = %v, want %v", system.runs, want)
+	}
+	delete(system.commands, "apt-get")
+	if _, err := b.EnsureOpenSSHServer(context.Background()); !errors.Is(err, ErrUnsupportedImage) {
+		t.Fatalf("without a package manager: err = %v", err)
+	}
+}
+
+func TestBootstrapRefusesUnsupportedImages(t *testing.T) {
+	cases := map[string]func(*fakeSystem){
+		"musl":      func(s *fakeSystem) { s.glibcErr = errors.New("the image uses musl") },
+		"old glibc": func(s *fakeSystem) { s.glibc = [2]int{2, 17} },
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			system := newFakeSystem()
+			setup(system)
+			err := newBootstrapper(t, system).Run(context.Background(), Options{})
+			if !errors.Is(err, ErrUnsupportedImage) {
+				t.Fatalf("err = %v, want ErrUnsupportedImage", err)
+			}
+		})
+	}
+}

@@ -37,7 +37,7 @@ name=$(amika sandbox create --remote --no-git -o json | jq -r .name)
 amika sandbox delete a b c --remote --force -o json | jq '.[] | select(.status=="error")'
 ```
 
-Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `job create`/`list`/`get`/`update`/`pause`/`resume`/`delete`/`run`, `job runs list`/`get`, `auth login --api-key-file`, `auth logout`, `auth api-key create`, and `skill install`. Commands that open a shell or editor (`sandbox connect`, `sandbox open`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
+Commands honoring `--output`: the read commands `sandbox list`, `snapshot list`, `service list`, `auth status`, and `secret <provider> list`, plus `sandbox create`, `sandbox start`, `sandbox stop`, `sandbox delete`, `sandbox agent-send`, `snapshot create`, `snapshot delete`, `secret <provider> push`/`delete`, `secret ssh-keygen`, `secret ssh-key create`/`push`/`list`/`delete`, `host list`/`get`/`delete`, `job create`/`list`/`get`/`update`/`pause`/`resume`/`delete`/`run`, `job runs list`/`get`/`cancel`, `auth login --api-key-file`, `auth logout`, `auth api-key create`, and `skill install`. Commands that open a shell or editor (`sandbox connect`, `sandbox open`) or display a masked credential table and prompt for confirmation (`secret extract`, `secret push`) reject `-o json`/`json-pretty` since they produce no JSON result. `sandbox ssh` and `scp` do not accept `--output` at all (see above).
 
 ## `amika send`
 
@@ -172,6 +172,13 @@ amika sandbox create dev-sandbox --snapshot amika-mono-base
 
 # Run it on one of your organization's own hosts, at one of that host's sizes
 amika sandbox create dev-sandbox --host alpha.lan --size small
+
+# Run it at a provider: in your organization's default account there, or on Amika Cloud
+amika sandbox create dev-sandbox --provider instabox
+
+# Run it in one of your organization's own provider accounts
+amika sandbox create dev-sandbox --provider instabox --cloud-account prod
+amika sandbox create dev-sandbox --cloud-account id=cacc_123
 ```
 
 #### Flags
@@ -181,8 +188,10 @@ amika sandbox create dev-sandbox --host alpha.lan --size small
 | `--preset <name>`       |                      | Use a preset environment, e.g. `coder` or `coder-plus-docker`. See [presets.md](presets.md)                                          |
 | `--size <size>`         | `m`                  | Rig size, e.g. `m` or `a1.medium`. The API validates it and lists what your provider offers. With `--host`, one of that host's own sizes instead, defaulting to 4 vCPU / 8 GiB / 20 GiB rather than `m` |
 | `--host <hostname\|id>` |                      | Run the rig on one of your organization's own hosts rather than on Amika Cloud. See [`amika host`](#amika-host). With `--snapshot`, boots one of that host's own snapshots; a snapshot taken anywhere else is refused. The create fails if the control plane did not put the rig on that host |
+| `--provider <name>`     |                      | Sandbox provider to run the rig at, e.g. `instabox`. The rig goes to your organization's default account there (see [`amika cloud-account`](#amika-cloud-account)), or to Amika Cloud when there is none. Unset, the server's default provider, or the `--cloud-account`'s. Cannot be combined with `--host` |
+| `--cloud-account <account>` |                 | Run the rig in one of your organization's own provider accounts: a name or id, or `name=<name>` / `id=<id>` to match one field. `amika` names Amika Cloud. With no `--provider`, the provider comes from the account. Cannot be combined with `--host`. The create fails if the control plane did not put the rig in that account |
 | `--runtime <name>`      |                      | With `--host`, the host runtime to run the rig on: `smol`, `lume`, or `bare_metal`. Unset, the preset's default runtime; on a host whose only runtime is `bare_metal`, that one. `bare_metal` makes the rig the host machine itself, and takes only a name: no repo, preset, size, snapshot, secrets, or setup script. A repo detected from the working directory is dropped for it |
-| `--git <path\|url>`     |                      | Mount the git repo at `path` or cloned from a URL (HTTPS, SSH) to `/home/amika/workspace/{repo}`. If omitted, auto-detects the repo containing the current working directory |
+| `--git <path\|url>`     |                      | Mount the git repo at `path` or cloned from a URL (HTTPS, SSH) to `workspace/{repo}` in the rig's home (`/home/amika/workspace/{repo}` on Amika's images). If omitted, auto-detects the repo containing the current working directory |
 | `--no-git`              | `false`              | Skip git auto-detection; create a sandbox without mounting any repo                                                                  |
 | `--env <KEY=VALUE>`     |                      | Set environment variable. Repeatable                                                                                                 |
 | `--connect`             | `false`              | Connect to the rig shell immediately after creation                                                                                  |
@@ -209,7 +218,7 @@ amika sandbox list
 
 Output columns: `NAME`, `STATE`, `REPO`, `BRANCH`, `CREATOR`.
 
-Pass `-l`/`--long` for the full set, which adds `ID`, `BASE_SNAPSHOT`, `PORTS`, and `CREATED`:
+Pass `-l`/`--long` for the full set, which adds `ID`, `PROVIDER`, `RUNTIME`, `BASE_SNAPSHOT`, `PORTS`, and `CREATED`:
 
 ```bash
 amika sandbox list --long
@@ -222,6 +231,8 @@ The `REPO` column shows the repository name parsed from the sandbox's `repo_url`
 The `CREATOR` column shows the human who created the sandbox (name, falling back to email). It is `-` when the server could not resolve a creator (deleted user, API-key principal, or `noop` auth mode).
 
 The `ID` column shows the sandbox id, and `BASE_SNAPSHOT` shows the snapshot it was built from. Either shows `-` when the sandbox has no value for it.
+
+The `PROVIDER` column shows where a cloud rig runs as `<provider>/<account>`: `e2b/amika` for Amika Cloud, or `instabox/prod` for your organization's account `prod`. It is `-` for a rig on one of your organization's own hosts, whose `RUNTIME` column says how it runs there. With `-o json`, every rig carries `cloud_account`: `{"id", "name"}`, or `null` on Amika Cloud.
 
 ### `amika sandbox connect`
 
@@ -361,6 +372,12 @@ amika secret ssh-keygen
 To use an existing key, pass `--import <public-key-file>` instead. `--path` has
 no effect with `paseo` or `herdr`.
 
+Without `--path`, the editor opens the directory the rig's agents run in, which
+the API reports as `agent_cwd`: `/home/amika/workspace/<repo>` on a rig built
+from Amika's images. A rig in your organization's own provider account can use
+the provider's image, with another home directory and login account, and the
+command follows both.
+
 A bare-metal rig (runtime `bare_metal`) logs in as the host's own account
 rather than `amika`, so it has no `/home/amika/workspace`. Without `--path`, Cursor and VS
 Code connect to it without opening a folder, and Claude Desktop starts in the
@@ -388,7 +405,7 @@ amika sandbox code my-sandbox --editor=vscode
 | ----------------- | -------- | -------------------------------------------------------- |
 | `--app <name>`    | —        | Required. App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
 | `--editor <name>` | —        | Alias for `--app`                                        |
-| `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the rig workspace root; must be absolute on a bare-metal rig) |
+| `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the rig's home directory; must be absolute on a bare-metal rig) |
 
 ### `amika sandbox agent-send`
 
@@ -462,6 +479,57 @@ Deletes each host and its stored secret. `rm` and `remove` are aliases. A host t
 
 ---
 
+## `amika cloud-account`
+
+By default a cloud rig runs in a provider account that Amika owns and pays for. Connect your organization's own account at a sandbox provider, such as InstaBox, and its rigs run on your provider quota and bill instead (bring your own cloud). `cloud-accounts` is an alias. Cloud accounts are in beta: where they are not enabled, these commands fail with HTTP 404.
+
+A provider can have one connected account for now, and one default account. A rig create that names the provider and no account lands in the default one, or on Amika Cloud when there is none; `amika rig create --cloud-account <account>` names one. The account name `amika` always means Amika Cloud. An `<account>` is the account's name or id, or `name=<name>` / `id=<id>` to match one field. Names are unique per provider, so `--provider` narrows a name that two providers share.
+
+Amika stores the account's API key and never returns it. The key is never a plain flag value, which would land in shell history: pass `--api-key-file <path>` (`-` reads stdin) or `--api-key-env <var>`. Amika does not test the key when you connect it.
+
+```bash
+# Connect an account and make it the default for new InstaBox rigs
+amika cloud-account create --provider instabox --name prod --api-key-file ./instabox-key --default
+vault kv get -field=key secret/instabox | amika cloud-account create --provider instabox --name prod --api-key-file -
+
+# Run rigs in it
+amika rig create dev --provider instabox
+amika rig create dev --cloud-account prod
+
+# Inspect, change, and disconnect
+amika cloud-account list
+amika cloud-account get prod --provider instabox
+amika cloud-account update prod --api-key-env INSTABOX_API_KEY
+amika cloud-account unset-default prod
+amika cloud-account delete prod
+```
+
+### `amika cloud-account create`
+
+Connects an account. `--provider`, `--name`, and one of `--api-key-file` or `--api-key-env` are required. The name is 1 to 63 lowercase letters, digits, and `-`, starting with a letter or digit. The API refuses a second account for a provider (`cloud_account_exists`) and a name already in use there (`cloud_account_name_taken`).
+
+| Flag                    | Default | Description                                               |
+| ----------------------- | ------- | --------------------------------------------------------- |
+| `--provider <name>`     |         | Sandbox provider of the account, e.g. `instabox`          |
+| `--name <name>`         |         | Name of the account; not `amika`                          |
+| `--api-key-file <path>` |         | Read the provider API key from this file (`-` for stdin)  |
+| `--api-key-env <var>`   |         | Read the provider API key from this environment variable  |
+| `--default`             | `false` | Make it the provider's default account for new rigs       |
+
+### `amika cloud-account list`, `amika cloud-account get <account>`
+
+`list` shows `PROVIDER`, `NAME`, `DEFAULT`, `ID`, and `CREATED`; `--provider` filters. `-o json` emits `{"items": [...]}`. `get` shows one account. Neither shows the key.
+
+### `amika cloud-account update <account>`, `set-default`, `unset-default`
+
+`update` changes only what its flags give: `--name`, or a new key from `--api-key-file` or `--api-key-env`. Each rig in the account uses a new key from its next operation; running rigs keep running. `set-default` makes the account its provider's default, replacing the previous one. `unset-default` leaves the provider with no default, so rigs that name only the provider go to Amika Cloud.
+
+### `amika cloud-account delete <account> [...]`
+
+Disconnects each account and deletes its stored key. The account at the provider is untouched. An account that still has rigs or snapshots in it is refused (`cloud_account_in_use`); delete those first. `rm` and `remove` are aliases; `-f`/`--force` skips the confirmation prompt and is required with `-o json`.
+
+---
+
 ## `amika job`
 
 Run commands on a rig on a cron schedule, such as a nightly test run or dependency audit, without keeping a machine awake to fire them. `jobs` is an alias. Jobs are in beta: where they are not enabled, these commands fail with HTTP 404.
@@ -480,6 +548,7 @@ amika job create --file job.json
 amika job run nightly-tests
 amika job runs list --job nightly-tests
 amika job runs get <job-run-id>
+amika job runs cancel <job-run-id>
 
 # Pause, resume, change, and delete
 amika job pause nightly-tests
@@ -521,11 +590,11 @@ The command sends a fresh `Idempotency-Key` on each run. Pass `--idempotency-key
 
 ### `amika job delete <job> [...]`
 
-Deletes each job and its job runs; the Command Runs they created stay. A job with a pending or running job run is refused: pause it, and try again once the run ends. `rm` and `remove` are aliases; `-f`/`--force` skips the confirmation prompt and is required with `-o json`.
+Deletes each job and its job runs; the Command Runs they created stay. A job with a pending or running job run is refused: pause it, cancel the run with `amika job runs cancel`, and try again once the run ends. `rm` and `remove` are aliases; `-f`/`--force` skips the confirmation prompt and is required with `-o json`.
 
-### `amika job run <job>`, `amika job runs list`, `amika job runs get <id>`
+### `amika job run <job>`, `amika job runs list`, `amika job runs get <id>`, `amika job runs cancel <id>`
 
-`run` starts a job run now. It ignores the job's overlap policy and does not move its next scheduled run. `runs list` shows job runs newest first, filtered by `--job`, `--status` (`pending`, `running`, `succeeded`, `failed`, `skipped`), and `--trigger` (`cron`, `manual`), up to `--limit` (default 20). `runs get` shows one job run with its Command Run ids and the error that ended it, if any.
+`run` starts a job run now. It ignores the job's overlap policy and does not move its next scheduled run. `runs list` shows job runs newest first, filtered by `--job`, `--status` (`pending`, `running`, `succeeded`, `failed`, `skipped`, `cancelled`), and `--trigger` (`cron`, `manual`), up to `--limit` (default 20). `runs get` shows one job run with its Command Run ids and the error that ended it, if any. `runs cancel` cancels a pending job run at once. For a running one it stops the current step and starts no more; the job run ends `cancelled` once that step stops and the job's rig status on finish is applied, so follow it with `runs get`. It does nothing to a job run that already ended, and it does not pause the job's schedule.
 
 ---
 

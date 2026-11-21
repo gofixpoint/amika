@@ -44,16 +44,14 @@ func testUserManager(t *testing.T) (*Manager, Paths, *strictModesPlatform) {
 }
 
 func TestRenderConfigAllowsOnlyTheManagedUser(t *testing.T) {
-	t.Setenv(EnvManagedUser, "")
-	paths := DefaultPaths()
+	paths := DefaultPaths("")
 	if !strings.Contains(RenderConfig(paths), "\nAllowUsers amika\n") {
 		t.Fatalf("default config does not admit amika:\n%s", RenderConfig(paths))
 	}
-	t.Setenv(EnvManagedUser, "builder")
-	paths = DefaultPaths()
+	paths = DefaultPaths("builder")
 	config := RenderConfig(paths)
 	if !strings.Contains(config, "\nAllowUsers builder\n") || strings.Contains(config, "AllowUsers amika") {
-		t.Fatalf("AllowUsers does not follow %s:\n%s", EnvManagedUser, config)
+		t.Fatalf("AllowUsers does not follow the managed user:\n%s", config)
 	}
 	if paths.AuthorizedKeys != "/home/builder/.ssh/authorized_keys" {
 		t.Fatalf("authorized keys = %q", paths.AuthorizedKeys)

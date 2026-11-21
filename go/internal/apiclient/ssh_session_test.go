@@ -83,6 +83,11 @@ func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
 	if err := bareMetal.Validate("sbx_123"); err != nil {
 		t.Fatalf("Validate bare-metal session user: %v", err)
 	}
+	portToken := valid
+	portToken.ConnectURL = "wss://sandbox.example/v1/ssh-sessions?_token=ibp_AbC-123_xyz"
+	if err := portToken.Validate("sbx_123"); err != nil {
+		t.Fatalf("Validate session with a port token: %v", err)
+	}
 
 	tests := map[string]SSHSession{
 		"unknown transport": func() SSHSession { s := valid; s.Transport = "other"; return s }(),
@@ -96,6 +101,31 @@ func TestSSHSessionValidateAcceptsOnlyMatchingDirectWSSession(t *testing.T) {
 		"URL query": func() SSHSession {
 			s := valid
 			s.ConnectURL = "wss://sandbox.example/v1/ssh-sessions?token=secret"
+			return s
+		}(),
+		"port token beside another parameter": func() SSHSession {
+			s := valid
+			s.ConnectURL = "wss://sandbox.example/v1/ssh-sessions?_token=ibp_a&extra=1"
+			return s
+		}(),
+		"repeated port token": func() SSHSession {
+			s := valid
+			s.ConnectURL = "wss://sandbox.example/v1/ssh-sessions?_token=ibp_a&_token=ibp_b"
+			return s
+		}(),
+		"empty port token": func() SSHSession {
+			s := valid
+			s.ConnectURL = "wss://sandbox.example/v1/ssh-sessions?_token="
+			return s
+		}(),
+		"escaped port token": func() SSHSession {
+			s := valid
+			s.ConnectURL = "wss://sandbox.example/v1/ssh-sessions?_token=ibp%2Fa"
+			return s
+		}(),
+		"port token with unsafe characters": func() SSHSession {
+			s := valid
+			s.ConnectURL = "wss://sandbox.example/v1/ssh-sessions?_token=ibp.a~b"
 			return s
 		}(),
 		"wrong URL path":        func() SSHSession { s := valid; s.ConnectURL = "wss://sandbox.example/other"; return s }(),

@@ -210,6 +210,76 @@ chat with its transcript and bound `send`, `sendStream`, and `refresh` methods.
 Chat transcripts are stored on the server and can outlive their rigs; keeping
 a chat record does not keep its rig or filesystem alive.
 
+## Cloud accounts (beta)
+
+By default a cloud rig runs in a provider account that Amika owns and pays for.
+Connect your organization's own account at a sandbox provider, and its rigs
+run on your provider quota and bill instead. Amika stores the API key and
+never returns it. Where cloud accounts are not enabled, these calls get
+`AmikaHTTPError` 404.
+
+```ts
+await client.cloudAccounts.create({
+  provider: "instabox",
+  name: "prod",
+  apiKey: process.env.INSTABOX_API_KEY!,
+  isDefault: true, // rigs that name only the provider land here
+});
+const rig = await client.rigs.create({ provider: "instabox" });
+await client.rigs.create({ provider: "instabox", cloudAccount: "prod" });
+await client.rigs.create({ cloudAccount: { ref: "cacc_123", by: "id" } });
+if (rig.cloudAccount?.name !== "prod")
+  throw new Error(`rig ${rig.name} is not in the prod account`);
+```
+
+An account reference works like a rig reference: a plain string matches the
+account's ID or name, and `{ ref, by }` pins one. The name `amika` means Amika
+Cloud. Names are unique per provider, so `get`, `update`, and `delete` take
+`{ provider }` to narrow a name. Without `cloudAccount`, a rig goes to the
+provider's default account, or to Amika Cloud when it has none.
+`rig.cloudAccount` is `{ id, name }`, or null on Amika Cloud. A control plane
+that predates cloud accounts ignores `cloudAccount`, so check it as above.
+
+## Your product's end-users (beta)
+
+If you build a product on Amika, your own users can each get their own
+hosts and rigs. Your end-user's client app never holds your organization
+API key. Your backend mints a short-lived principal token for the end-user,
+and the client app uses it. Requests with the token reach only that
+end-user's hosts and rigs.
+
+Your backend needs an organization API key with the `end-users:act-as`
+permission. An organization owner creates it.
+
+```ts
+// Your backend: mint a token for the signed-in user of your product.
+const backend = new AmikaClient({ apiKey: process.env.AMIKA_ACT_AS_KEY! });
+const { token, expiresAt } = await backend.principalTokens.mint({
+  principal: `end_user:${yourUserId}`,
+  ttlSeconds: 3600, // Default 3600; maximum 86400.
+});
+// Return { token, expiresAt } to your client app.
+```
+
+In the client app, `refreshingTokenSource` gets the next token from your
+backend before the current one expires:
+
+```ts
+import { AmikaClient, refreshingTokenSource } from "@amika/sdk";
+
+const client = new AmikaClient({
+  tokenSource: refreshingTokenSource({
+    fetchToken: async () => {
+      const res = await fetch("/api/amika-token", { method: "POST" });
+      return res.json(); // { token, expiresAt }
+    },
+  }),
+});
+const rigs = await client.rigs.list(); // Only this end-user's rigs.
+```
+
+Revoke a token at once with `backend.principalTokens.revoke(id)`.
+
 ## Snapshots
 
 A snapshot captures a rig's filesystem for later rig creation. Capture returns
@@ -259,6 +329,7 @@ await client.jobs.create({
 });
 const run = await client.jobRuns.create("nightly-audit"); // run it now
 const { items } = await client.jobRuns.list({ job: "nightly-audit" });
+await client.jobRuns.cancel(run.id); // stop it
 ```
 
 Step 0 names the rig with `rig` (a `RigRef`) or `rigCreate`; later steps run on
@@ -267,6 +338,8 @@ the same rig. `rigCreate.name` is a prefix: each job run creates its own rig.
 `jobs.update(job, changes)` replaces only the fields you pass. `jobs.create`
 sends an `Idempotency-Key`; pass `{ idempotencyKey }` and reuse it on a retry,
 so the retry returns the first job instead of failing on its taken name.
+`jobRuns.cancel(id)` stops a pending or running job run. A running one ends
+`cancelled` after its current step stops, so poll `jobRuns.get(id)` to see it end.
 
 ## Configuration
 

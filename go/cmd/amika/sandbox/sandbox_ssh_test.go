@@ -36,10 +36,55 @@ func stubOpenApp(t *testing.T) *[]string {
 func TestResolveRemoteWorkspacePath(t *testing.T) {
 	tests := []struct {
 		name         string
+		agentCWD     string
 		repoName     string
 		pathOverride string
 		want         string
 	}{
+		{
+			name:     "agent cwd is the default",
+			agentCWD: "/data/home/workspace/biz",
+			repoName: "biz",
+			want:     "/data/home/workspace/biz",
+		},
+		{
+			name:     "agent cwd on an Amika image matches the fallback",
+			agentCWD: "/home/amika/workspace/biz",
+			repoName: "biz",
+			want:     "/home/amika/workspace/biz",
+		},
+		{
+			name:     "agent cwd without the repo, as after a failed clone",
+			agentCWD: "/data/home/workspace",
+			repoName: "biz",
+			want:     "/data/home/workspace",
+		},
+		{
+			name:         "relative override resolves against the agent cwd's home",
+			agentCWD:     "/data/home/workspace/biz",
+			repoName:     "biz",
+			pathOverride: "workspace/biz/src",
+			want:         "/data/home/workspace/biz/src",
+		},
+		{
+			name:         "relative override with a repo-less agent cwd",
+			agentCWD:     "/data/home/workspace",
+			pathOverride: ".config",
+			want:         "/data/home/.config",
+		},
+		{
+			name:         "relative override with an unexpected agent cwd falls back to /home/amika",
+			agentCWD:     "/srv/app",
+			repoName:     "biz",
+			pathOverride: "workspace/biz",
+			want:         "/home/amika/workspace/biz",
+		},
+		{
+			name:         "absolute override beats the agent cwd",
+			agentCWD:     "/data/home/workspace/biz",
+			pathOverride: "/custom/path",
+			want:         "/custom/path",
+		},
 		{
 			name: "no override no repo",
 			want: "/home/amika/workspace",
@@ -82,10 +127,10 @@ func TestResolveRemoteWorkspacePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolveRemoteWorkspacePath(tt.repoName, tt.pathOverride)
+			got := resolveRemoteWorkspacePath(tt.agentCWD, tt.repoName, tt.pathOverride)
 			if got != tt.want {
-				t.Errorf("resolveRemoteWorkspacePath(%q, %q) = %q, want %q",
-					tt.repoName, tt.pathOverride, got, tt.want)
+				t.Errorf("resolveRemoteWorkspacePath(%q, %q, %q) = %q, want %q",
+					tt.agentCWD, tt.repoName, tt.pathOverride, got, tt.want)
 			}
 		})
 	}
@@ -223,6 +268,21 @@ func TestOpenSandboxInPaseo(t *testing.T) {
 		"ssh://amika@dylan.paseo-setup.sb_abc.app-amika-dev.amika\n"
 	if got := out.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+// A rig whose image is not Amika's logs in as the provider's own account,
+// which its SSH session reports.
+func TestOpenSandboxInPaseoUsesTheSessionUser(t *testing.T) {
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	target := sandboxSSHAlias{alias: "box.sb_abc.prod.amika", sandboxName: "box", sshUser: "ubuntu"}
+	if err := openSandboxInEditor(cmd, "paseo", nil, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+	if got := out.String(); !strings.HasSuffix(got, "\nssh://ubuntu@box.sb_abc.prod.amika\n") {
+		t.Fatalf("output = %q", got)
 	}
 }
 
@@ -404,6 +464,42 @@ func TestResolveSandboxV2SSHAliasUsesSharedSessionPreparation(t *testing.T) {
 	}
 	if target.alias != "my-sandbox.sb_abc.app-amika-dev.amika" || target.sandboxName != "my-sandbox" || target.repoName != "biz" {
 		t.Fatalf("target = %#v", target)
+	}
+	// Nothing recorded a login account, so the default one is assumed.
+	if target.sshUser != apiclient.DefaultSSHUser || target.agentCWD != "" {
+		t.Fatalf("target = %#v, want the default login account and no agent cwd", target)
+	}
+}
+
+// The target carries the rig's agent_cwd and the session's login account, so
+// an editor opens the provider's home rather than /home/amika.
+func TestResolveSandboxV2SSHAliasCarriesAgentCWDAndSessionUser(t *testing.T) {
+	paths, _ := testSSHPaths(t)
+	agentCWD := "/data/home/workspace/biz"
+	client := &stubV2SSHClient{sandbox: &apiclient.RemoteSandbox{ID: "sb_abc", Name: "box", AgentCWD: &agentCWD}}
+
+	prevPrepare, prevUpsert, prevUser := prepareSessionTarget, upsertSessionHost, sessionHostUser
+	prepareSessionTarget = func(basedir.Paths, ssh.SessionCreator, string, string) (string, error) {
+		return "box.sb_abc.prod.amika", nil
+	}
+	upsertSessionHost = func(basedir.Paths, string) error { return nil }
+	sessionHostUser = func(_ basedir.Paths, alias string) (string, error) {
+		if alias != "box.sb_abc.prod.amika" {
+			t.Fatalf("sessionHostUser(%q), want the prepared alias", alias)
+		}
+		return "ubuntu", nil
+	}
+	t.Cleanup(func() { prepareSessionTarget, upsertSessionHost, sessionHostUser = prevPrepare, prevUpsert, prevUser })
+
+	target, err := resolveSandboxV2SSHAlias(client, paths, rigref.Ref{Kind: rigref.KindRef, Value: "box"})
+	if err != nil {
+		t.Fatalf("resolveSandboxV2SSHAlias: %v", err)
+	}
+	if target.agentCWD != agentCWD || target.sshUser != "ubuntu" {
+		t.Fatalf("target = %#v", target)
+	}
+	if got := target.remotePath(""); got != agentCWD {
+		t.Fatalf("remotePath = %q, want %q", got, agentCWD)
 	}
 }
 
