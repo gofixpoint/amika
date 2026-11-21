@@ -26,6 +26,7 @@ import type { E2bConfig } from "./providers/e2b/config";
 import type { FreestyleConfig } from "./providers/freestyle/config";
 import type { VercelConfig } from "./providers/vercel/config";
 import type { InstaboxConfig } from "./providers/instabox/config";
+import type { GcpConfig } from "./providers/gcp/config";
 import type { SimulateConfig } from "./providers/simulate/config";
 
 /** The provider config slices a caller supplies to the registry. */
@@ -36,6 +37,8 @@ export interface SandboxProviderConfigs {
   vercel: VercelConfig | null;
   /** Absent means the same as `null`: not configured. */
   instabox?: InstaboxConfig | null;
+  /** Absent means the same as `null`: not configured. */
+  gcp?: GcpConfig | null;
   smol: SmolConfig | null;
   /** Absent means the same as `null`: not configured. */
   lume?: LumeConfig | null;
@@ -91,7 +94,7 @@ function hostdSecretKey(env: Env): string {
 /**
  * Read the provider config slices from `env` (defaults to `process.env`).
  *
- * Daytona is always configured (this contract requires its key). E2B/Freestyle/Vercel/Instabox/Smol/Lume/AmikaHostd/Simulate are
+ * Daytona is always configured (this contract requires its key). E2B/Freestyle/Vercel/Instabox/GCP/Smol/Lume/AmikaHostd/Simulate are
  * gated on their `*_ENABLED` variables being exactly `true` and are
  * `null` otherwise. `ENABLE_DAYTONA_VM` and `ENABLE_DAYTONA_WEBSOCKET` (lenient
  * `1`/`true`/`on`) set `daytona.useVm` and `daytona.useWebSocket`;
@@ -143,6 +146,14 @@ export function sandboxProviderConfigsFromEnv(
       }
     : null;
 
+  const gcp: GcpConfig | null = isEnabled(env.GCP_ENABLED)
+    ? {
+        apiKey: required(env, "GCP_SERVICE_ACCOUNT_KEY"),
+        zone: env.GCP_ZONE,
+        apiUrl: env.GCP_API_URL,
+      }
+    : null;
+
   const smol: SmolConfig | null = isEnabled(env.SMOL_ENABLED)
     ? { apiUrl: env.SMOL_API_URL, network: parseBooleanLike(env.SMOL_NETWORK) }
     : null;
@@ -175,6 +186,7 @@ export function sandboxProviderConfigsFromEnv(
     freestyle,
     vercel,
     instabox,
+    gcp,
     smol,
     lume,
     amikaHostd,
