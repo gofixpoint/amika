@@ -316,6 +316,8 @@ export class TunnelSession implements StreamCarrier {
       const reason = refusal ?? "count_mismatch";
       // Nothing reads this socket. Its errors must not reach the process.
       ws.on("error", () => {});
+      // The dial paused the socket. Read again so that the close completes.
+      ws.resume();
       ws.close(1002, "cannot resume");
       this.emit({ type: "tunnel_resume_refused", reason });
       this.abort(
@@ -379,6 +381,19 @@ export class TunnelSession implements StreamCarrier {
     if (this.opening?.streamId === streamId) this.opening.finished = true;
     this.streams.delete(streamId);
     this.whenIdle?.();
+  }
+
+  /** Whether producers may go on: the opposite of `congested`, with slack. */
+  private drained(): boolean {
+    if (this.ended) return true;
+    const resume = this.resumeState;
+    if (resume) {
+      if (!this.link) return false;
+      if (resume.log.bytes > resume.settings.pauseReplayBytes / 2) {
+        return false;
+      }
+    }
+    return (this.link?.bufferedAmount ?? 0) <= LOW_WATER_BYTES;
   }
 
   // --- Frames ---------------------------------------------------------
@@ -641,19 +656,6 @@ export class TunnelSession implements StreamCarrier {
     // `1002` tells the relay to end the session too, not keep it for a
     // resume. Bounded: a peer that never answers the close is cut off.
     void link?.close(1002, "protocol error", this.options.pingTimeoutMs);
-  }
-
-  /** Whether producers may go on: the opposite of `congested`, with slack. */
-  private drained(): boolean {
-    if (this.ended) return true;
-    const resume = this.resumeState;
-    if (resume) {
-      if (!this.link) return false;
-      if (resume.log.bytes > resume.settings.pauseReplayBytes / 2) {
-        return false;
-      }
-    }
-    return (this.link?.bufferedAmount ?? 0) <= LOW_WATER_BYTES;
   }
 
   /** Wait for the streams in flight, up to `drainMs`. */

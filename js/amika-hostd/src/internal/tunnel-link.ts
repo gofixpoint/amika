@@ -32,9 +32,11 @@ export class TunnelLink {
   private ended?: LinkEnd;
   private readonly endListeners = new Set<(error: Error) => void>();
   private keepAlive?: NodeJS.Timeout;
-  /** Pings in a row with no `PONG`. Any `PONG` resets it. */
+  /** Set once shutdown starts. A missed ping then ends nothing. */
+  private quieted = false;
+  /** Pings in a row with no answer. Any relay message resets it. */
   private missedPings = 0;
-  /** The ping awaiting its `PONG`, if any. */
+  /** The ping awaiting an answer, if any. */
   private pending?: {
     sentAt: number;
     resolve: (rttMs: number) => void;
@@ -112,6 +114,9 @@ export class TunnelLink {
 
   /** Stop pinging. A link that is shutting down must not end on a ping. */
   quiet(): void {
+    // A ping sent before shutdown keeps its deadline. Its miss must not
+    // terminate a link that is draining streams.
+    this.quieted = true;
     clearInterval(this.keepAlive);
   }
 
@@ -232,7 +237,7 @@ export class TunnelLink {
     this.keepAlive = setInterval(() => {
       if (this.ended || this.pending) return;
       this.ping().catch((error: Error) => {
-        if (this.ended) return;
+        if (this.ended || this.quieted) return;
         this.missedPings += 1;
         if (this.missedPings < this.options.maxMissedPings) return;
         this.end({

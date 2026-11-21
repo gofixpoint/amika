@@ -95,7 +95,10 @@ export interface OpenAttachment {
 export interface ResumeSettings extends ResumeLimits {
   /** How often to ping a v3 socket. */
   keepAliveIntervalMs: number;
-  /** How long a v3 socket waits for a `PONG` before the ping counts as missed. */
+  /**
+   * How long a v3 socket waits for any relay message before the ping counts
+   * as missed.
+   */
   pingTimeoutMs: number;
   /** How many pings in a row a v3 socket may miss: 1, as a drop costs a resume. */
   maxMissedPings: number;
@@ -572,6 +575,8 @@ export class TunnelClient {
       // A v3 session is named by its connection id; without one it could
       // never be resumed, and the relay always sends one.
       dialed.ws.on("error", () => {});
+      // The dial paused the socket. Read again so that the close completes.
+      dialed.ws.resume();
       dialed.ws.close(1002, "no connection id");
       throw new TunnelUnavailable(
         "The gateway selected amika.tunnel.v3 without naming the connection",
