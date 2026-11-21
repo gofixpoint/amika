@@ -13,6 +13,7 @@
  * - **User.** boxd logs in as `boxd`. Create makes the `amika` rig user
  *   (`../../shared/rig-user.ts`) before it returns.
  */
+import { randomUUID } from "node:crypto";
 import { SANDBOX_ORG_ID_LABEL } from "../../../constants";
 import type { SandboxCtx } from "../../../logger";
 import type { SandboxStatus } from "../../../sandbox-status";
@@ -34,6 +35,8 @@ export const BOXD_BASE_IMAGE = "ubuntu:24.04";
 
 export const BOXD_NAME_LABEL = "amika-sandbox-name";
 const MANAGED_LABEL = "amika-managed";
+/** A random id for one create, to find a machine whose create answer was lost. */
+const CREATE_ID_LABEL = "amika-create-id";
 
 /** boxd label values are at most 256 characters. */
 const MAX_LABEL_VALUE_LENGTH = 256;
@@ -101,7 +104,15 @@ export async function createBoxdSandbox(
     { name: input.name, boxdName: name, snapshot: input.snapshot },
     "Creating boxd machine",
   );
-  const machine = await boxd.machines.create({
+  const createId = randomUUID();
+  const deleteFailed = (machineId: string) =>
+    deleteBoxdSandbox(config, machineId).catch((cleanup: unknown) =>
+      ctx.logger.warn(
+        { err: cleanup, machineId },
+        "Could not delete a failed boxd machine",
+      ),
+    );
+  const request = {
     name,
     ...(input.snapshot && input.snapshot !== BOXD_BASE_IMAGE
       ? { image: input.snapshot }
@@ -110,13 +121,32 @@ export async function createBoxdSandbox(
     labels: boxdLabels({
       ...input.labels,
       [BOXD_NAME_LABEL]: input.name,
+      [CREATE_ID_LABEL]: createId,
       [MANAGED_LABEL]: "true",
     }),
     config: {
       ...(input.resources ? boxdSizeFor(input.resources) : {}),
       ...(autoSuspend !== undefined ? { autoSuspendTimeout: autoSuspend } : {}),
     },
-  });
+  };
+  let machine: { id: string };
+  try {
+    machine = await boxd.machines.create(request);
+  } catch (error) {
+    // boxd may have scheduled the machine before the call failed (a
+    // timeout, a reset, or the SDK's retry of a create that went through).
+    // The caller gets no id, so find it by its create id and delete it.
+    await boxd.machines
+      .list({ labels: { [CREATE_ID_LABEL]: createId } })
+      .then((found) => Promise.all(found.map((m) => deleteFailed(m.id))))
+      .catch((cleanup: unknown) =>
+        ctx.logger.warn(
+          { err: cleanup },
+          "Could not look for a machine after a failed boxd create",
+        ),
+      );
+    throw error;
+  }
   try {
     await withStepContext("boxd create: wait until ready", () =>
       boxd.machines.waitUntilReady(machine.id, { timeout: 5 * 60_000 }),
@@ -125,12 +155,7 @@ export async function createBoxdSandbox(
       rigUserOps(boxdShell(config, machine.id)).ensureRigUser(),
     );
   } catch (error) {
-    await deleteBoxdSandbox(config, machine.id).catch((cleanup: unknown) =>
-      ctx.logger.warn(
-        { err: cleanup, machineId: machine.id },
-        "Could not delete a failed boxd machine",
-      ),
-    );
+    await deleteFailed(machine.id);
     throw error;
   }
   return {
