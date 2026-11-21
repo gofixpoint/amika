@@ -165,6 +165,31 @@ describe("client.jobs", () => {
     });
   });
 
+  it("round-trips a rigCreate cloud account through the job", async () => {
+    const steps = [
+      {
+        rig_create: { name: "a", cloud_account_name: "prod" },
+        command: "x",
+        timeout_ms: 1,
+      },
+    ];
+    const { fetch, calls } = mockFetch([
+      { status: 200, body: { ...jobWire, steps } },
+      { status: 200, body: jobWire },
+    ]);
+    const client = makeClient(fetch);
+    const job = await client.jobs.get("nightly");
+    expect(job.steps[0]?.rigCreate?.cloudAccount).toEqual({
+      ref: "prod",
+      by: "name",
+    });
+    await client.jobs.update("nightly", { steps: job.steps });
+    expect(JSON.parse(calls[1]?.body ?? "").steps[0].rig_create).toEqual({
+      name: "a",
+      cloud_account_name: "prod",
+    });
+  });
+
   it("decodes a step's rig selector in either spelling", async () => {
     const steps = [
       { rig_name: "a", command: "x", timeout_ms: 1 },
@@ -280,6 +305,7 @@ describe("client.jobRuns", () => {
       commandRunIds: [],
       finishCommandRunId: null,
       error: null,
+      cancelRequestedAt: null,
       rigId: null,
       rigName: null,
       createdAt: "2026-11-12T10:00:00Z",
@@ -309,5 +335,23 @@ describe("client.jobRuns", () => {
     const { fetch, calls } = mockFetch([{ status: 200, body: jobRunWire }]);
     await makeClient(fetch).jobRuns.get("jr_1");
     expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/job-runs/jr_1`);
+  });
+
+  it("cancel posts to the job run's cancel path", async () => {
+    const { fetch, calls } = mockFetch([
+      {
+        status: 202,
+        body: {
+          ...jobRunWire,
+          status: "running",
+          cancel_requested_at: "2026-11-12T10:01:00Z",
+        },
+      },
+    ]);
+    const run = await makeClient(fetch).jobRuns.cancel("jr_1");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe(`${BASE}/api/v0beta1/job-runs/jr_1/cancel`);
+    expect(run.status).toBe("running");
+    expect(run.cancelRequestedAt).toBe("2026-11-12T10:01:00Z");
   });
 });

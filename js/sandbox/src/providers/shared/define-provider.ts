@@ -20,7 +20,7 @@
  *   }));
  *
  * The built provider exposes only the resource-object surface —
- * `sandboxes`/`snapshots`/`docker` — synthesized over the declared namespaces;
+ * `sandboxes`/`snapshots`/`docker`/`account` — synthesized over the declared namespaces;
  * the flat capability members are not on the public contract.
  *
  * The definition mirrors the output, so `defineProvider` is almost a pass-through.
@@ -43,6 +43,7 @@
  * SDK-free `capabilities` flags against what the definition actually backs.
  */
 import type {
+  AccountCapability,
   CloneRepoInput,
   DockerRegistryCapability,
   ExecCapability,
@@ -58,6 +59,7 @@ import type {
 } from "../provider";
 import { SandboxProviderUnsupportedError } from "../provider";
 import {
+  makeAccountNamespace,
   makeDockerNamespace,
   makeSandboxNamespace,
   makeSnapshotNamespace,
@@ -159,6 +161,7 @@ export interface ProviderDefinition {
   listing?: ListingCapability | null;
   snapshots?: SnapshotDefinition | null;
   dockerRegistries?: DockerRegistryCapability | null;
+  account?: AccountCapability | null;
 }
 
 /**
@@ -215,6 +218,7 @@ function assertCapabilitiesMatch(
     // captures.
     scrubCapture: def.snapshots != null && def.exec != null,
     dockerRegistries: def.dockerRegistries != null,
+    accountSizes: def.account != null,
     fullSnapshotCapture: capabilities.fullSnapshotCapture,
     // Behavioral facts with no namespace to derive from — the author owns them.
     snapshotIdsAreOpaque: capabilities.snapshotIdsAreOpaque,
@@ -324,6 +328,7 @@ function buildProvider(
     sandboxes: makeSandboxNamespace(backend),
     snapshots: snapshots ? makeSnapshotNamespace(snapshots) : null,
     docker: dockerRegistries ? makeDockerNamespace(dockerRegistries) : null,
+    account: def.account ? makeAccountNamespace(def.account) : null,
   };
 }
 

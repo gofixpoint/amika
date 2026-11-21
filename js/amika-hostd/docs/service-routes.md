@@ -50,6 +50,28 @@ needs the key like any other path hostd does not serve.
   `PUT /v0beta1/rigs/<name>/services` replaces the map later (the
   provider's `syncRoutes`), on ports published at create.
 
+## Upgrades
+
+hostd sends a WebSocket handshake to the guest, and relays the guest's
+answer through `finishUpgrade`. It sends the caller's next bytes only after
+the guest answers `101`. An interim `1xx` answer is relayed, and hostd waits
+for the next answer.
+
+Any other answer refuses the upgrade. hostd relays it with `Connection:
+close` in place of the guest's `Connection` and `Keep-Alive`. It ends the
+caller's connection after the body (`src/internal/upgrade-answer.ts` finds
+the end), and it closes its own connection to the guest. A refusal by hostd
+itself also ends the connection.
+
+The reason: Node gives the socket to the upgrade handler, and the HTTP
+server no longer parses it. A proxy in front of a listening hostd (Caddy,
+ngrok, cloudflared) pools its connections. If hostd kept the connection
+open, the proxy's next request on it would go to the guest with no routing
+and no authentication. Then one wrong SSH connect token (a `401` from
+amikad) sends the control plane's later requests to amikad, which answers
+`404`. The tunnel transport does not have this risk: each stream carries
+one request on its own connection (`tunnel-bridge.ts`).
+
 ## Previews and browser login
 
 With Amika's URL configured (`api_url`, which hostd always has),

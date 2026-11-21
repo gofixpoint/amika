@@ -113,11 +113,14 @@ func TestServeFailsClosedBeforeStartingSSHD(t *testing.T) {
 
 func TestSetupSSHDForwardsOverwriteAuthorization(t *testing.T) {
 	operations, _, manager := testOperations(t)
-	if err := operations.SetupSSHD(context.Background(), SetupSSHDOptions{ForceOverwrite: true}); err != nil {
+	if err := operations.SetupSSHD(context.Background(), SetupSSHDOptions{ForceOverwrite: true, NoAgentForwarding: true}); err != nil {
 		t.Fatalf("SetupSSHD: %v", err)
 	}
 	if !manager.setupOptions.ForceOverwrite {
 		t.Fatal("force-overwrite authorization was not forwarded")
+	}
+	if !manager.setupOptions.NoAgentForwarding {
+		t.Fatal("no-agent-forwarding was not forwarded")
 	}
 }
 

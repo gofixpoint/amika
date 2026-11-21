@@ -55,3 +55,31 @@ func TestWebSocketDialerSendsCredentialOnlyInHeader(t *testing.T) {
 		t.Fatalf("compression requested: %q", extension)
 	}
 }
+
+func TestWebSocketDialerKeepsPortTokenInURL(t *testing.T) {
+	credential := testConnectToken()
+	seen := make(chan *http.Request, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		seen <- request.Clone(context.Background())
+		connection, err := websocket.Accept(w, request, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+		if err != nil {
+			return
+		}
+		connection.CloseNow()
+	}))
+	defer server.Close()
+
+	connectURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/ssh-sessions?_token=ibp_port"
+	stream, err := (WebSocketDialer{}).Dial(context.Background(), connectURL, credential)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer stream.Close()
+	request := <-seen
+	if request.URL.RawQuery != "_token=ibp_port" {
+		t.Fatalf("query = %q, want the port token", request.URL.RawQuery)
+	}
+	if request.Header.Get("Authorization") != "Bearer "+credential {
+		t.Fatalf("Authorization = %q", request.Header.Get("Authorization"))
+	}
+}

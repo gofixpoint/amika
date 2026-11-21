@@ -75,6 +75,8 @@ func (r AbortReason) name() string {
 		return "sink_failed"
 	case AbortShutdown:
 		return "shutdown"
+	case AbortRevoked:
+		return "revoked"
 	default:
 		return "other"
 	}

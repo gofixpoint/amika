@@ -74,6 +74,10 @@ Each of these is stated in full, with its reason, in the doc it links to.
 - **Change a version's contract only in a new version.** `GET /health` lists
   the versions served and the features a control plane may rely on. See
   [API versions](docs/api-and-auth.md#api-versions).
+- **A guest gets the caller's bytes only after its `101`.** After any other
+  answer to an upgrade, hostd ends the connection. Thus a proxy's pooled
+  connection never takes a request past hostd's routing. See
+  [Upgrades](docs/service-routes.md#upgrades).
 
 **The outbound tunnel**
 

@@ -342,7 +342,8 @@ func TestManagedSSHDClosesSessionsWhoseClientStopsAnswering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sshd -T: %v\n%s", err, output)
 	}
-	effective := "\n" + string(output)
+	// Linux's sshd prints keywords in lower case; macOS's in mixed case.
+	effective := "\n" + strings.ToLower(string(output))
 	for _, setting := range []string{"clientaliveinterval 15", "clientalivecountmax 4"} {
 		if !strings.Contains(effective, "\n"+setting+"\n") {
 			t.Fatalf("sshd does not apply %q:\n%s", setting, output)
@@ -357,5 +358,39 @@ func skipUnlessSecureWrites(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("amikad sensitive writes require Linux or macOS")
+	}
+}
+
+func TestRenderConfigTurnsOffAgentForwardingForAnEndUserRig(t *testing.T) {
+	paths := UserPaths(t.TempDir(), "amika", constants.ManagedSSHDPort)
+	if config := RenderConfig(paths); !strings.Contains(config, "AllowAgentForwarding yes\n") {
+		t.Fatalf("forwarding should stay on by default:\n%s", config)
+	}
+	paths.NoAgentForwarding = true
+	config := RenderConfig(paths)
+	if !strings.Contains(config, "AllowAgentForwarding no\n") {
+		t.Fatalf("config does not turn off agent forwarding:\n%s", config)
+	}
+	if strings.Contains(config, "AllowAgentForwarding yes") {
+		t.Fatalf("config still allows agent forwarding:\n%s", config)
+	}
+	// Port forwarding and the terminal still work on an end-user's rig.
+	if !strings.Contains(config, "AllowTcpForwarding local\n") {
+		t.Fatalf("config lost local port forwarding:\n%s", config)
+	}
+}
+
+func TestSetupNoAgentForwardingOptionTurnsItOff(t *testing.T) {
+	skipUnlessSecureWrites(t)
+	manager, paths, _, _ := testManager(t)
+	if err := manager.Setup(context.Background(), SetupOptions{NoAgentForwarding: true}); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	config, err := os.ReadFile(paths.Config)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(config), "AllowAgentForwarding no\n") {
+		t.Fatalf("config does not turn off agent forwarding:\n%s", config)
 	}
 }

@@ -30,8 +30,11 @@ type scpRig struct {
 }
 
 // rigHome returns the home directory a rig's relative paths resolve against.
+// A rig in an org's own cloud account boots the provider's image, where the
+// amika user's home is the provider's (Instabox: /data/home), so its paths,
+// like a bare-metal rig's, stay relative to the login home.
 func rigHome(sandbox *apiclient.RemoteSandbox) string {
-	if sandbox.IsBareMetal() {
+	if sandbox.IsBareMetal() || sandbox.CloudAccount != nil {
 		return ""
 	}
 	return sandboxHome

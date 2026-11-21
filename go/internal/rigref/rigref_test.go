@@ -178,3 +178,24 @@ func TestResolverName(t *testing.T) {
 		})
 	}
 }
+
+func TestParseResource(t *testing.T) {
+	for raw, want := range map[string]Ref{
+		"prod":       {Kind: KindRef, Value: "prod"},
+		"name=prod":  {Kind: KindName, Value: "prod"},
+		"id=cacc_1":  {Kind: KindID, Value: "cacc_1"},
+		"ref=id=x":   {Kind: KindRef, Value: "id=x"},
+		"_self":      {Kind: KindRef, Value: "_self"},
+		"other=prod": {Kind: KindRef, Value: "other=prod"},
+	} {
+		got, err := ParseResource(raw, "cloud account")
+		if err != nil || got != want {
+			t.Errorf("ParseResource(%q) = %+v, %v; want %+v", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"", " ", "name=", "id= "} {
+		if _, err := ParseResource(raw, "cloud account"); err == nil || !strings.Contains(err.Error(), "cloud account reference") {
+			t.Errorf("ParseResource(%q) error = %v, want an empty-reference error", raw, err)
+		}
+	}
+}

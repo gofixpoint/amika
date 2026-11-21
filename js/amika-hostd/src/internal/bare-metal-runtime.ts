@@ -67,6 +67,17 @@ export const BARE_METAL_EXEC_ALLOWLIST: ReadonlyMap<string, AllowedCommand> =
         stdin: false,
       },
     ],
+    // The control plane sends this for a rig that one of an org's end-users
+    // owns: a forwarded SSH agent on a rig is a key that anyone with a shell
+    // there can use. It needs an amikad that knows the flag.
+    [
+      "amikad setup sshd --force-overwrite --no-agent-forwarding",
+      {
+        kind: "run",
+        args: ["setup", "sshd", "--force-overwrite", "--no-agent-forwarding"],
+        stdin: false,
+      },
+    ],
     [
       "amikad authorized-keys set",
       { kind: "run", args: ["authorized-keys", "set"], stdin: true },

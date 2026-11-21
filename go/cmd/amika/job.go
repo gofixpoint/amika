@@ -140,7 +140,8 @@ var jobDeleteCmd = &cobra.Command{
 	Long: `Delete one or more jobs and their job runs.
 
 The Command Runs that the job runs created stay. A job with a pending or
-running job run is refused: pause it, and try again once the run ends.`,
+running job run is refused: pause it, cancel the run with
+` + "`amika job runs cancel <id>`" + `, and try again once the run ends.`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runJobDelete,
 }
@@ -158,7 +159,7 @@ scheduled run. Follow it with ` + "`amika job runs get <id>`" + `.`,
 
 var jobRunsCmd = &cobra.Command{
 	Use:   "runs",
-	Short: "Inspect job runs",
+	Short: "Inspect and cancel job runs",
 }
 
 var jobRunsListCmd = &cobra.Command{
@@ -174,6 +175,22 @@ var jobRunsGetCmd = &cobra.Command{
 	Short: "Show one job run",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runJobRunsGet,
+}
+
+var jobRunsCancelCmd = &cobra.Command{
+	Use:   "cancel <job-run-id>",
+	Short: "Cancel a pending or running job run",
+	Long: `Cancel a pending or running job run.
+
+A pending job run is cancelled at once. A running one stops its current
+step and starts no more steps. It ends cancelled once that step stops and
+the job's rig status on finish is applied, so a job that deletes its rig
+still deletes it. Follow it with ` + "`amika job runs get <id>`" + `.
+
+A job run that already ended is left as it is. The job's schedule is not
+paused: use ` + "`amika job pause`" + ` for that.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runJobRunsCancel,
 }
 
 // jobCreateStepFlags are the create flags that build the body, which --file
@@ -645,6 +662,33 @@ func runJobRunsGet(cmd *cobra.Command, args []string) error {
 	return writeJobRun(cmd.OutOrStdout(), run)
 }
 
+func runJobRunsCancel(cmd *cobra.Command, args []string) error {
+	format, err := output.FormatFrom(cmd)
+	if err != nil {
+		return err
+	}
+	if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
+		return err
+	}
+	run, err := runmode.NewRemoteClient().CancelJobRun(args[0])
+	if err != nil {
+		return err
+	}
+	if format.IsJSON() {
+		return format.JSON(cmd.OutOrStdout(), run)
+	}
+	out := cmd.OutOrStdout()
+	switch {
+	case run.Status == "cancelled":
+		fmt.Fprintf(out, "Job run %s cancelled\n\n", run.ID)
+	case run.Status == "running" && run.CancelRequestedAt != nil:
+		fmt.Fprintf(out, "Cancelling job run %s: it ends once its current step stops\n\n", run.ID)
+	default:
+		fmt.Fprintf(out, "Job run %s is %s; nothing to cancel\n\n", run.ID, run.Status)
+	}
+	return writeJobRun(out, run)
+}
+
 // parseJobRef parses a job reference: a name or id, or name=<name> /
 // id=<id> / ref=<value> to say which field it matches.
 func parseJobRef(raw string) (apiclient.JobSelector, error) {
@@ -777,6 +821,9 @@ func writeJobRun(out io.Writer, run *apiclient.JobRun) error {
 	fmt.Fprintf(w, "Rig:\t%s\n", tableCell(orDash(derefString(run.RigName))))
 	fmt.Fprintf(w, "Command runs:\t%s\n", orDash(strings.Join(run.CommandRunIDs, ", ")))
 	fmt.Fprintf(w, "Error:\t%s\n", tableCell(orDash(derefString(run.Error))))
+	if run.CancelRequestedAt != nil {
+		fmt.Fprintf(w, "Cancel requested:\t%s\n", *run.CancelRequestedAt)
+	}
 	fmt.Fprintf(w, "Created:\t%s\n", run.CreatedAt)
 	fmt.Fprintf(w, "Completed:\t%s\n", orDash(derefString(run.CompletedAt)))
 	return w.Flush()
@@ -812,7 +859,7 @@ func derefString(s *string) string {
 func init() {
 	rootCmd.AddCommand(jobCmd)
 	jobCmd.AddCommand(jobCreateCmd, jobListCmd, jobGetCmd, jobUpdateCmd, jobPauseCmd, jobResumeCmd, jobDeleteCmd, jobRunCmd, jobRunsCmd)
-	jobRunsCmd.AddCommand(jobRunsListCmd, jobRunsGetCmd)
+	jobRunsCmd.AddCommand(jobRunsListCmd, jobRunsGetCmd, jobRunsCancelCmd)
 
 	jobCreateCmd.SetUsageTemplate(jobCreateUsageTemplate)
 
@@ -850,7 +897,7 @@ func init() {
 
 	r := jobRunsListCmd.Flags()
 	r.String("job", "", "Only this job's runs: a name or id, or name=<name> / id=<id>")
-	r.String("status", "", "Only runs in this status: pending, running, succeeded, failed, or skipped")
+	r.String("status", "", "Only runs in this status: pending, running, succeeded, failed, skipped, or cancelled")
 	r.String("trigger", "", "Only runs started this way: cron or manual")
 	r.Int("limit", 0, "Maximum number of runs, 1 to 100 (default 20)")
 }

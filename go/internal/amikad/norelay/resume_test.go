@@ -95,6 +95,7 @@ type resumeHarness struct {
 	dialer   *pipeDialer
 	clock    *resumetest.FakeClock
 	logs     *syncLog
+	verifier *switchVerifier
 }
 
 func newResumeHarness(t *testing.T, maxConnections int) *resumeHarness {
@@ -105,9 +106,14 @@ func newResumeHarness(t *testing.T, maxConnections int) *resumeHarness {
 		dialer:   &pipeDialer{sshd: make(chan net.Conn, 64)},
 		clock:    resumetest.NewFakeClock(),
 		logs:     &syncLog{},
+		verifier: &switchVerifier{},
 	}
-	h.handler = NewHandler(Config{MaxConnections: maxConnections, SSHDAddress: "127.0.0.1:22"}, Dependencies{
-		Verifier:      tokenVerifier{},
+	h.handler = NewHandler(Config{
+		MaxConnections:  maxConnections,
+		SSHDAddress:     "127.0.0.1:22",
+		RecheckInterval: 5 * time.Millisecond,
+	}, Dependencies{
+		Verifier:      h.verifier,
 		Upgrader:      &fakeUpgrader{stream: newBlockingStream()},
 		FrameUpgrader: h.upgrader,
 		Dialer:        h.dialer,
@@ -601,6 +607,29 @@ func TestResumableSessionRefusesAResumeCountItNeverSent(t *testing.T) {
 		t.Fatalf("abort reason = %d", abort.Reason)
 	}
 	waitClosed(t, sshd)
+}
+
+// A revoked connect token ends a resumable session as it ends a raw one, and
+// the session's secret cannot bring it back with a new token.
+func TestResumableSessionEndsWhenTokenIsRevoked(t *testing.T) {
+	h := newResumeHarness(t, 64)
+	client, secret, sshd := h.open()
+
+	h.verifier.revoked.Store(true)
+	if abort := client.Next(sshresume.FrameAbort); abort.Reason != sshresume.AbortRevoked {
+		t.Fatalf("abort reason = %d", abort.Reason)
+	}
+	waitClosed(t, sshd)
+	eventually(t, func() bool { return len(h.logs.events("ssh_bridge_close")) == 1 })
+	if reason := h.logs.events("ssh_bridge_close")[0]["reason"]; reason != "token_revoked" {
+		t.Fatalf("close reason = %v", reason)
+	}
+	eventually(t, func() bool { return h.handler.ActiveConnections() == 0 })
+
+	h.verifier.revoked.Store(false)
+	if _, welcome := h.resume(secret, 0); welcome.Status != sshresume.WelcomeUnknown {
+		t.Fatalf("welcome status after revocation = %d", welcome.Status)
+	}
 }
 
 // Shutdown sends ABORT on every attached transport, and closes every sshd

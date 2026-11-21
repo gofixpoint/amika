@@ -148,7 +148,7 @@ func TestLoadCaseVarsValidation(t *testing.T) {
 		"scalar":             "name: c\nvars:\n  v: fixed\nsteps: [{name: s, cmd: [x]}]\n",
 		"default only":       "name: c\nvars:\n  v:\n    default: m\nsteps: [{name: s, cmd: [x]}]\n",
 		"default plus one":   "name: c\nvars:\n  v:\n    default: m\n    daytona: a0.m\nsteps: [{name: s, cmd: [x]}]\n",
-		"all providers":      "name: c\nvars:\n  v:\n    daytona: a\n    e2b: b\n    freestyle: c\n    vercel: d\nsteps: [{name: s, cmd: [x]}]\n",
+		"all providers":      "name: c\nvars:\n  v:\n    daytona: a\n    e2b: b\n    freestyle: c\n    instabox: e\n    vercel: d\nsteps: [{name: s, cmd: [x]}]\n",
 		"empty string value": "name: c\nvars:\n  v:\n    default: \"\"\nsteps: [{name: s, cmd: [x]}]\n",
 	}
 	for label, content := range valid {

@@ -60,6 +60,9 @@ const (
 	AbortSinkFailed AbortReason = 3
 	// AbortShutdown: amikad is stopping.
 	AbortShutdown AbortReason = 4
+	// AbortRevoked: the connect token that authenticated the session no
+	// longer verifies.
+	AbortRevoked AbortReason = 5
 )
 
 // Frame is one decoded frame. Only the fields of its Type (and, for HELLO and

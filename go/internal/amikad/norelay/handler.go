@@ -59,6 +59,10 @@ type Config struct {
 	// ResumeTiming shortens the resumable route's timers in tests. Zero
 	// fields take the design's values.
 	ResumeTiming sshresume.Timing
+	// RecheckInterval is how often an open session checks its token again.
+	// A session closes when its token no longer verifies, so rotating the
+	// connect token also ends the sessions that the old token opened.
+	RecheckInterval time.Duration
 }
 
 // Dependencies are the handler's security-sensitive boundaries.
@@ -92,6 +96,10 @@ type Handler struct {
 // is left unset.
 const DefaultMaxConnections = 64
 
+// DefaultRecheckInterval is the token recheck interval used when
+// Config.RecheckInterval is left unset.
+const DefaultRecheckInterval = 2 * time.Second
+
 // NewHandler creates a no-relay handler without opening any listener.
 func NewHandler(config Config, deps Dependencies) *Handler {
 	if config.MaxConnections <= 0 {
@@ -99,6 +107,9 @@ func NewHandler(config Config, deps Dependencies) *Handler {
 	}
 	if config.SSHDAddress == "" {
 		config.SSHDAddress = "127.0.0.1:22"
+	}
+	if config.RecheckInterval <= 0 {
+		config.RecheckInterval = DefaultRecheckInterval
 	}
 	if deps.Logger == nil {
 		deps.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -171,14 +182,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	}
 
 	if request.URL.Path == ResumableSSHSessionsPath {
-		h.serveResumable(w, request)
+		h.serveResumable(w, request, token)
 		return
 	}
-	h.serveRaw(w, request)
+	h.serveRaw(w, request, token)
 }
 
 // serveRaw bridges one opaque stream for SSHSessionsPath.
-func (h *Handler) serveRaw(w http.ResponseWriter, request *http.Request) {
+func (h *Handler) serveRaw(w http.ResponseWriter, request *http.Request, token string) {
 	select {
 	case h.slots <- struct{}{}:
 		h.active.Add(1)
@@ -217,7 +228,11 @@ func (h *Handler) serveRaw(w http.ResponseWriter, request *http.Request) {
 	sessionID := newSessionID()
 	startedAt := time.Now()
 	h.log("ssh_bridge_open", slog.String("session_id", sessionID), slog.String("mode", "raw"))
+	stopRecheck := h.closeWhenRevoked(token, sshdStream, websocketStream)
 	fromClient, fromSSHD, closeReason := bridge(websocketStream, sshdStream)
+	if stopRecheck() {
+		closeReason = "token_revoked"
+	}
 	h.log(
 		"ssh_bridge_close",
 		slog.String("session_id", sessionID),
@@ -226,6 +241,52 @@ func (h *Handler) serveRaw(w http.ResponseWriter, request *http.Request) {
 		slog.Int64("bytes_from_client", fromClient),
 		slog.Int64("bytes_from_sshd", fromSSHD),
 	)
+}
+
+// closeWhenRevoked closes the streams of one session when its token no
+// longer verifies. The control plane rotates the connect token to revoke
+// access, and this makes the rotation end open sessions too. It closes the
+// sshd stream first: a WebSocket close can wait seconds for the client's
+// close handshake, and bytes from the client must not reach sshd during
+// that wait. The returned function stops the check and reports whether the
+// check closed the session.
+func (h *Handler) closeWhenRevoked(token string, sshd, websocket Stream) func() bool {
+	return h.watchToken(token, func() {
+		_ = sshd.Close()
+		_ = websocket.Close()
+	})
+}
+
+// watchToken verifies token again every RecheckInterval, and calls revoke
+// once when it no longer verifies. The returned function stops the check
+// and reports whether revoke ran.
+func (h *Handler) watchToken(token string, revoke func()) func() bool {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	var revoked atomic.Bool
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(h.config.RecheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				if h.deps.Verifier.Verify(token) {
+					continue
+				}
+				revoked.Store(true)
+				revoke()
+				return
+			}
+		}
+	}()
+	return func() bool {
+		close(done)
+		<-finished
+		return revoked.Load()
+	}
 }
 
 func requestBearerToken(request *http.Request) (string, bool) {

@@ -1,6 +1,9 @@
 name: selected provider coder-plus-docker base snapshot contract
 # This real-API case verifies the selected provider's medium DinD
 # base snapshot, including a Docker container smoke test in the boot verifier.
+# The rig runs testdata/setup-dangling-home-symlink.sh as its setup
+# script. It leaves a dangling symlink in the amika home, so the boot
+# lifecycle-hooks check fails if post-setup.sh cannot chown past it.
 vars:
   # See api-base-snapshot-coder.yaml for why the request and the expectation
   # are both provider-conditional. coder-plus-docker excludes the xs tier, so a1.tiny
@@ -27,7 +30,7 @@ steps:
       cleanup: [secret, ssh-key, delete, "{{ssh_key_id}}", --force, -o, json]
 
   - name: create a medium coder-plus-docker sandbox from the selected provider base snapshot
-    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --preset, coder-plus-docker, --size, "{{request_size}}", -o, json]
+    cmd: [rig, create, --remote, --provider, "{{sandbox_provider}}", --no-git, --setup-script, testdata/setup-dangling-home-symlink.sh, --preset, coder-plus-docker, --size, "{{request_size}}", -o, json]
     expect:
       exit: 0
       schema: Rig
@@ -68,6 +71,12 @@ steps:
       sudo cp -a /usr/lib/amika-image/verify /tmp/verify
       sudo rm -f /tmp/verify/checks/11-no-root-build-cache.sh \
         /tmp/verify/checks/12-no-package-cache.sh
+
+      amika_home="$(getent passwd amika | cut -d: -f6)"
+      [ -L "$amika_home/.local/share/e2e-store/dangling" ] || {
+        echo 'the setup script fixture did not run' >&2
+        exit 1
+      }
 
       sudo env AMIKA_PRESET=coder-plus-docker AMIKA_VERIFY_CHECKS_DIR=/tmp/verify/checks \
         /usr/lib/amika-image/verify/run.sh boot

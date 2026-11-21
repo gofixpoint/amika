@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -28,8 +29,9 @@ type FrameUpgrader interface {
 }
 
 // serveResumable reads the transport's HELLO, then opens a session or resumes
-// one. It returns when the transport ends.
-func (h *Handler) serveResumable(w http.ResponseWriter, request *http.Request) {
+// one. It returns when the transport ends. token is the connect token that
+// authenticated this transport.
+func (h *Handler) serveResumable(w http.ResponseWriter, request *http.Request, token string) {
 	select {
 	case h.pendingHellos <- struct{}{}:
 	default:
@@ -58,10 +60,10 @@ func (h *Handler) serveResumable(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if hello.mode == sshresume.HelloResume {
-		h.resumeSession(transport, hello.hash, hello.count)
+		h.resumeSession(transport, hello.hash, hello.count, token)
 		return
 	}
-	h.openSession(request.Context(), transport)
+	h.openSession(request.Context(), transport, token)
 }
 
 // readHello waits HelloTimeout for a valid HELLO. It returns a refusal reason
@@ -89,7 +91,7 @@ func (h *Handler) readHello(transport sshresume.Transport) (resumeHello, string)
 
 // openSession takes a capacity slot, dials sshd, and hands the client a new
 // session's secret in WELCOME.
-func (h *Handler) openSession(ctx context.Context, transport sshresume.Transport) {
+func (h *Handler) openSession(ctx context.Context, transport sshresume.Transport, token string) {
 	select {
 	case h.slots <- struct{}{}:
 		h.active.Add(1)
@@ -161,14 +163,14 @@ func (h *Handler) openSession(ctx context.Context, transport sshresume.Transport
 		h.finish(session)
 		return
 	}
-	h.carry(session, attachment)
+	h.carry(session, attachment, token)
 }
 
 // resumeSession attaches the transport to the session the HELLO's secret
 // names. The newest valid resume wins: an attached transport is closed with
 // sshresume.CloseTakeover first. A wrong secret gets the same answer as an
 // ended session: Unknown.
-func (h *Handler) resumeSession(transport sshresume.Transport, hash sshresume.SecretHash, count uint64) {
+func (h *Handler) resumeSession(transport sshresume.Transport, hash sshresume.SecretHash, count uint64, token string) {
 	session := h.resume.find(hash)
 	if session == nil {
 		h.refuseUnknown(transport)
@@ -208,13 +210,25 @@ func (h *Handler) resumeSession(transport sshresume.Transport, hash sshresume.Se
 		slog.Int64("detached_ms", detached.Milliseconds()),
 		slog.Uint64("bytes_resent_to_client", attachment.Resent()),
 	)
-	h.carry(session, attachment)
+	h.carry(session, attachment, token)
 }
 
 // carry waits for the attachment to end. A transport that dropped detaches
 // the session and starts its grace timer; a session that ended is finished.
-func (h *Handler) carry(session *resumeSession, attachment *sshresume.Attachment) {
+//
+// While the attachment lasts, carry verifies its connect token again, as the
+// raw route does. A revoked token ends the whole session, not only this
+// attachment: a detached session would otherwise keep sshd open for the
+// grace period. sshd closes before the ABORT write, so no client byte
+// reaches sshd while that write waits.
+func (h *Handler) carry(session *resumeSession, attachment *sshresume.Attachment, token string) {
+	stopRecheck := h.watchToken(token, func() {
+		session.revoked.Store(true)
+		_ = session.sshd.Close()
+		session.stream.Abort(sshresume.AbortRevoked)
+	})
 	<-attachment.Done()
+	stopRecheck()
 	cause := attachment.Cause()
 	counters := session.stream.Counters()
 	session.mu.Lock()
@@ -271,10 +285,14 @@ func (h *Handler) finish(session *resumeSession) {
 			detachedTotal += h.deps.Clock.Now().Sub(session.detachedAt)
 		}
 		session.mu.Unlock()
+		reason := closeReason(end)
+		if session.revoked.Load() {
+			reason = "token_revoked"
+		}
 		h.log("ssh_bridge_close",
 			slog.String("session_ref", session.hash.Ref()),
 			slog.String("mode", "resume"),
-			slog.String("reason", closeReason(end)),
+			slog.String("reason", reason),
 			slog.String("end", end.Name()),
 			slog.Int64("duration_ms", h.deps.Clock.Now().Sub(session.openedAt).Milliseconds()),
 			slog.Uint64("bytes_from_client", counters.Received),
@@ -370,6 +388,9 @@ type resumeSession struct {
 	detachedTotal time.Duration
 	resumes       int
 	finishOnce    sync.Once
+	// revoked is set when the connect token of an attachment stopped
+	// verifying.
+	revoked atomic.Bool
 }
 
 // resumeRegistry holds the live sessions and the transports that wait for

@@ -20,7 +20,7 @@ fi
 
 echo "Go not found. Installing..."
 
-GO_VERSION="1.26.10"
+GO_VERSION="1.26.11"
 ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
 
 # Normalize architecture name
@@ -39,4 +39,4 @@ echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/golang.sh >
 
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.zshrc
-echo "Installed: $(go version)"
+echo "Installed: $(/usr/local/go/bin/go version)"

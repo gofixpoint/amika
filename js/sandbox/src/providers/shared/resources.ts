@@ -18,6 +18,8 @@ import { SandboxProviderUnsupportedError } from "../provider";
 import { decodeUtf8 } from "./adapter";
 import { scrubTargetsViaExec } from "./scrub-exec";
 import type {
+  AccountCapability,
+  AccountNamespace,
   CloneRepoInput,
   DockerNamespace,
   DockerRegistry,
@@ -126,6 +128,15 @@ export function makeSnapshotNamespace(
     async createImage(input) {
       return wrap(await snapshots.createImageSnapshot(input));
     },
+  };
+}
+
+/** Build the top-level `account` namespace. */
+export function makeAccountNamespace(
+  account: AccountCapability,
+): AccountNamespace {
+  return {
+    sizes: () => account.listSizes(),
   };
 }
 

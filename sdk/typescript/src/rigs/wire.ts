@@ -20,11 +20,17 @@ import {
   optionalArray,
   optionalObject,
 } from "../internal/wire.js";
+import { normalizeRef, refFieldName } from "../internal/resource-ref.js";
+import type { ResourceRef } from "../resource-ref.js";
 
+/**
+ * The account goes out as `cloud_account_id`, `cloud_account_name`, or
+ * `cloud_account_ref`, by its reference's kind.
+ */
 export function createRigRequestToWire(
   r: CreateRigRequest,
 ): Record<string, unknown> {
-  return omitUndefined({
+  const wire = omitUndefined({
     name: r.name,
     provider: r.provider,
     repo_url: r.repoUrl,
@@ -44,6 +50,11 @@ export function createRigRequestToWire(
     github_auth_mode: r.githubAuthMode,
     host_id: r.hostId,
   });
+  if (r.cloudAccount !== undefined) {
+    const ref = normalizeRef(r.cloudAccount, "cloudAccount");
+    wire[refFieldName("cloud_account", ref)] = ref.value;
+  }
+  return wire;
 }
 
 /**
@@ -78,7 +89,21 @@ export function createRigRequestFromWire(
     newBranchName: optionalStr(w["new_branch_name"]),
     githubAuthMode: optionalStr(w["github_auth_mode"]),
     hostId: optionalStr(w["host_id"]),
+    cloudAccount: cloudAccountRefFromWire(w),
   }) as CreateRigRequest;
+}
+
+/** Reads whichever of `cloud_account_ref`, `_name`, and `_id` is set. */
+function cloudAccountRefFromWire(
+  w: Record<string, unknown>,
+): ResourceRef | undefined {
+  const ref = optionalStr(w["cloud_account_ref"]);
+  if (ref !== undefined) return ref;
+  const name = optionalStr(w["cloud_account_name"]);
+  if (name !== undefined) return { ref: name, by: "name" };
+  const id = optionalStr(w["cloud_account_id"]);
+  if (id !== undefined) return { ref: id, by: "id" };
+  return undefined;
 }
 
 export function remoteRigServiceFromWire(
@@ -125,6 +150,11 @@ export function remoteRigFromWire(w: Record<string, unknown>): RemoteRig {
     snapshot: nullableStr(w["snapshot"]),
     currentSessionId: nullableStr(w["current_session_id"]),
     services: mapArray(w["services"], remoteRigServiceFromWire),
+    cloudAccount:
+      optionalObject(w["cloud_account"], (c) => ({
+        id: str(c["id"]),
+        name: str(c["name"]),
+      })) ?? null,
     createdAt: str(w["created_at"]),
     updatedAt: str(w["updated_at"]),
 

@@ -64,7 +64,10 @@ func (s *SSHSession) Validate(expectedSandboxID string) error {
 		return ErrInvalidSSHSession
 	}
 	connectURL, err := url.Parse(s.ConnectURL)
-	if err != nil || connectURL.Scheme != "wss" || connectURL.Host == "" || connectURL.User != nil || connectURL.RawQuery != "" || connectURL.Fragment != "" {
+	if err != nil || connectURL.Scheme != "wss" || connectURL.Host == "" || connectURL.User != nil || connectURL.Fragment != "" {
+		return ErrInvalidSSHSession
+	}
+	if connectURL.RawQuery != "" && !isPortTokenQuery(connectURL.RawQuery) {
 		return ErrInvalidSSHSession
 	}
 	if !strings.HasSuffix(connectURL.EscapedPath(), "/v1/ssh-sessions") {
@@ -117,6 +120,42 @@ func (c *Client) DeleteSSHPublicKey(id string) error {
 		return fmt.Errorf("remote delete SSH public key: %w", err)
 	}
 	return nil
+}
+
+// PortTokenQueryParam names the query parameter that carries a provider's
+// port access token. Instabox publishes amikad on a private port that
+// answers only requests with that port's token, and a WebSocket upgrade
+// can carry it only in the URL: the Authorization header already holds the
+// connect token.
+const PortTokenQueryParam = "_token"
+
+// maxPortTokenLength bounds the port token. An Instabox token is about 50
+// characters.
+const maxPortTokenLength = 256
+
+// isPortTokenQuery reports whether rawQuery is exactly one port token
+// parameter with a URL-safe value. Any other query is refused, so a
+// descriptor cannot add parameters that the rig's amikad would see.
+func isPortTokenQuery(rawQuery string) bool {
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil || len(values) != 1 || len(values[PortTokenQueryParam]) != 1 {
+		return false
+	}
+	token := values[PortTokenQueryParam][0]
+	if token == "" || len(token) > maxPortTokenLength {
+		return false
+	}
+	for _, r := range token {
+		if !isURLSafeTokenRune(r) {
+			return false
+		}
+	}
+	// The value must round-trip, so the URL holds no escaped characters.
+	return rawQuery == PortTokenQueryParam+"="+token
+}
+
+func isURLSafeTokenRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_'
 }
 
 func isCanonicalConnectToken(value string) bool {
