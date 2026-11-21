@@ -38,6 +38,7 @@ import { ensureGcpSshFirewall, GCP_NETWORK, GCP_NETWORK_TAG } from "./firewall";
 import { gcpName } from "./names";
 import { gcpSshKey, sshKeysMetadata } from "./ssh-key";
 import { closeGcpSsh, waitForGcpSsh } from "./ssh";
+import { ensureGcpSshKeyMetadata } from "./ssh-key-metadata";
 
 /** The home of the `amika` user the guest agent creates. */
 export const GCP_HOME_DIR = "/home/amika";
@@ -277,6 +278,9 @@ export async function startGcpSandbox(
   const instance = await getGcpInstance(target, name);
   if (!instance) throw new Error(`GCP VM ${name} does not exist`);
   closeGcpSsh(target, name);
+  // The service account key may have been rotated since create; the guest
+  // agent installs the key from metadata as the VM boots.
+  await ensureGcpSshKeyMetadata(target, name);
   if (instance.status === "SUSPENDED") {
     await runOperation(target, "POST", instancePath(target, name, "/resume"));
   } else if (instance.status !== "RUNNING") {

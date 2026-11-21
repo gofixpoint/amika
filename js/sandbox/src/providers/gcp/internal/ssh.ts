@@ -14,6 +14,9 @@
  * - **Readiness.** A new or started VM refuses SSH until it has booted and
  *   the guest agent has made the user. {@link waitForGcpSsh} retries until
  *   SSH works.
+ * - **Key rotation.** A login refused for its key puts the current derived
+ *   key back in the VM's metadata (`./ssh-key-metadata.ts`) and tries again
+ *   while the guest agent installs it.
  */
 import type { Client, ClientChannel, SFTPWrapper } from "ssh2";
 import { z } from "zod";
@@ -21,6 +24,7 @@ import type { StreamCommandHandlers } from "../../provider";
 import { SandboxFileTooLargeError } from "../../provider";
 import { isNotFound, requestJson, type GcpTarget } from "./client";
 import { gcpSshKey, GCP_SSH_USER } from "./ssh-key";
+import { ensureGcpSshKeyMetadata } from "./ssh-key-metadata";
 
 /** How long a VM may take to accept SSH after it starts. */
 const SSH_READY_TIMEOUT_MS = 5 * 60_000;
@@ -31,6 +35,9 @@ const CONNECT_TIMEOUT_MS = 20_000;
 
 /** Close a shared connection after this long with no call on it. */
 const IDLE_CLOSE_MS = 30_000;
+
+/** How long to wait for the guest agent to install a repaired key. */
+const KEY_REPAIR_TIMEOUT_MS = 90_000;
 
 /** The longest one command may run. */
 export const GCP_EXEC_TIMEOUT_MS = 30 * 60_000;
@@ -94,12 +101,7 @@ export async function withGcpSsh<T>(
   fn: (client: Client) => Promise<T>,
 ): Promise<T> {
   const key = poolKey(target, instanceName);
-  let pending = pool.get(key);
-  if (!pending) {
-    pending = openConnection(target, instanceName, () => pool.delete(key));
-    pool.set(key, pending);
-    pending.catch(() => pool.delete(key));
-  }
+  const pending = pool.get(key) ?? dial(key, target, instanceName);
   const conn = await pending;
   conn.active++;
   if (conn.idleTimer) {
@@ -111,10 +113,64 @@ export async function withGcpSsh<T>(
   } finally {
     conn.active--;
     if (conn.active === 0) {
-      conn.idleTimer = setTimeout(() => conn.client.end(), IDLE_CLOSE_MS);
+      conn.idleTimer = setTimeout(() => {
+        // Out of the pool first, so no call picks up a closing client.
+        if (pool.get(key) === pending) pool.delete(key);
+        conn.client.end();
+      }, IDLE_CLOSE_MS);
       conn.idleTimer.unref();
     }
   }
+}
+
+/**
+ * Open a connection and put it in the pool. It leaves the pool when it
+ * fails or closes, but only if it is still the pool's entry: a newer
+ * connection to the same VM keeps its place.
+ */
+function dial(
+  key: string,
+  target: GcpTarget,
+  instanceName: string,
+): Promise<PooledConnection> {
+  const drop = () => {
+    if (pool.get(key) === pending) pool.delete(key);
+  };
+  const pending = connectRepairingKey(target, instanceName, drop);
+  pool.set(key, pending);
+  pending.catch(drop);
+  return pending;
+}
+
+/**
+ * Open a connection. When the VM refuses our key and its metadata holds an
+ * older one (the service account key was rotated), install the current key
+ * and keep trying while the guest agent picks it up.
+ */
+async function connectRepairingKey(
+  target: GcpTarget,
+  instanceName: string,
+  onClose: () => void,
+): Promise<PooledConnection> {
+  try {
+    return await openConnection(target, instanceName, onClose);
+  } catch (error) {
+    if (!isAuthFailure(error)) throw error;
+    if (!(await ensureGcpSshKeyMetadata(target, instanceName))) throw error;
+  }
+  const deadline = Date.now() + KEY_REPAIR_TIMEOUT_MS;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, SSH_READY_POLL_MS));
+    try {
+      return await openConnection(target, instanceName, onClose);
+    } catch (error) {
+      if (!isAuthFailure(error) || Date.now() >= deadline) throw error;
+    }
+  }
+}
+
+function isAuthFailure(error: unknown): boolean {
+  return (error as { level?: string })?.level === "client-authentication";
 }
 
 /** Close any shared connection to the VM, as before it stops or is deleted. */
@@ -334,8 +390,16 @@ function runOnChannel(
         });
         channel.on("close", () => {
           clearTimeout(timer);
+          if (exitCode === null) {
+            // The connection dropped (or the VM stopped) mid-command: no
+            // exit status came, so the outcome is unknown, not a failure.
+            reject(
+              new Error("The SSH connection closed before the command exited"),
+            );
+            return;
+          }
           resolve({
-            exitCode: exitCode ?? 1,
+            exitCode,
             stdout: Buffer.concat(stdout).toString("utf8"),
             stderr: Buffer.concat(stderr).toString("utf8"),
           });

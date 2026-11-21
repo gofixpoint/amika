@@ -4,7 +4,9 @@
  * (https://developers.google.com/identity/protocols/oauth2/service-account#httprest).
  *
  * The grant needs no Google library: we sign the assertion with the key's
- * RSA private key (`node:crypto`) and post it to the key's `token_uri`.
+ * RSA private key (`node:crypto`) and post it to Google's token endpoint.
+ * The key's own `token_uri` is ignored: the key is customer input, and a
+ * URL in it must not make our servers send requests anywhere but Google.
  * Tokens last an hour. We keep each one in memory, per key, until five
  * minutes before it ends.
  */
@@ -14,7 +16,7 @@ import type { GcpConfig } from "../config";
 
 export const GCP_DEFAULT_ZONE = "us-central1-a";
 
-const DEFAULT_TOKEN_URI = "https://oauth2.googleapis.com/token";
+export const GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token";
 
 /** Read and change Compute Engine resources; nothing else. */
 const COMPUTE_SCOPE = "https://www.googleapis.com/auth/compute";
@@ -35,7 +37,6 @@ const serviceAccountKeySchema = z.object({
   private_key_id: z.string().optional(),
   private_key: z.string().min(1),
   client_email: z.string().min(1),
-  token_uri: z.string().url().optional(),
   // Not part of Google's key format: an Amika extension so one pasted key
   // can also pick the zone.
   zone: z.string().optional(),
@@ -47,7 +48,6 @@ export interface GcpCredentials {
   zone: string;
   clientEmail: string;
   privateKey: string;
-  tokenUri: string;
   /** A short hash of the key: tells two keys apart without revealing one. */
   keyHash: string;
 }
@@ -87,7 +87,6 @@ export function parseGcpCredentials(config: GcpConfig): GcpCredentials {
     zone,
     clientEmail: key.client_email,
     privateKey: key.private_key,
-    tokenUri: key.token_uri ?? DEFAULT_TOKEN_URI,
     keyHash: createHash("sha256")
       .update(key.private_key)
       .digest("hex")
@@ -108,7 +107,7 @@ export function signedAssertion(
     encode({
       iss: credentials.clientEmail,
       scope: COMPUTE_SCOPE,
-      aud: credentials.tokenUri,
+      aud: GOOGLE_TOKEN_URI,
       iat: nowS,
       exp: nowS + TOKEN_LIFETIME_S,
     });
@@ -135,7 +134,7 @@ export async function gcpAccessToken(
   if (cached && cached.expiresAt - TOKEN_REFRESH_MARGIN_MS > Date.now()) {
     return cached.token;
   }
-  const res = await fetch(credentials.tokenUri, {
+  const res = await fetch(GOOGLE_TOKEN_URI, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({

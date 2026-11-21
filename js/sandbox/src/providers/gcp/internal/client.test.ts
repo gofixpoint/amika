@@ -7,7 +7,8 @@ import {
   runOperation,
 } from "./client";
 import { z } from "zod";
-import { TEST_CONFIG, TEST_KEY_JSON } from "./test-key";
+import { GOOGLE_TOKEN_URI } from "./credentials";
+import { TEST_CONFIG } from "./test-key";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -17,7 +18,7 @@ function stubFetch(...answers: Array<[number, unknown]>) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string | URL, init: RequestInit) => {
-      if (String(url) === TEST_KEY_JSON.token_uri) {
+      if (String(url) === GOOGLE_TOKEN_URI) {
         return new Response(
           JSON.stringify({ access_token: "tok", expires_in: 3600 }),
         );

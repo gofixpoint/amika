@@ -13,7 +13,8 @@ export const TEST_KEY_JSON = {
   private_key_id: "kid1",
   private_key: privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
   client_email: "amika@acme-proj.iam.gserviceaccount.com",
-  token_uri: "https://oauth2.test/token",
+  // Ignored: tokens always come from Google's own endpoint.
+  token_uri: "http://169.254.169.254/token",
 };
 
 export const TEST_CONFIG = {
