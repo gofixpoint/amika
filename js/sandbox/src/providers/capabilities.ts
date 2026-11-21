@@ -20,6 +20,7 @@ import { e2bCapabilities } from "./e2b/capabilities";
 import { freestyleCapabilities } from "./freestyle/capabilities";
 import { vercelCapabilities } from "./vercel/capabilities";
 import { instaboxCapabilities } from "./instabox/capabilities";
+import { orbleCapabilities } from "./orble/capabilities";
 import { runtimeCapabilities } from "./runtime/capabilities";
 import { boatCapabilities } from "./boat/capabilities";
 import { gcpCapabilities } from "./gcp/capabilities";
@@ -40,6 +41,7 @@ export const SANDBOX_PROVIDER_CAPABILITIES: Record<
   freestyle: freestyleCapabilities,
   vercel: vercelCapabilities,
   instabox: instaboxCapabilities,
+  orble: orbleCapabilities,
   runtime: runtimeCapabilities,
   boat: boatCapabilities,
   gcp: gcpCapabilities,
@@ -76,6 +78,10 @@ export const SANDBOX_PROVIDER_DISPLAY: Record<
   instabox: {
     label: "Instabox",
     badgeClassName: "bg-teal-700 text-white",
+  },
+  orble: {
+    label: "Orble",
+    badgeClassName: "bg-violet-700 text-white",
   },
   runtime: {
     label: "Runtime",
