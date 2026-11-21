@@ -219,13 +219,15 @@ func (h *Handler) resumeSession(transport sshresume.Transport, hash sshresume.Se
 // While the attachment lasts, carry verifies its connect token again, as the
 // raw route does. A revoked token ends the whole session, not only this
 // attachment: a detached session would otherwise keep sshd open for the
-// grace period. sshd closes before the ABORT write, so no client byte
+// grace period. The session ends first, so the closed sshd does not turn
+// into a GOODBYE. sshd then closes before the ABORT write, so no client byte
 // reaches sshd while that write waits.
 func (h *Handler) carry(session *resumeSession, attachment *sshresume.Attachment, token string) {
 	stopRecheck := h.watchToken(token, func() {
-		session.revoked.Store(true)
-		_ = session.sshd.Close()
-		session.stream.Abort(sshresume.AbortRevoked)
+		session.stream.AbortAfter(sshresume.AbortRevoked, func() {
+			session.revoked.Store(true)
+			_ = session.sshd.Close()
+		})
 	})
 	<-attachment.Done()
 	stopRecheck()

@@ -516,6 +516,35 @@ func TestStreamAbortsWhenItsSinkFails(t *testing.T) {
 	}
 }
 
+// An owner that closes its source in AbortAfter's release gets ABORT on the
+// wire, never a GOODBYE for the closed source.
+func TestStreamAbortAfterReleasesBeforeTheAbort(t *testing.T) {
+	source, closeSource := io.Pipe()
+	stream, _, client := attachedServer(t, source, io.Discard, resumetest.NewFakeClock())
+	ended := stream.AbortAfter(sshresume.AbortRevoked, func() {
+		_ = closeSource.Close()
+		// The reader may have stopped at the ended session before it read
+		// the EOF, so SourceEnded may never close.
+		select {
+		case <-stream.SourceEnded():
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+	if !ended {
+		t.Fatal("AbortAfter did not end the session")
+	}
+	message, err := client.End.ReadFrameWithin(5 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frame, err := sshresume.ParseFrame(message); err != nil || frame.Type != sshresume.FrameAbort || frame.Reason != sshresume.AbortRevoked {
+		t.Fatalf("first frame = %+v, %v; want ABORT revoked", frame, err)
+	}
+	if stream.AbortAfter(sshresume.AbortShutdown, func() { t.Error("release ran on an ended session") }) {
+		t.Fatal("a second AbortAfter ended the session again")
+	}
+}
+
 func TestStreamEndsOnAReceivedAbort(t *testing.T) {
 	stream, _, client := attachedServer(t, blockingSource(), io.Discard, resumetest.NewFakeClock())
 	client.Send(sshresume.Frame{Type: sshresume.FrameAbort, Reason: 99})

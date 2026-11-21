@@ -228,8 +228,16 @@ func (s *Stream) SourceEnded() <-chan struct{} { return s.sourceDone }
 
 // Abort ends the session now, and sends ABORT with reason on the attached
 // transport, if any.
-func (s *Stream) Abort(reason AbortReason) {
-	s.endWith(End{Kind: EndAborted, Reason: reason}, abortFrame(reason))
+func (s *Stream) Abort(reason AbortReason) { s.AbortAfter(reason, nil) }
+
+// AbortAfter ends the session like Abort, and calls release after the
+// session has ended but before the ABORT write. The owner can close its
+// source and sink in release: the ended session then sends no GOODBYE for
+// the closed source, and no peer byte reaches the sink while the ABORT write
+// waits. release runs only if this call ended the session, and AbortAfter
+// reports whether it did.
+func (s *Stream) AbortAfter(reason AbortReason, release func()) bool {
+	return s.endThen(End{Kind: EndAborted, Reason: reason}, abortFrame(reason), release)
 }
 
 // Expire ends a session its owner has given up on. It sends nothing.
@@ -308,11 +316,15 @@ func (s *Stream) abortOn(t Transport, reason AbortReason) {
 
 // endWith ends the session once. It sends final, if any, on the attached
 // transport, then closes that transport normally.
-func (s *Stream) endWith(end End, final []byte) {
+func (s *Stream) endWith(end End, final []byte) { s.endThen(end, final, nil) }
+
+// endThen is endWith, and calls release, if any, once the session has ended
+// and before the final write. It reports whether this call ended the session.
+func (s *Stream) endThen(end End, final []byte, release func()) bool {
 	s.mu.Lock()
 	if s.ended {
 		s.mu.Unlock()
-		return
+		return false
 	}
 	s.ended = true
 	s.end = end
@@ -322,13 +334,17 @@ func (s *Stream) endWith(end End, final []byte) {
 		a = nil
 	}
 	s.mu.Unlock()
+	if release != nil {
+		release()
+	}
 	if a == nil {
-		return
+		return true
 	}
 	if final != nil {
 		writeFinal(a.t, final)
 	}
 	a.t.Close(websocket.StatusNormalClosure)
+	return true
 }
 
 // finalWriteWait bounds the write of a last frame to a transport that may no

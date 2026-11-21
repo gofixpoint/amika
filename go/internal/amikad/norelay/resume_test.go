@@ -610,7 +610,7 @@ func TestResumableSessionRefusesAResumeCountItNeverSent(t *testing.T) {
 }
 
 // A revoked connect token ends a resumable session as it ends a raw one, and
-// the session's secret cannot bring it back with a new token.
+// the session's secret cannot bring it back, even with a token that verifies.
 func TestResumableSessionEndsWhenTokenIsRevoked(t *testing.T) {
 	h := newResumeHarness(t, 64)
 	client, secret, sshd := h.open()
