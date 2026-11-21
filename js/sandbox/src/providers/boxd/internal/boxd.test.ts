@@ -59,6 +59,7 @@ describe("createBoxdSandbox", () => {
       labels: {
         "amika-org-id": "org_1",
         "amika-sandbox-name": "rig-1",
+        "amika-create-id": expect.stringMatching(/^[0-9a-f-]{36}$/),
         "amika-managed": "true",
       },
       config: { vcpu: 4, memory: "16G", autoSuspendTimeout: 1800 },
@@ -69,6 +70,23 @@ describe("createBoxdSandbox", () => {
     expect(machines.exec.mock.calls[0][1].command).toMatch(
       /^bash -c .*useradd/s,
     );
+  });
+
+  it("finds and deletes a machine whose create answer was lost", async () => {
+    machines.create.mockRejectedValue(new Error("connection reset"));
+    machines.list.mockResolvedValue([{ id: "vm-lost" }]);
+    await expect(
+      createBoxdSandbox(ctx, CONFIG, {
+        name: "rig-3",
+        snapshot: "ubuntu:24.04",
+        services: [],
+      }),
+    ).rejects.toThrow(/connection reset/);
+    const createId = machines.create.mock.calls[0][0].labels["amika-create-id"];
+    expect(machines.list).toHaveBeenCalledWith({
+      labels: { "amika-create-id": createId },
+    });
+    expect(machines.delete).toHaveBeenCalledWith("vm-lost");
   });
 
   it("deletes the machine when the rig user cannot be made", async () => {
