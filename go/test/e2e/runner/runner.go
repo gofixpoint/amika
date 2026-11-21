@@ -46,6 +46,7 @@ var SupportedSandboxProviders = map[string]bool{
 	"freestyle": true,
 	"gcp":       true,
 	"instabox":  true,
+	"orble":     true,
 	"runtime":   true,
 	"vercel":    true,
 }

@@ -25,6 +25,8 @@ import type { FreestyleConfig } from "./freestyle/config";
 import type { VercelConfig } from "./vercel/config";
 import type { InstaboxConfig } from "./instabox/config";
 import instaboxProvider, { openInstaboxAdapter } from "./instabox/provider";
+import type { OrbleConfig } from "./orble/config";
+import orbleProvider, { openOrbleAdapter } from "./orble/provider";
 import type { RuntimeConfig } from "./runtime/config";
 import runtimeProvider, { openRuntimeAdapter } from "./runtime/provider";
 import type { BoatConfig } from "./boat/config";
@@ -64,6 +66,8 @@ export interface SandboxProviderDeps {
   vercel: VercelConfig | null;
   /** Absent means the same as `null`: not configured. */
   instabox?: InstaboxConfig | null;
+  /** Absent means the same as `null`: not configured. */
+  orble?: OrbleConfig | null;
   /** Absent means the same as `null`: not configured. */
   runtime?: RuntimeConfig | null;
   /** Absent means the same as `null`: not configured. */
@@ -121,6 +125,8 @@ const BOAT_HINT =
   "Boat provider is not configured (set BOAT_ENABLED=true and its credentials)";
 const RUNTIME_HINT =
   "Runtime provider is not configured (set RUNTIME_ENABLED=true and its credentials)";
+const ORBLE_HINT =
+  "Orble provider is not configured (set ORBLE_ENABLED=true and its credentials)";
 const SIMULATE_HINT =
   "Simulate provider is not configured (set SIMULATE_ENABLED=true)";
 
@@ -222,6 +228,14 @@ const PROVIDERS = {
           requireConfig(deps.runtime ?? null, RUNTIME_HINT),
           id,
         ),
+      ),
+  },
+  orble: {
+    create: (deps) =>
+      orbleProvider(requireConfig(deps.orble ?? null, ORBLE_HINT)),
+    openAdapter: (deps, id) =>
+      Promise.resolve(
+        openOrbleAdapter(requireConfig(deps.orble ?? null, ORBLE_HINT), id),
       ),
   },
   simulate: {
