@@ -26,6 +26,7 @@ import type { E2bConfig } from "./providers/e2b/config";
 import type { FreestyleConfig } from "./providers/freestyle/config";
 import type { VercelConfig } from "./providers/vercel/config";
 import type { InstaboxConfig } from "./providers/instabox/config";
+import type { RuntimeConfig } from "./providers/runtime/config";
 import type { BoatConfig } from "./providers/boat/config";
 import type { GcpConfig } from "./providers/gcp/config";
 import type { SimulateConfig } from "./providers/simulate/config";
@@ -38,6 +39,8 @@ export interface SandboxProviderConfigs {
   vercel: VercelConfig | null;
   /** Absent means the same as `null`: not configured. */
   instabox?: InstaboxConfig | null;
+  /** Absent means the same as `null`: not configured. */
+  runtime?: RuntimeConfig | null;
   /** Absent means the same as `null`: not configured. */
   boat?: BoatConfig | null;
   /** Absent means the same as `null`: not configured. */
@@ -97,7 +100,7 @@ function hostdSecretKey(env: Env): string {
 /**
  * Read the provider config slices from `env` (defaults to `process.env`).
  *
- * Daytona is always configured (this contract requires its key). E2B/Freestyle/Vercel/Instabox/Boat/GCP/Smol/Lume/AmikaHostd/Simulate are
+ * Daytona is always configured (this contract requires its key). E2B/Freestyle/Vercel/Instabox/Runtime/Boat/GCP/Smol/Lume/AmikaHostd/Simulate are
  * gated on their `*_ENABLED` variables being exactly `true` and are
  * `null` otherwise. `ENABLE_DAYTONA_VM` and `ENABLE_DAYTONA_WEBSOCKET` (lenient
  * `1`/`true`/`on`) set `daytona.useVm` and `daytona.useWebSocket`;
@@ -161,6 +164,10 @@ export function sandboxProviderConfigsFromEnv(
     ? { apiKey: required(env, "BOAT_API_KEY"), apiUrl: env.BOAT_API_URL }
     : null;
 
+  const runtime: RuntimeConfig | null = isEnabled(env.RUNTIME_ENABLED)
+    ? { apiKey: required(env, "RUNTIME_API_KEY"), apiUrl: env.RUNTIME_API_URL }
+    : null;
+
   const smol: SmolConfig | null = isEnabled(env.SMOL_ENABLED)
     ? { apiUrl: env.SMOL_API_URL, network: parseBooleanLike(env.SMOL_NETWORK) }
     : null;
@@ -195,6 +202,7 @@ export function sandboxProviderConfigsFromEnv(
     instabox,
     gcp,
     boat,
+    runtime,
     smol,
     lume,
     amikaHostd,

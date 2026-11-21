@@ -40,6 +40,7 @@ import {
   type SandboxExecResult,
   type StreamCommandHandlers,
 } from "../provider";
+import { decodeUtf8, type SandboxAdapter } from "./adapter";
 
 /** The rig user every provider runs commands as. */
 export const RIG_USER = "amika";
@@ -76,6 +77,12 @@ export interface VendorShell {
   stagingDir: string;
   /** Write `content` to `path` (inside {@link stagingDir}) as the vendor user. */
   stage(path: string, content: Uint8Array): Promise<void>;
+  /**
+   * Read `path` (inside {@link stagingDir}) as the vendor user. A vendor
+   * whose command output is capped gives this, and reads go through a
+   * staged copy instead of the command's output.
+   */
+  unstage?(path: string): Promise<Uint8Array>;
 }
 
 /** Raised when the rig user may not read a file. */
@@ -139,6 +146,14 @@ export function rigUserOps(shell: VendorShell): RigUserOps {
     },
 
     readFile: async (path, opts) => {
+      if (shell.unstage) {
+        return readThroughStaging(
+          shell,
+          shell.unstage.bind(shell),
+          path,
+          opts?.maxBytes,
+        );
+      }
       const result = await shell.run(readFileScript(path, opts?.maxBytes));
       if (result.exitCode === READ_MISSING_EXIT) return null;
       if (result.exitCode === READ_DENIED_EXIT) {
@@ -257,6 +272,60 @@ export function readFileScript(path: string, maxBytes?: number): string {
   return `sudo -n -H -u ${RIG_USER} bash -c ${shellQuote(script)}`;
 }
 
+/**
+ * Copy the file (read as `amika`, capped like {@link readFileScript}) to a
+ * staging path the vendor user owns, read that, and remove it. The exit
+ * codes match {@link readFileScript}. Exported for tests.
+ */
+export function copyToStagingScript(
+  path: string,
+  staged: string,
+  maxBytes?: number,
+): string {
+  const p = shellQuote(path);
+  const read =
+    maxBytes === undefined ? `cat < ${p}` : `head -c ${maxBytes + 1} < ${p}`;
+  const asRig = [
+    `[ -e ${p} ] || exit ${READ_MISSING_EXIT}`,
+    `[ -r ${p} ] || exit ${READ_DENIED_EXIT}`,
+    read,
+  ].join("\n");
+  return [
+    "set -o pipefail",
+    `umask 077`,
+    `sudo -n -H -u ${RIG_USER} bash -c ${shellQuote(asRig)} > ${shellQuote(staged)}`,
+  ].join("\n");
+}
+
+async function readThroughStaging(
+  shell: VendorShell,
+  unstage: (path: string) => Promise<Uint8Array>,
+  path: string,
+  maxBytes?: number,
+): Promise<Uint8Array | null> {
+  const staged = `${shell.stagingDir}/${randomUUID()}`;
+  try {
+    const result = await shell.run(
+      `mkdir -p -- ${shellQuote(shell.stagingDir)}\n` +
+        copyToStagingScript(path, staged, maxBytes),
+    );
+    if (result.exitCode === READ_MISSING_EXIT) return null;
+    if (result.exitCode === READ_DENIED_EXIT) {
+      throw new RigFilePermissionError(path);
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(`Could not read ${path}: ${failureText(result)}`);
+    }
+    const bytes = await unstage(staged);
+    if (maxBytes !== undefined && bytes.byteLength > maxBytes) {
+      throw new SandboxFileTooLargeError(path, maxBytes);
+    }
+    return bytes;
+  } finally {
+    await shell.run(`rm -f -- ${shellQuote(staged)}`).catch(() => undefined);
+  }
+}
+
 /** Stage `content`, run `fn` with its path, then remove it. */
 async function withStaged<T>(
   shell: VendorShell,
@@ -281,4 +350,26 @@ function failureText(result: SandboxExecResult): string {
   return (
     result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`
   );
+}
+
+/**
+ * The provisioning adapter over {@link rigUserOps}: commands and files as
+ * the rig user. A file the rig user may not read downloads as `null`, as
+ * the adapter contract asks.
+ */
+export function rigUserAdapter(shell: VendorShell): SandboxAdapter {
+  const ops = rigUserOps(shell);
+  return {
+    exec: (command, opts) => ops.exec(command, opts),
+    uploadFile: (content, path) => ops.writeFile(path, content),
+    downloadFile: async (path) => {
+      try {
+        const bytes = await ops.readFile(path);
+        return bytes === null ? null : decodeUtf8(bytes);
+      } catch (error) {
+        if (error instanceof RigFilePermissionError) return null;
+        throw error;
+      }
+    },
+  };
 }
