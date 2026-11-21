@@ -106,14 +106,14 @@ function rigFetch(
     signal?.throwIfAborted();
     const method = (init.method ?? "GET").toUpperCase();
 
-    const outgoing = httpRequest(url, {
-      method,
-      headers: outgoingHeaders(new Headers(init.headers)),
-      agent,
-    });
+    const headers = outgoingHeaders(new Headers(init.headers));
     // Node frames no body of a DELETE or OPTIONS by default. Without this,
-    // the service reads the body as a second request on the socket.
-    outgoing.useChunkedEncodingByDefault = true;
+    // the service reads the body as a second request on the socket. Set it
+    // before `httpRequest`: an `Expect` header makes it write the head there.
+    if (init.body instanceof ReadableStream && !("content-length" in headers)) {
+      headers["transfer-encoding"] = "chunked";
+    }
+    const outgoing = httpRequest(url, { method, headers, agent });
     const onAbort = () => {
       // Destroying the request destroys its socket, which errors a
       // response already under way as well.

@@ -140,9 +140,13 @@ describe("createRigFetch", () => {
     },
   );
 
-  it.each(["DELETE", "OPTIONS"])(
-    "frames a streamed %s body of unknown length",
-    async (method) => {
+  it.each([
+    ["DELETE", {}],
+    ["OPTIONS", {}],
+    ["DELETE", { expect: "100-continue" }],
+  ])(
+    "frames a streamed %s body of unknown length, with headers %o",
+    async (method, headers) => {
       const seen: Array<{ method?: string; body: string }> = [];
       const port = await serve((request, response) => {
         let body = "";
@@ -155,6 +159,7 @@ describe("createRigFetch", () => {
       });
       const response = await rigFetch(`http://127.0.0.1:${port}/`, {
         method,
+        headers,
         body: new ReadableStream({
           start(controller) {
             controller.enqueue(
