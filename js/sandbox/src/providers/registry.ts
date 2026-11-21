@@ -25,6 +25,8 @@ import type { FreestyleConfig } from "./freestyle/config";
 import type { VercelConfig } from "./vercel/config";
 import type { InstaboxConfig } from "./instabox/config";
 import instaboxProvider, { openInstaboxAdapter } from "./instabox/provider";
+import type { BoatConfig } from "./boat/config";
+import boatProvider, { openBoatAdapter } from "./boat/provider";
 import type { GcpConfig } from "./gcp/config";
 import gcpProvider, { openGcpAdapter } from "./gcp/provider";
 import type { SimulateConfig } from "./simulate/config";
@@ -60,6 +62,8 @@ export interface SandboxProviderDeps {
   vercel: VercelConfig | null;
   /** Absent means the same as `null`: not configured. */
   instabox?: InstaboxConfig | null;
+  /** Absent means the same as `null`: not configured. */
+  boat?: BoatConfig | null;
   /** Absent means the same as `null`: not configured. */
   gcp?: GcpConfig | null;
   smol: SmolConfig | null;
@@ -109,6 +113,8 @@ const INSTABOX_HINT =
   "Instabox provider is not configured (set INSTABOX_ENABLED=true and INSTABOX_API_KEY)";
 const GCP_HINT =
   "GCP provider is not configured (set GCP_ENABLED=true and its credentials)";
+const BOAT_HINT =
+  "Boat provider is not configured (set BOAT_ENABLED=true and its credentials)";
 const SIMULATE_HINT =
   "Simulate provider is not configured (set SIMULATE_ENABLED=true)";
 
@@ -192,6 +198,13 @@ const PROVIDERS = {
     openAdapter: (deps, id) =>
       Promise.resolve(
         openGcpAdapter(requireConfig(deps.gcp ?? null, GCP_HINT), id),
+      ),
+  },
+  boat: {
+    create: (deps) => boatProvider(requireConfig(deps.boat ?? null, BOAT_HINT)),
+    openAdapter: (deps, id) =>
+      Promise.resolve(
+        openBoatAdapter(requireConfig(deps.boat ?? null, BOAT_HINT), id),
       ),
   },
   simulate: {
