@@ -103,6 +103,9 @@ importers:
       '@amika/service-auth':
         specifier: workspace:*
         version: link:../service-auth
+      '@boxd-sh/sdk':
+        specifier: 0.3.2
+        version: 0.3.2
       '@daytona/api-client':
         specifier: 0.203.0
         version: 0.203.0(debug@4.4.3(supports-color@10.2.2))(supports-color@7.2.0)
@@ -312,6 +315,10 @@ packages:
   '@aws/lambda-invoke-store@0.3.0':
     resolution: {integrity: sha512-sl4Bm6yiMNYrZKkqqDFWN0UfnWhlS8ivKxrYl+6t0gCLrqr8y3B2IqZZbFRkfaVVp7C/baApyh71P+LeE1A2sQ==}
     engines: {node: '>=18.0.0'}
+
+  '@boxd-sh/sdk@0.3.2':
+    resolution: {integrity: sha512-aUhnhF3nN/0iqP82hclSLH0YWbG6A4vB7iBWR94lMaQfQkMHjT0YX+RYcNY8QAO3y9iZniYDJCC3+zqQLgGcrA==}
+    engines: {node: '>=20'}
 
   '@bufbuild/protobuf@2.13.0':
     resolution: {integrity: sha512-acq7c49vxfm1ggJ95P70TX7ABDM0vxr1SYD3BB0o0jnBLB4OAqeHyKuN+cD3w80gXEDQ2zxHpR6CUeA+O/aU9g==}
@@ -2492,6 +2499,11 @@ snapshots:
       tslib: 2.8.1
 
   '@aws/lambda-invoke-store@0.3.0': {}
+
+  '@boxd-sh/sdk@0.3.2':
+    dependencies:
+      '@bufbuild/protobuf': 2.13.0
+      '@grpc/grpc-js': 1.14.5
 
   '@bufbuild/protobuf@2.13.0': {}
 

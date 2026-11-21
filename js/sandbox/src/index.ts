@@ -39,6 +39,7 @@ export type { E2bConfig } from "./providers/e2b/config";
 export type { FreestyleConfig } from "./providers/freestyle/config";
 export type { VercelConfig } from "./providers/vercel/config";
 export type { InstaboxConfig } from "./providers/instabox/config";
+export type { BoxdConfig } from "./providers/boxd/config";
 export type { OrbleConfig } from "./providers/orble/config";
 export type { RuntimeConfig } from "./providers/runtime/config";
 export type { BoatConfig } from "./providers/boat/config";
