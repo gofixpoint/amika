@@ -50,9 +50,23 @@ unless --force is given.
   user          owned by you; it acts as you, and an organization-scoped API
                 key cannot create one
 
+An organization key needs --permission, which picks what the key can do:
+
+  org:access        full access to your organization
+  end-users:act-as  acts as your organization's end-users; only organization
+                    owners can create one
+
+A user key takes no --permission.
+
 Requires a login (` + "`amika auth login`" + `) or AMIKA_API_KEY. Manage or delete
 keys in the web app's settings page.`,
-	Example: `  # Create a key owned by you for a host daemon, set the host up with it,
+	Example: `  # Create an organization key with full access for a CI runner
+  amika auth api-key create --name ci-runner --permission org:access --out ./amika-key
+
+  # Create an organization key that acts as your end-users
+  amika auth api-key create --name backend --permission end-users:act-as --out ./amika-key
+
+  # Create a key owned by you for a host daemon, set the host up with it,
   # and remove the file
   dir=$(mktemp -d)
   amika auth api-key create --name build-01-hostd --scope user --out "$dir/api-key"
@@ -70,6 +84,7 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 	name, _ := cmd.Flags().GetString("name")
 	outPath, _ := cmd.Flags().GetString("out")
 	scope, _ := cmd.Flags().GetString("scope")
+	permission, _ := cmd.Flags().GetString("permission")
 	force, _ := cmd.Flags().GetBool("force")
 
 	format, err := output.FormatFrom(cmd)
@@ -86,6 +101,9 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 	default:
 		return fmt.Errorf("invalid --scope %q: must be %q or %q",
 			scope, apiclient.APIKeyScopeOrganization, apiclient.APIKeyScopeUser)
+	}
+	if err := checkKeyPermission(scope, permission); err != nil {
+		return err
 	}
 
 	if err := runmode.RequireAuth(runmode.DefaultAuthChecker); err != nil {
@@ -105,7 +123,11 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	created, err := runmode.NewRemoteClient().CreateAPIKey(apiclient.CreateAPIKeyRequest{Name: name, Scope: scope})
+	req := apiclient.CreateAPIKeyRequest{Name: name, Scope: scope}
+	if permission != "" {
+		req.Permissions = []string{permission}
+	}
+	created, err := runmode.NewRemoteClient().CreateAPIKey(req)
 	if err != nil {
 		removeOnFail()
 		var httpErr *apiclient.HTTPError
@@ -136,6 +158,29 @@ func runAuthAPIKeyCreate(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "Created API key %q (%s, scope %s, %s) and wrote it to %s\n",
 		created.Name, created.ID, created.Scope, created.ObfuscatedValue, outPath)
 	return nil
+}
+
+// checkKeyPermission refuses a --permission that does not fit --scope. An
+// organization key must name one permission, so its creator decides between
+// full org access and acting as end-users. A user key acts as its owner and
+// takes none.
+func checkKeyPermission(scope, permission string) error {
+	if scope == apiclient.APIKeyScopeUser {
+		if permission != "" {
+			return fmt.Errorf("--permission is only for an organization key; a user key acts as you")
+		}
+		return nil
+	}
+	switch permission {
+	case apiclient.APIKeyPermissionOrgAccess, apiclient.APIKeyPermissionEndUsersActAs:
+		return nil
+	case "":
+		return fmt.Errorf("an organization key needs --permission: %q (full access to your organization) or %q (acts as your end-users)",
+			apiclient.APIKeyPermissionOrgAccess, apiclient.APIKeyPermissionEndUsersActAs)
+	default:
+		return fmt.Errorf("invalid --permission %q: must be %q or %q",
+			permission, apiclient.APIKeyPermissionOrgAccess, apiclient.APIKeyPermissionEndUsersActAs)
+	}
 }
 
 // settingsURL is the web app page where a person manages API keys.
@@ -193,6 +238,7 @@ func init() {
 	authAPIKeyCreateCmd.Flags().String("name", "", "Name for the key, shown in the web app's settings (required)")
 	authAPIKeyCreateCmd.Flags().String("out", "", "File to write the key to, created with mode 0600 (required)")
 	authAPIKeyCreateCmd.Flags().String("scope", "", `Who owns the key: "organization" (the default) or "user"`)
+	authAPIKeyCreateCmd.Flags().String("permission", "", `What an organization key can do: "org:access" or "end-users:act-as" (required for an organization key)`)
 	authAPIKeyCreateCmd.Flags().BoolP("force", "f", false, "Replace --out if it already exists")
 	_ = authAPIKeyCreateCmd.MarkFlagRequired("name")
 	_ = authAPIKeyCreateCmd.MarkFlagRequired("out")

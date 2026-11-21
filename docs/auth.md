@@ -47,13 +47,16 @@ logged in, `amika auth api-key create` mints one and writes it to a file with
 mode `0600`, never printing it:
 
 ```bash
-amika auth api-key create --name ci-runner --out ./amika-key
+amika auth api-key create --name ci-runner --permission org:access --out ./amika-key
 amika auth login --api-key-file ./amika-key   # on the machine that needs it
 rm ./amika-key
 ```
 
 Keys are organization-scoped by default, so they keep working if the person who
-created them leaves; pass `--scope user` for a key owned by you. You can also
+created them leaves. An organization key needs `--permission`: `org:access`
+for full access to your organization, or `end-users:act-as` for a key that
+acts as your end-users. Pass `--scope user` for a key owned by you, which acts
+as you and takes no `--permission`. You can also
 create and delete keys in the web app's settings page. See
 [cli-reference.md](cli-reference.md#amika-auth-api-key-create) for every flag.
 
