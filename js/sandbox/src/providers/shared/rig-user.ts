@@ -40,6 +40,7 @@ import {
   type SandboxExecResult,
   type StreamCommandHandlers,
 } from "../provider";
+import { decodeUtf8, type SandboxAdapter } from "./adapter";
 
 /** The rig user every provider runs commands as. */
 export const RIG_USER = "amika";
@@ -281,4 +282,26 @@ function failureText(result: SandboxExecResult): string {
   return (
     result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`
   );
+}
+
+/**
+ * The provisioning adapter over {@link rigUserOps}: commands and files as
+ * the rig user. A file the rig user may not read downloads as `null`, as
+ * the adapter contract asks.
+ */
+export function rigUserAdapter(shell: VendorShell): SandboxAdapter {
+  const ops = rigUserOps(shell);
+  return {
+    exec: (command, opts) => ops.exec(command, opts),
+    uploadFile: (content, path) => ops.writeFile(path, content),
+    downloadFile: async (path) => {
+      try {
+        const bytes = await ops.readFile(path);
+        return bytes === null ? null : decodeUtf8(bytes);
+      } catch (error) {
+        if (error instanceof RigFilePermissionError) return null;
+        throw error;
+      }
+    },
+  };
 }
