@@ -26,6 +26,7 @@ const DEPS: SandboxProviderDeps = {
   freestyle: { apiKey: "k" },
   vercel: { apiKey: "k", teamId: "t", projectId: "p" },
   instabox: { apiKey: "k" },
+  boat: { apiKey: "k" },
   gcp: {
     apiKey: JSON.stringify({
       type: "service_account",
@@ -67,6 +68,7 @@ describe("createSandboxProvider construction", () => {
     vercel: "vercel",
     instabox: "instabox",
     gcp: "gcp",
+    boat: "boat",
     smol: "smol",
     lume: "lume",
     "amika-hostd": "amikaHostd",
