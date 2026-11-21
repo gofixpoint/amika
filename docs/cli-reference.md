@@ -800,7 +800,7 @@ never includes it in its own output or in `-o json`.
 ```bash
 # Create an organization key for a host daemon, hand it to setup, remove the file
 dir=$(mktemp -d)
-amika auth api-key create --name build-01-hostd --out "$dir/api-key"
+amika auth api-key create --name build-01-hostd --permission org:access --out "$dir/api-key"
 amika-hostd setup --non-interactive --hostname build-01 < "$dir/api-key"
 rm -rf "$dir"
 
@@ -827,17 +827,19 @@ response without its `value`), in the API's camelCase spelling:
 {"id":"key_01J...","name":"build-01-hostd","scope":"organization","obfuscatedValue":"sk_...a1b2","lastUsedAt":null,"createdAt":"2026-10-12T00:00:00.000Z","updatedAt":"2026-10-12T00:00:00.000Z"}
 ```
 
-| Flag              | Default        | Description                                                                  |
-| ----------------- | -------------- | ---------------------------------------------------------------------------- |
-| `--name <name>`   |                | Name for the key, shown in the web app's settings. Required                  |
-| `--out <file>`    |                | File to write the key to. Required                                           |
-| `--scope <scope>` | `organization` | `organization` (owned by your organization) or `user` (owned by you)         |
-| `--force`, `-f`   | `false`        | Replace `--out` if it already exists                                         |
+| Flag                        | Default        | Description                                                                                                                   |
+| --------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `--name <name>`             |                | Name for the key, shown in the web app's settings. Required                                                                   |
+| `--out <file>`              |                | File to write the key to. Required                                                                                            |
+| `--scope <scope>`           | `organization` | `organization` (owned by your organization) or `user` (owned by you)                                                          |
+| `--permission <permission>` |                | What an organization key can do: `org:access` or `end-users:act-as`. Required for an organization key; refused for a user key |
+| `--force`, `-f`             | `false`        | Replace `--out` if it already exists                                                                                          |
 
 A user-scoped key acts as you, and an organization-scoped API key has no user
-behind it, so it cannot create one. An organization key gets the `org:access`
-permission: full access to your organization. To make a key that acts as your
-end-users (`end-users:act-as`), use the API.
+behind it, so it cannot create one. An organization key must name one
+permission: `org:access` gives full access to your organization, and
+`end-users:act-as` makes a key that acts as your end-users. Only organization
+owners can create an `end-users:act-as` key.
 
 Requires `amika auth login` or `AMIKA_API_KEY`. When `--scope` is omitted, the
 request leaves the field out and the API applies its default, `organization`.

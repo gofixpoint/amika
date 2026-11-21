@@ -13,9 +13,15 @@ const (
 	APIKeyScopeUser = "user"
 )
 
-// APIKeyPermissionOrgAccess lets an organization-scoped key act as the
-// organization, with full access.
-const APIKeyPermissionOrgAccess = "org:access"
+const (
+	// APIKeyPermissionOrgAccess lets an organization-scoped key act as the
+	// organization, with full access.
+	APIKeyPermissionOrgAccess = "org:access"
+	// APIKeyPermissionEndUsersActAs lets an organization-scoped key act as
+	// the organization's end-users and mint their principal tokens. Only
+	// organization owners can grant it.
+	APIKeyPermissionEndUsersActAs = "end-users:act-as"
+)
 
 // CreateAPIKeyRequest is the request body for POST /api/v0beta1/api-keys. An
 // empty Scope is omitted, so the server applies its default (organization).

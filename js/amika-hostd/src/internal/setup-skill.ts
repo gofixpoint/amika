@@ -171,7 +171,7 @@ leaves.
 
   For a listening host:
 
-      amika auth api-key create --name <name>-hostd --out <dir>/api-key
+      amika auth api-key create --name <name>-hostd --permission org:access --out <dir>/api-key
 
   A CLI signed in with an organization key cannot make a user-scoped one;
   if that fails, make the key by hand instead.

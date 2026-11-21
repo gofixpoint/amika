@@ -145,7 +145,8 @@ with nothing changed.
    installs, before setup installs anything.
 4. Get an API key: user-scoped for a tunnelled host. Make it with
    `amika auth api-key create --out <file>` when the `amika` CLI is signed
-   in, else get it from the operator. Pipe the file into
+   in: with `--scope user`, or with `--permission org:access` for an
+   organization key. Else get it from the operator. Pipe the file into
    `setup --non-interactive`, with the runtime flags.
 5. Use the file store only with the operator's consent, when there is no
    keychain.

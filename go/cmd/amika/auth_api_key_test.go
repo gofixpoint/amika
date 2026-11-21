@@ -107,12 +107,12 @@ func dirEntries(t *testing.T, dir string) []string {
 // A successful create writes exactly the key and a newline to a 0600 file,
 // reports the key's id and obfuscated value, and never prints the key. With
 // no --scope the request omits the field so the server default applies, and
-// asks for org:access, which the API requires an organization key to name.
+// it sends the --permission it was given.
 func TestAuthAPIKeyCreateWritesKeyFileOnly(t *testing.T) {
 	stub := stubAPIKeyAPI(t)
 	out := filepath.Join(t.TempDir(), "key")
 
-	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", " build-01-hostd ", "--out", out)
+	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", " build-01-hostd ", "--permission", "org:access", "--out", out)
 	assertNoKey(t, got, err)
 	if err != nil {
 		t.Fatalf("create: %v\n%s", err, got)
@@ -156,12 +156,12 @@ func TestAuthAPIKeyCreateWritesKeyFileOnly(t *testing.T) {
 	}
 }
 
-// An explicit --scope organization asks for org:access too.
-func TestAuthAPIKeyCreateOrganizationScopeSendsOrgAccess(t *testing.T) {
+// An organization key can act as end-users instead of the org.
+func TestAuthAPIKeyCreateSendsEndUsersActAs(t *testing.T) {
 	stub := stubAPIKeyAPI(t)
 	out := filepath.Join(t.TempDir(), "key")
 
-	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "ci", "--scope", "organization", "--out", out)
+	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "backend", "--scope", "organization", "--permission", "end-users:act-as", "--out", out)
 	assertNoKey(t, got, err)
 	if err != nil {
 		t.Fatalf("create: %v\n%s", err, got)
@@ -170,8 +170,8 @@ func TestAuthAPIKeyCreateOrganizationScopeSendsOrgAccess(t *testing.T) {
 	if len(reqs) != 1 || reqs[0]["scope"] != "organization" {
 		t.Fatalf("requests = %v, want one with scope organization", reqs)
 	}
-	if got := fmt.Sprint(reqs[0]["permissions"]); got != "[org:access]" {
-		t.Errorf("permissions sent = %s, want [org:access]", got)
+	if got := fmt.Sprint(reqs[0]["permissions"]); got != "[end-users:act-as]" {
+		t.Errorf("permissions sent = %s, want [end-users:act-as]", got)
 	}
 }
 
@@ -219,7 +219,8 @@ func TestAuthAPIKeyCreateJSONOmitsValue(t *testing.T) {
 }
 
 // Bad invocations are refused before any request, and leave nothing on disk:
-// a missing --name or --out, an existing --out, and an unknown --scope.
+// a missing --name or --out, an existing --out, an unknown --scope, and a
+// --permission that is missing, unknown or does not fit the scope.
 func TestAuthAPIKeyCreateRejectsBadFlagsBeforeCallingAPI(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -229,8 +230,12 @@ func TestAuthAPIKeyCreateRejectsBadFlagsBeforeCallingAPI(t *testing.T) {
 		{"missing name", []string{"--out", "KEYFILE"}, `required flag(s) "name" not set`},
 		{"missing out", []string{"--name", "k"}, `required flag(s) "out" not set`},
 		{"blank name", []string{"--name", "  ", "--out", "KEYFILE"}, "--name must not be empty"},
-		{"out directory", []string{"--name", "k", "--out", "DIR"}, "already exists"},
+		{"out directory", []string{"--name", "k", "--permission", "org:access", "--out", "DIR"}, "already exists"},
 		{"invalid scope", []string{"--name", "k", "--scope", "team", "--out", "KEYFILE"}, `invalid --scope "team"`},
+		{"org key without permission", []string{"--name", "k", "--out", "KEYFILE"}, "an organization key needs --permission"},
+		{"explicit org key without permission", []string{"--name", "k", "--scope", "organization", "--out", "KEYFILE"}, "an organization key needs --permission"},
+		{"invalid permission", []string{"--name", "k", "--permission", "admin", "--out", "KEYFILE"}, `invalid --permission "admin"`},
+		{"user key with permission", []string{"--name", "k", "--scope", "user", "--permission", "org:access", "--out", "KEYFILE"}, "--permission is only for an organization key"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -271,7 +276,7 @@ func TestAuthAPIKeyCreateExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--out", out)
+	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--permission", "org:access", "--out", out)
 	if err == nil || !strings.Contains(err.Error(), "already exists; pass --force") {
 		t.Fatalf("err = %v, want an already-exists refusal\n%s", err, got)
 	}
@@ -282,7 +287,7 @@ func TestAuthAPIKeyCreateExistingFile(t *testing.T) {
 		t.Fatalf("existing file changed to %q", data)
 	}
 
-	got, err = runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--out", out, "--force")
+	got, err = runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--permission", "org:access", "--out", out, "--force")
 	assertNoKey(t, got, err)
 	if err != nil {
 		t.Fatalf("create --force: %v\n%s", err, got)
@@ -305,7 +310,7 @@ func TestAuthAPIKeyCreateAPIErrorLeavesNoFile(t *testing.T) {
 	stub.status = http.StatusForbidden
 	dir := t.TempDir()
 
-	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--out", filepath.Join(dir, "key"))
+	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--permission", "org:access", "--out", filepath.Join(dir, "key"))
 	if err == nil || !strings.Contains(err.Error(), "HTTP 403") {
 		t.Fatalf("err = %v, want the API's 403\n%s", err, got)
 	}
@@ -324,7 +329,7 @@ func TestAuthAPIKeyCreateForceAPIErrorKeepsExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--out", out, "--force")
+	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--permission", "org:access", "--out", out, "--force")
 	if err == nil || !strings.Contains(err.Error(), "HTTP 403") {
 		t.Fatalf("err = %v, want the API's 403\n%s", err, got)
 	}
@@ -340,7 +345,7 @@ func TestAuthAPIKeyCreateResponseWithoutKeyFails(t *testing.T) {
 	stub.status = http.StatusOK
 	dir := t.TempDir()
 
-	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--out", filepath.Join(dir, "key"))
+	got, err := runRootCommandOutput(t, "auth", "api-key", "create", "--name", "k", "--permission", "org:access", "--out", filepath.Join(dir, "key"))
 	if err == nil || !strings.Contains(err.Error(), "response holds no key") {
 		t.Fatalf("err = %v, want a no-key error\n%s", err, got)
 	}
@@ -361,7 +366,7 @@ func TestAuthAPIKeyCreateHelp(t *testing.T) {
 	}
 	for _, want := range []string{
 		"amika auth api-key create [flags]",
-		"--name", "--out", "--scope", "--force",
+		"--name", "--out", "--scope", "--permission", "--force",
 		"mode 0600",
 		`amika-hostd setup --non-interactive --hostname build-01 < "$dir/api-key"`,
 	} {
