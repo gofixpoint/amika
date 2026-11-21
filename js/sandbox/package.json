@@ -28,11 +28,13 @@
     "e2b": "2.51.0",
     "freestyle": "^0.1.63",
     "p-retry": "^7.1.1",
+    "ssh2": "^1.17.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@types/node": "^22",
+    "@types/ssh2": "1.15.5",
     "eslint": "^9",
     "globals": "^16.4.0",
     "pino": "^10.3.1",
