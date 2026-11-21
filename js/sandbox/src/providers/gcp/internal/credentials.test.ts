@@ -14,7 +14,6 @@ describe("parseGcpCredentials", () => {
     const creds = parseGcpCredentials(TEST_CONFIG);
     expect(creds.projectId).toBe("acme-proj");
     expect(creds.zone).toBe("us-central1-a");
-    expect(creds.tokenUri).toBe("https://oauth2.test/token");
   });
 
   it("accepts the key in base64", () => {
@@ -68,7 +67,7 @@ describe("signedAssertion", () => {
     expect(JSON.parse(Buffer.from(claims, "base64url").toString())).toEqual({
       iss: TEST_KEY_JSON.client_email,
       scope: "https://www.googleapis.com/auth/compute",
-      aud: "https://oauth2.test/token",
+      aud: "https://oauth2.googleapis.com/token",
       iat: 1_700_000_000,
       exp: 1_700_003_600,
     });
@@ -94,6 +93,11 @@ describe("gcpAccessToken", () => {
     expect(await gcpAccessToken(creds)).toBe("tok-1");
     expect(await gcpAccessToken(creds)).toBe("tok-1");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Never the key's own `token_uri`, which is customer input.
+    expect(fetchMock.mock.calls[0]).toEqual([
+      "https://oauth2.googleapis.com/token",
+      expect.anything(),
+    ]);
     const body = (
       fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     )[1].body as URLSearchParams;
