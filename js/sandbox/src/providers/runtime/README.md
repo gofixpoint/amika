@@ -29,7 +29,9 @@ as a version this provider captured.
   the `amika` rig user (home `/home/amika`, passwordless `sudo`) before it
   returns. Commands run as `amika` through `sudo`, and files are written
   through a staging file under `/workspace`, then piped into place as
-  `amika` (`../shared/rig-user.ts`).
+  `amika` (`../shared/rig-user.ts`). Runtime keeps only the latest 1 MiB of
+  a command's output, so reads go through a staged copy, read back as raw
+  bytes.
 - **Size.** Free-form: `vcpu`, `memoryGB`, and `diskGB` as requested, up to
   the plan's per-machine limits.
 - **Stop and start.** Runtime has no stopped state: `stop` pauses

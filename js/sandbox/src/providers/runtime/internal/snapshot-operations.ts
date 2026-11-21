@@ -29,6 +29,7 @@ const storedSchema = z.object({
 type RuntimeStored = z.infer<typeof storedSchema>;
 
 const LONG_POLL_S = 60;
+const SNAPSHOT_POLL_INTERVAL_MS = 3_000;
 const SNAPSHOT_READY_TIMEOUT_MS = 30 * 60_000;
 
 export function mapRuntimeImageState(state: string): string {
@@ -135,7 +136,8 @@ export async function waitForRuntimeSnapshotReady(
           (image ? `(last state: "${image.state}")` : "(not found)"),
       );
     }
-    if (!image) await new Promise((r) => setTimeout(r, 2_000));
+    // `?wait=` may not hold the request for images, so pause every pass.
+    await new Promise((r) => setTimeout(r, SNAPSHOT_POLL_INTERVAL_MS));
   }
 }
 

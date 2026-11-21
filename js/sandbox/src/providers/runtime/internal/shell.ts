@@ -9,7 +9,9 @@
  *   the process's output. A command runs as Runtime's `runtime` user, at
  *   most {@link RUNTIME_EXEC_TIMEOUT_S} seconds.
  * - **Staging** is `PUT /sandboxes/{id}/files`, raw bytes of any size, as
- *   `runtime`. It makes missing directories.
+ *   `runtime`. It makes missing directories. Runtime keeps only the latest
+ *   1 MiB of a command's output, so reads go through a staged copy too,
+ *   read back as raw bytes with `GET /sandboxes/{id}/files`.
  */
 import { z } from "zod";
 import type { SandboxExecResult, StreamCommandHandlers } from "../../provider";
@@ -58,6 +60,14 @@ export function runtimeShell(
         timeoutMs: 10 * 60_000,
       });
       await res.body?.cancel();
+    },
+    unstage: async (path) => {
+      const res = await send(config, "GET", sandboxPath(sandboxId, "/files"), {
+        query: { path },
+        accept: "application/octet-stream",
+        timeoutMs: 10 * 60_000,
+      });
+      return new Uint8Array(await res.arrayBuffer());
     },
   };
 }
@@ -203,9 +213,13 @@ async function followOutput(
       else sink.stdout(chunk.text ?? "");
     }
     cursor = out.nextCursor;
-    const state = out.process?.state;
-    if (state && state !== "running" && out.chunks.length === 0) {
-      return exitCodeOf({ exitCode: out.process?.exitCode, state });
+    if (out.chunks.length === 0) {
+      // The output may come without the process; then ask for it.
+      const process =
+        out.process ?? (await getProcess(config, sandboxId, from.processId));
+      if (process && process.state !== "running") {
+        return exitCodeOf(process);
+      }
     }
     if (Date.now() >= deadline) {
       throw new Error(
@@ -213,4 +227,29 @@ async function followOutput(
       );
     }
   }
+}
+
+const processListSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      state: z.string(),
+      exitCode: z.number().nullish(),
+    }),
+  ),
+});
+
+/** A process of the sandbox's, running or recently ended; null if gone. */
+async function getProcess(
+  config: RuntimeConfig,
+  sandboxId: string,
+  processId: string,
+): Promise<{ state: string; exitCode?: number | null } | null> {
+  const { items } = await requestJson(
+    config,
+    processListSchema,
+    "GET",
+    sandboxPath(sandboxId, "/processes"),
+  );
+  return items.find((p) => p.id === processId) ?? null;
 }
