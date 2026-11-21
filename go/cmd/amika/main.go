@@ -9,6 +9,7 @@ import (
 	"github.com/gofixpoint/amika/go/internal/buildmeta"
 	"github.com/gofixpoint/amika/go/internal/cliflags"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
 
@@ -63,12 +64,13 @@ func main() {
 	}
 }
 
-// exitCode is 1, or the status an error carries: the SSH stdio proxy exits
-// 255 when a session it could not resume ends.
+// exitCode is 1, or the SSH stdio proxy's status: it exits 255 when a
+// session it could not resume ends. Only the proxy's error counts, so a
+// wrapped subprocess failure, such as an editor's, still exits 1.
 func exitCode(err error) int {
-	var coded interface{ ExitCode() int }
-	if errors.As(err, &coded) {
-		return coded.ExitCode()
+	var proxyExit *ssh.ProxyExitError
+	if errors.As(err, &proxyExit) {
+		return proxyExit.ExitCode()
 	}
 	return 1
 }
