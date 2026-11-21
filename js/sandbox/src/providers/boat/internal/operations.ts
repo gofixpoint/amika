@@ -92,6 +92,14 @@ export function boatTypeFor(resources: SandboxResources): string {
   return match.type;
 }
 
+/** States of a sandbox on its way to ready. */
+const STARTING_STATES = new Set([
+  "init",
+  "provisioning",
+  "provisioned",
+  "cloning",
+]);
+
 /** States in which commands run. */
 const READY_STATES = new Set(["ready", "idle", "running"]);
 /** States a create or resume never leaves on its own. */
@@ -324,7 +332,8 @@ export async function startBoatSandbox(
     if (sandbox.state === "archiving") {
       await waitForState(config, sandboxId, new Set(["archived"]));
     }
-    if (sandbox.state !== "provisioning" && sandbox.state !== "cloning") {
+    // A sandbox still starting needs no resume; boat refuses one (409).
+    if (!STARTING_STATES.has(sandbox.state)) {
       const res = await send(
         config,
         "POST",
