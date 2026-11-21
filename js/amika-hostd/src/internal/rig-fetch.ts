@@ -77,7 +77,7 @@ export interface RigFetchOptions {
 }
 
 /** The timeouts of Node's `fetch`. */
-export const DEFAULT_RIG_FETCH_TIMEOUT_MS = 300_000;
+const DEFAULT_RIG_FETCH_TIMEOUT_MS = 300_000;
 
 /** A `fetch` for rig services. */
 export function createRigFetch({
@@ -111,6 +111,9 @@ function rigFetch(
       headers: outgoingHeaders(new Headers(init.headers)),
       agent,
     });
+    // Node frames no body of a DELETE or OPTIONS by default. Without this,
+    // the service reads the body as a second request on the socket.
+    outgoing.useChunkedEncodingByDefault = true;
     const onAbort = () => {
       // Destroying the request destroys its socket, which errors a
       // response already under way as well.
@@ -123,7 +126,6 @@ function rigFetch(
     // A service can wait for the whole upload before it sends headers.
     outgoing.once("finish", () => {
       if (receivedResponse) return;
-      // Destroying the request also destroys its socket to the service.
       headersTimer = setTimeout(() => {
         outgoing.destroy(
           new Error(
@@ -391,6 +393,11 @@ class InflateEither extends Transform {
   override _flush(callback: TransformCallback): void {
     const inflate = this.inflate;
     if (!inflate) {
+      callback();
+      return;
+    }
+    // zlib ends the inflater early when bytes follow the deflate stream.
+    if (inflate.readableEnded) {
       callback();
       return;
     }

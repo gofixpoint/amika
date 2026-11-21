@@ -126,6 +126,51 @@ describe("createRigFetch", () => {
   });
 
   it.each([zlib.deflateSync, zlib.deflateRawSync])(
+    "ends a deflate body that has bytes after the deflate stream",
+    async (encode) => {
+      const text = "a body worth compressing ".repeat(100);
+      const port = await serve((_request, response) => {
+        response.writeHead(200, { "content-encoding": "deflate" });
+        response.end(
+          Buffer.concat([encode(Buffer.from(text)), Buffer.from("\r\n")]),
+        );
+      });
+      const response = await rigFetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe(text);
+    },
+  );
+
+  it.each(["DELETE", "OPTIONS"])(
+    "frames a streamed %s body of unknown length",
+    async (method) => {
+      const seen: Array<{ method?: string; body: string }> = [];
+      const port = await serve((request, response) => {
+        let body = "";
+        request.setEncoding("utf8");
+        request.on("data", (chunk: string) => (body += chunk));
+        request.on("end", () => {
+          seen.push({ method: request.method, body });
+          response.end("done");
+        });
+      });
+      const response = await rigFetch(`http://127.0.0.1:${port}/`, {
+        method,
+        body: new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode("GET /second HTTP/1.1\r\n\r\n"),
+            );
+            controller.close();
+          },
+        }),
+        duplex: "half",
+      } as RequestInit);
+      expect(await response.text()).toBe("done");
+      expect(seen).toEqual([{ method, body: "GET /second HTTP/1.1\r\n\r\n" }]);
+    },
+  );
+
+  it.each([zlib.deflateSync, zlib.deflateRawSync])(
     "bounds decoded deflate buffering while a reader is paused and resumes without losing bytes",
     async (encode) => {
       const bytes = Buffer.alloc(16 * 1024 * 1024, 7);

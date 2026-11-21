@@ -14,9 +14,9 @@ The amika server authenticates users itself and sends the host's secret key;
 hostd checks the key and routes
 `/v0beta1/rigs/<machine>/services/<name>/<path>` to that machine's service, over HTTP
 (`node:http`, through `createRigFetch` in `src/internal/rig-fetch.ts`) or a
-piped WebSocket upgrade. Do not call a service with Node's `fetch`: it can
-lose the end of a response that the caller reads slowly, when the service
-closes the connection in the meantime.
+piped WebSocket upgrade. Do not call a service with Node's `fetch`. If the
+caller reads slowly and the service closes the connection, `fetch` can lose
+the end of the response.
 
 Browsers, which cannot send a header on a navigation and must never hold the
 host key, open a preview instead (see

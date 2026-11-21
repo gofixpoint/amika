@@ -1661,7 +1661,7 @@ describe("a bare-metal rig", () => {
 });
 
 // The service routes against a real service, through the default
-// `fetch`. hostd passes a response on at its caller's pace, so these read
+// fetcher (`createRigFetch`). hostd passes a response on at its caller's pace, so these read
 // slowly, as a caller behind a busy tunnel does.
 describe("service routes to a real service", () => {
   const BODY_BYTES = 256 * 1024;
