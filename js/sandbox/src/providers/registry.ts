@@ -25,6 +25,8 @@ import type { FreestyleConfig } from "./freestyle/config";
 import type { VercelConfig } from "./vercel/config";
 import type { InstaboxConfig } from "./instabox/config";
 import instaboxProvider, { openInstaboxAdapter } from "./instabox/provider";
+import type { BoxdConfig } from "./boxd/config";
+import boxdProvider, { openBoxdAdapter } from "./boxd/provider";
 import type { SimulateConfig } from "./simulate/config";
 import simulateProvider, { openSimulateAdapter } from "./simulate/provider";
 import type { SandboxProvider, SnapshotIdResolver } from "./provider";
@@ -58,6 +60,8 @@ export interface SandboxProviderDeps {
   vercel: VercelConfig | null;
   /** Absent means the same as `null`: not configured. */
   instabox?: InstaboxConfig | null;
+  /** Absent means the same as `null`: not configured. */
+  boxd?: BoxdConfig | null;
   smol: SmolConfig | null;
   /** Absent means the same as `null`: not configured. */
   lume?: LumeConfig | null;
@@ -103,6 +107,8 @@ const E2B_HINT =
   "E2B provider is not configured (set E2B_ENABLED=true and E2B_API_KEY)";
 const INSTABOX_HINT =
   "Instabox provider is not configured (set INSTABOX_ENABLED=true and INSTABOX_API_KEY)";
+const BOXD_HINT =
+  "Boxd provider is not configured (set BOXD_ENABLED=true and its credentials)";
 const SIMULATE_HINT =
   "Simulate provider is not configured (set SIMULATE_ENABLED=true)";
 
@@ -179,6 +185,13 @@ const PROVIDERS = {
           requireConfig(deps.instabox ?? null, INSTABOX_HINT),
           id,
         ),
+      ),
+  },
+  boxd: {
+    create: (deps) => boxdProvider(requireConfig(deps.boxd ?? null, BOXD_HINT)),
+    openAdapter: (deps, id) =>
+      Promise.resolve(
+        openBoxdAdapter(requireConfig(deps.boxd ?? null, BOXD_HINT), id),
       ),
   },
   simulate: {
