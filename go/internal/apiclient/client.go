@@ -120,6 +120,16 @@ type RemoteSandboxService struct {
 	Kind          string `json:"kind,omitempty"`
 }
 
+// ResourceOwner mirrors the API's ResourceOwner schema: who owns a rig, host
+// or snapshot. Kind is "org" for the organization's own resource, or
+// "end_user" for one owned by an end-user of the organization. ExternalID is
+// the id the organization chose for that end-user, set only when Kind is
+// "end_user"; the "org" variant has no such property.
+type ResourceOwner struct {
+	Kind       string `json:"kind"`
+	ExternalID string `json:"external_id,omitempty"`
+}
+
 // RemoteSandbox mirrors the API's Sandbox schema (see
 // /api/v0beta1/sandboxes and the "Sandbox" component schema in the API's
 // OpenAPI document, served at /api/openapi.json).
@@ -138,6 +148,7 @@ type RemoteSandbox struct {
 	ID                string                 `json:"id"`
 	UserID            *string                `json:"user_id"`
 	OrgID             string                 `json:"org_id"`
+	Owner             ResourceOwner          `json:"owner"`
 	Name              string                 `json:"name"`
 	Provider          *string                `json:"provider"`
 	ProviderSandboxID *string                `json:"provider_sandbox_id"`
@@ -466,6 +477,7 @@ type SandboxSnapshot struct {
 	Snapshot          string                       `json:"snapshot"`
 	Provider          string                       `json:"provider"`
 	HostID            *string                      `json:"host_id"`
+	CloudAccountID    *string                      `json:"cloud_account_id"`
 	Description       *string                      `json:"description"`
 	SourceSandboxID   *string                      `json:"source_sandbox_id"`
 	SourceSandboxName *string                      `json:"source_sandbox_name"`
@@ -477,6 +489,8 @@ type SandboxSnapshot struct {
 	CaptureMode       *string                      `json:"capture_mode"`
 	State             string                       `json:"state"`
 	ErrorMessage      *string                      `json:"error_message"`
+	EndUserID         *string                      `json:"end_user_id"`
+	Owner             ResourceOwner                `json:"owner"`
 	CreatedAt         string                       `json:"created_at"`
 	UpdatedAt         string                       `json:"updated_at"`
 	Daytona           *ExperimentalDaytonaSnapshot `json:"daytona"`
@@ -1464,6 +1478,11 @@ type Host struct {
 	URL *string `json:"url"`
 	// OrgID is the organization the host belongs to.
 	OrgID string `json:"org_id"`
+	// EndUserID is the end-user ("eu_...") that owns the host, or nil for a
+	// host the organization owns.
+	EndUserID *string `json:"end_user_id"`
+	// Owner is who owns the host: the organization or one of its end-users.
+	Owner ResourceOwner `json:"owner"`
 	// TransportMode is how the host receives traffic: "listen" for a daemon
 	// that binds a port and registers the URL above, "tunnel" for one that
 	// binds nothing and dials an Amika gateway outbound. Never empty: a
