@@ -1,14 +1,14 @@
 {
   "schema": 2,
-  "npm_before": "2026-11-17T19:45:18Z",
+  "npm_before": "2026-11-22T20:22:15Z",
   "amikad": {
     "name": "amikad",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "kind": "archive",
     "artifacts": {
       "linux/amd64": {
-        "url": "https://github.com/gofixpoint/amika/releases/download/amikad@v0.4.0/amikad_0.4.0_linux_amd64.tar.gz",
-        "sha256": "abb3490750fb9143fa5510f4d1a28fa009f0d84c9f9b5b7d4d3455b263491af6",
+        "url": "https://github.com/gofixpoint/amika/releases/download/amikad@v0.5.0/amikad_0.5.0_linux_amd64.tar.gz",
+        "sha256": "d62333fb8668afd6a00ff7b3e9d8b3000dae1d354f6132e9616b3a1ce71c36d3",
         "format": "tar.gz",
         "strip": 1,
         "bins": [
@@ -18,8 +18,8 @@
         ]
       },
       "linux/arm64": {
-        "url": "https://github.com/gofixpoint/amika/releases/download/amikad@v0.4.0/amikad_0.4.0_linux_arm64.tar.gz",
-        "sha256": "4d490e5869e5b526d4aa590d3a65f11ce56346d0221ccb6feb282c78dd45628c",
+        "url": "https://github.com/gofixpoint/amika/releases/download/amikad@v0.5.0/amikad_0.5.0_linux_arm64.tar.gz",
+        "sha256": "6dcd82814b1aee5906742f8416a223e0848fa356d7b49c4f5f152f27d9720562",
         "format": "tar.gz",
         "strip": 1,
         "bins": [
@@ -106,12 +106,12 @@
     },
     {
       "name": "amika",
-      "version": "0.28.0",
+      "version": "0.29.0",
       "kind": "archive",
       "artifacts": {
         "linux/amd64": {
-          "url": "https://github.com/gofixpoint/amika/releases/download/amika@v0.28.0/amika_0.28.0_linux_amd64.tar.gz",
-          "sha256": "c0555a2b3d1969bba5bb9e26ea82f3fdf4b55b62cb26012d0e8e00db4b81faf5",
+          "url": "https://github.com/gofixpoint/amika/releases/download/amika@v0.29.0/amika_0.29.0_linux_amd64.tar.gz",
+          "sha256": "a7e4e0c317bc5d133e9f8539f030cf353ab78ed61e7917c4909d635a937ed220",
           "format": "tar.gz",
           "strip": 1,
           "bins": [
@@ -121,8 +121,8 @@
           ]
         },
         "linux/arm64": {
-          "url": "https://github.com/gofixpoint/amika/releases/download/amika@v0.28.0/amika_0.28.0_linux_arm64.tar.gz",
-          "sha256": "d158b94c4dc93cfac7e37470742114b2d7f472c9f75d31891d16d22b600fbb9c",
+          "url": "https://github.com/gofixpoint/amika/releases/download/amika@v0.29.0/amika_0.29.0_linux_arm64.tar.gz",
+          "sha256": "9a2ec4d5bc9e89272081fe99487d8568698020afcadd3186ecee05a19c07e5a5",
           "format": "tar.gz",
           "strip": 1,
           "bins": [
