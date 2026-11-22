@@ -57,8 +57,8 @@ ARG PI_WEB_VERSION=0.12.2
 COPY sandbox-image/steps/82-pi-web.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
-ARG AMIKA_VERSION=0.28.0
-ARG AMIKAD_VERSION=0.4.0
+ARG AMIKA_VERSION=0.29.0
+ARG AMIKAD_VERSION=0.5.0
 COPY sandbox-image/steps/85-amika-clis.sh /opt/amika-build/step.sh
 RUN /opt/amika-build/step.sh && rm -rf /opt/amika-build
 
