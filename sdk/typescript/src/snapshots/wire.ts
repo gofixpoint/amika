@@ -1,3 +1,4 @@
+import { ownerFromWire } from "../internal/owner.js";
 import {
   type ExperimentalDaytonaSnapshot,
   type RigSnapshot,
@@ -60,6 +61,7 @@ export function rigSnapshotFromWire(w: Record<string, unknown>): RigSnapshot {
     updatedAt: str(w["updated_at"]),
     daytona:
       optionalObject(w["daytona"], experimentalDaytonaSnapshotFromWire) ?? null,
+    owner: ownerFromWire(w["owner"]),
   };
 }
 

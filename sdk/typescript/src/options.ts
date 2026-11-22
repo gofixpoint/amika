@@ -11,6 +11,13 @@ export type AmikaClientOptions = {
   baseUrl?: string;
   /** Override globalThis.fetch for testing or a runtime polyfill. */
   fetch?: typeof fetch;
+  /**
+   * Act as one end-user of your product (beta), as `end_user:<external_id>`.
+   * Each request then sends the `Amika-As-Principal` header, and reaches only
+   * that end-user's hosts and rigs. Needs an organization API key with the
+   * `end-users:act-as` permission. See also {@link AmikaClient.actAs}.
+   */
+  actAs?: string;
 } & (
   | {
       /** Static API key; preferred for scripts. Must be non-empty. */

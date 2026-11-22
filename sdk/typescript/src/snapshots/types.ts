@@ -1,3 +1,4 @@
+import type { ResourceOwner } from "../owner.js";
 import { type LegacyShape } from "../internal/types.js";
 import type { RigRef } from "../resource-ref.js";
 
@@ -76,6 +77,8 @@ export interface RigSnapshot {
   updatedAt: string;
   /** Provider-specific snapshot metadata; null when unavailable. */
   daytona: ExperimentalDaytonaSnapshot | null;
+  /** Who owns the snapshot: your organization or one of its end-users. Older servers omit it. */
+  owner?: ResourceOwner;
 }
 
 /** @deprecated Use {@link RigSnapshot}. */

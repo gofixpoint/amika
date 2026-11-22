@@ -8,6 +8,8 @@ export interface HTTPClientOptions {
   timeoutMs?: number;
   /** Override `fetch` for testing or runtime polyfills. Defaults to `globalThis.fetch`. */
   fetch?: typeof fetch;
+  /** Headers sent on every request, such as `Amika-As-Principal`. */
+  defaultHeaders?: Record<string, string>;
 }
 
 export interface RequestOptions {
@@ -40,8 +42,10 @@ export class HTTPClient {
   readonly tokenSource: TokenSource;
   readonly defaultTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly defaultHeaders: Record<string, string>;
 
   constructor(options: HTTPClientOptions) {
+    this.defaultHeaders = { ...options.defaultHeaders };
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.tokenSource = options.tokenSource;
     this.defaultTimeoutMs = options.timeoutMs ?? 30_000;
@@ -132,6 +136,7 @@ export class HTTPClient {
     requestOptions: RequestOptions | undefined,
   ): Promise<{ response: Response; release: () => void }> {
     const headers: Record<string, string> = {
+      ...this.defaultHeaders,
       ...requestOptions?.headers,
     };
     const token = await this.tokenSource.token();

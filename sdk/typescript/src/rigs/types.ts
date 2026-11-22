@@ -1,3 +1,4 @@
+import type { ResourceOwner } from "../owner.js";
 import type { CloudAccountRef } from "../cloud-accounts/types.js";
 import { type LegacyShape } from "../internal/types.js";
 
@@ -294,6 +295,8 @@ export interface RemoteRig {
   agentCwd?: string;
   /** SSH-key provisioning status, when returned by the server. */
   sshKeyStatus?: string;
+  /** Who owns the rig: your organization or one of its end-users. Older servers omit it. */
+  owner?: ResourceOwner;
 }
 
 /** @deprecated Use {@link RemoteRig}. */

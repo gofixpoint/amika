@@ -9,6 +9,7 @@ import { type Jobs, type JobRuns } from "./jobs/types.js";
 import { type CloudAccounts } from "./cloud-accounts/types.js";
 import { type PrincipalTokens } from "./principal-tokens/types.js";
 
+import { AmikaError } from "./errors.js";
 import { LegacyClient } from "./legacy/client.js";
 import { HTTPClient } from "./internal/http.js";
 import { resolveTokenSource } from "./internal/auth.js";
@@ -60,12 +61,16 @@ export class AmikaClient extends LegacyClient {
    */
   readonly principalTokens: PrincipalTokens;
 
+  readonly #options: AmikaClientOptions;
+
   constructor(options: AmikaClientOptions) {
     super();
+    this.#options = options;
     const http = new HTTPClient({
       baseUrl: options.baseUrl ?? "https://app.amika.dev",
       tokenSource: resolveTokenSource(options),
       fetch: options.fetch,
+      defaultHeaders: actAsHeaders(options.actAs),
     });
     this.agentSessions = createAgentSessions(http);
     this.rigs = createRigs(http, this.agentSessions);
@@ -79,4 +84,28 @@ export class AmikaClient extends LegacyClient {
     this.cloudAccounts = createCloudAccounts(http);
     this.principalTokens = createPrincipalTokens(http);
   }
+
+  /**
+   * A new client with the same configuration that acts as one end-user of
+   * your product (beta), as `end_user:<external_id>`. Use it in a backend
+   * that serves many end-users with one organization API key that has the
+   * `end-users:act-as` permission. This client is unchanged.
+   * @example
+   * const asUser = client.actAs(`end_user:${yourUserId}`);
+   * const rigs = await asUser.rigs.list(); // Only this end-user's rigs.
+   */
+  actAs(principal: string): AmikaClient {
+    return new AmikaClient({ ...this.#options, actAs: principal });
+  }
+}
+
+/** The `Amika-As-Principal` header for `actAs`, or none when it is unset. */
+function actAsHeaders(
+  actAs: string | undefined,
+): Record<string, string> | undefined {
+  if (actAs === undefined) return undefined;
+  if (typeof actAs !== "string" || actAs.trim().length === 0) {
+    throw new AmikaError("AmikaClient: actAs must be a non-empty string");
+  }
+  return { "Amika-As-Principal": actAs };
 }
