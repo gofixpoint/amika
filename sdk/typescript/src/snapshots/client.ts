@@ -1,3 +1,4 @@
+import { setOwnerParam } from "../internal/owner.js";
 import { API_BASE_PATH } from "../internal/constants.js";
 import type { HTTPClient } from "../internal/http.js";
 import {
@@ -71,6 +72,7 @@ export function createSnapshots(http: HTTPClient): Snapshots {
       );
       if (source)
         params.set(refFieldName("source_sandbox", source), source.value);
+      setOwnerParam(params, options?.owner);
       const query = params.toString();
       const envelope = await http.doJSON<{ items?: unknown[] }>(
         "GET",

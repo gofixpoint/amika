@@ -13,6 +13,7 @@ export {
   type RigWaitStatus,
   type RigHandle,
   type Rigs,
+  type ListRigsOptions,
 } from "./rigs/rig.js";
 export { type TokenSource } from "./token-source.js";
 export {
@@ -26,6 +27,7 @@ export {
   type PrincipalTokens,
 } from "./principal-tokens/types.js";
 export { type RefKind, type ResourceRef, type RigRef } from "./resource-ref.js";
+export { type OwnerFilter, type ResourceOwner } from "./owner.js";
 export {
   type AgentSessionDetail,
   type AgentSessionMessage,

@@ -1,3 +1,4 @@
+import { setOwnerParam } from "../internal/owner.js";
 import type { AgentSessions } from "../agent-sessions/types.js";
 import { AmikaError } from "../errors.js";
 import { API_BASE_PATH } from "../internal/constants.js";
@@ -79,11 +80,18 @@ export function createRigs(
         transport,
       );
     },
-    list: async () =>
-      mapArray(
-        await http.doJSON("GET", `${API_BASE_PATH}/rigs`),
+    list: async (options) => {
+      const params = new URLSearchParams();
+      setOwnerParam(params, options?.owner);
+      const query = params.toString();
+      return mapArray(
+        await http.doJSON(
+          "GET",
+          `${API_BASE_PATH}/rigs${query ? `?${query}` : ""}`,
+        ),
         remoteRigFromWire,
-      ).map((data) => createRigResource(data, transport)),
+      ).map((data) => createRigResource(data, transport));
+    },
     get: async (ref) =>
       createRigResource(
         await transport.get(normalizeRef(ref, "rig")),

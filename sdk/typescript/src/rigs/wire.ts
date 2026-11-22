@@ -21,6 +21,7 @@ import {
   optionalObject,
 } from "../internal/wire.js";
 import { normalizeRef, refFieldName } from "../internal/resource-ref.js";
+import { ownerFromWire } from "../internal/owner.js";
 import type { ResourceRef } from "../resource-ref.js";
 
 /**
@@ -186,5 +187,6 @@ export function remoteRigFromWire(w: Record<string, unknown>): RemoteRig {
     hostname: optionalStr(w["hostname"]),
     agentCwd: optionalStr(w["agent_cwd"]),
     sshKeyStatus: optionalStr(w["ssh_key_status"]),
+    owner: ownerFromWire(w["owner"]),
   };
 }

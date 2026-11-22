@@ -1,3 +1,4 @@
+import type { OwnerFilter } from "../owner.js";
 import type { ResourceRef, RigRef } from "../resource-ref.js";
 import type {
   CreateRigSnapshotRequest,
@@ -25,6 +26,8 @@ export interface ListRigSnapshotsOptions {
   sourceRigId?: string;
   /** @deprecated Use `sourceRig: { ref: id, by: "id" }`, which this maps to. */
   sourceSandboxId?: string;
+  /** Whose snapshots to list. The server's default is `org`. */
+  owner?: OwnerFilter;
 }
 
 /** Poll timing for snapshot capture. */

@@ -280,6 +280,27 @@ const rigs = await client.rigs.list(); // Only this end-user's rigs.
 
 Revoke a token at once with `backend.principalTokens.revoke(id)`.
 
+A backend can also act as an end-user directly, with no token.
+`client.actAs(principal)` returns a new client that sends the
+`Amika-As-Principal` header on each request. It needs the same
+`end-users:act-as` key. The `actAs` option of `new AmikaClient` does the
+same.
+
+```ts
+const asUser = backend.actAs(`end_user:${yourUserId}`);
+const rig = await asUser.rigs.create({ repoUrl }); // Owned by that end-user.
+```
+
+Each rig and snapshot has an `owner`: `{ kind: "org" }` or
+`{ kind: "end_user", externalId }`. An organization caller's lists give only
+the organization's own rigs and snapshots by default. Pass `owner` to see
+the end-users' too:
+
+```ts
+const all = await backend.rigs.list({ owner: "any" }); // Or "end_user".
+const snaps = await backend.snapshots.list({ owner: "end_user" });
+```
+
 ## Snapshots
 
 A snapshot captures a rig's filesystem for later rig creation. Capture returns

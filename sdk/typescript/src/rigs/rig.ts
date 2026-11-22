@@ -1,3 +1,4 @@
+import type { OwnerFilter } from "../owner.js";
 import type {
   AgentSendRequest,
   AgentSessionSendResponse,
@@ -69,12 +70,22 @@ export interface Rig extends RemoteRig, RigHandle {
 /** @deprecated Use Rig. RemoteSandbox remains the plain legacy data shape. */
 export type Sandbox = RemoteSandbox & Pick<Rig, "wait" | "delete">;
 
+/** Filters for {@link Rigs.list}. */
+export interface ListRigsOptions {
+  /** Whose rigs to list. The server's default is `org`. */
+  owner?: OwnerFilter;
+}
+
 /** Rig collection operations on client.rigs. */
 export interface Rigs {
   /** Create a rig and return its initial metadata. Call rig.wait() for running and successful setup. */
   create(request: CreateRigRequest): Promise<Rig>;
-  /** Fetch all rigs accessible to the caller, each with bound operations. */
-  list(): Promise<Rig[]>;
+  /**
+   * Fetch the rigs accessible to the caller, each with bound operations. For
+   * an organization caller, the server lists only the organization's own rigs
+   * unless `owner` says otherwise.
+   */
+  list(options?: ListRigsOptions): Promise<Rig[]>;
   /**
    * Fetch one rig immediately. A plain string matches its ID or name (409 if it
    * is one rig's ID and another's name); `{ ref, by: "id" | "name" }` pins one.
