@@ -29,7 +29,7 @@ func TestClientSetsUserAgentForTheAPI(t *testing.T) {
 
 func TestClientKeepsDefaultUserAgentForOtherHosts(t *testing.T) {
 	var userAgent string
-	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		userAgent = r.Header.Get("User-Agent")
 	}))
 	defer other.Close()
