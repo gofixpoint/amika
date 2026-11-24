@@ -38,7 +38,10 @@ func NewClientWithTokenSource(baseURL string, ts TokenSource) *Client {
 	return &Client{
 		BaseURL:     strings.TrimRight(baseURL, "/"),
 		TokenSource: ts,
-		HTTP:        &http.Client{Timeout: 30 * time.Second},
+		HTTP: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: newIdentifyingTransport(baseURL),
+		},
 	}
 }
 
