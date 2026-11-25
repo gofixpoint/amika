@@ -18,7 +18,7 @@
  *   key back in the VM's metadata (`./ssh-key-metadata.ts`) and tries again
  *   while the guest agent installs it.
  */
-import type { Client, ClientChannel, SFTPWrapper } from "ssh2";
+import { Client, type ClientChannel, type SFTPWrapper } from "ssh2";
 import { z } from "zod";
 import type { StreamCommandHandlers } from "../../provider";
 import { SandboxFileTooLargeError } from "../../provider";
@@ -234,8 +234,7 @@ async function openConnection(
     externalIp(target, instanceName),
     publishedHostKeys(target, instanceName),
   ]);
-  const { Client: SshClient } = await import("ssh2");
-  const client = new SshClient();
+  const client = new Client();
   const key = gcpSshKey(target.credentials, instanceName);
   await new Promise<void>((resolve, reject) => {
     client
