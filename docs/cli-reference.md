@@ -343,7 +343,7 @@ is an alias, and `--editor` is an alias for `--app`. `--app` is required:
 there is no default app.
 
 The command adds a named SSH connection to Amika's managed config (so editors
-such as Codex that enumerate `Host` entries can find it), then starts or
+such as Codex and Orca that enumerate `Host` entries can find it), then starts or
 configures the selected editor:
 
 - `cursor` launches Cursor connected to the sandbox.
@@ -374,7 +374,8 @@ amika secret ssh-keygen
 ```
 
 To use an existing key, pass `--import <public-key-file>` instead. `--path` has
-no effect with `paseo` or `herdr`.
+no effect with `paseo` or `herdr`. With `orca`, it only changes the folder
+the printed instructions suggest adding as a repo.
 
 Without `--path`, the editor opens the directory the rig's agents run in, which
 the API reports as `agent_cwd`: `/home/amika/workspace/<repo>` on a rig built

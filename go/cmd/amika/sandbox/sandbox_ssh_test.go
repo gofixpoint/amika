@@ -262,7 +262,7 @@ func TestOpenSandboxInOrca(t *testing.T) {
 	want := "SSH host \"my-sandbox.sb_abc.app-amika-dev.amika\" for rig \"my-sandbox\" is available from ~/.ssh/config.\n" +
 		"Opening Orca...\n" +
 		"In Orca, open Settings > SSH, click Add Target, pick host \"my-sandbox.sb_abc.app-amika-dev.amika\" from the OpenSSH config picker, then Test and Save.\n" +
-		"Then add the repo on that SSH target (e.g. /home/amika/workspace/biz) and create worktrees on it.\n"
+		"Then add a repo on that SSH target (e.g. /home/amika/workspace/biz) and create worktrees on it.\n"
 	if got := out.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}

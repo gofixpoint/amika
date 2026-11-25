@@ -241,7 +241,7 @@ func openSandboxInOrcaTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOve
 	}
 	fmt.Fprintf(out, "In Orca, open Settings > SSH, click Add Target, pick host %q from the OpenSSH config picker, then Test and Save.\n", target.alias)
 	if remotePath := target.remotePath(pathOverride); remotePath != "" {
-		fmt.Fprintf(out, "Then add the repo on that SSH target (e.g. %s) and create worktrees on it.\n", remotePath)
+		fmt.Fprintf(out, "Then add a repo on that SSH target (e.g. %s) and create worktrees on it.\n", remotePath)
 	} else {
 		fmt.Fprintf(out, "Then add a repo on that SSH target and create worktrees on it.\n")
 	}
