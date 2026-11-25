@@ -70,8 +70,20 @@ describe("listDaytonaAccountSizes", () => {
     ]);
 
     await expect(listDaytonaAccountSizes(config)).resolves.toEqual([
-      { vcpus: 2, memoryGib: 4, diskGib: 8, image: "daytona-vm-medium" },
-      { vcpus: 4, memoryGib: 8, diskGib: 10, image: "daytona-vm-large" },
+      {
+        vcpus: 2,
+        memoryGib: 4,
+        diskGib: 8,
+        image: "daytona-vm-medium",
+        imageOwner: "provider",
+      },
+      {
+        vcpus: 4,
+        memoryGib: 8,
+        diskGib: 10,
+        image: "daytona-vm-large",
+        imageOwner: "provider",
+      },
     ]);
     expect(snapshotsApi.getAllSnapshots).toHaveBeenCalledWith(
       "org-1",
@@ -96,15 +108,47 @@ describe("listDaytonaAccountSizes", () => {
     await expect(listDaytonaAccountSizes(config)).resolves.toEqual([]);
   });
 
-  it("skips the org's own, inactive, and other-class snapshots", async () => {
+  it("skips inactive and other-class snapshots, and those no region serves", async () => {
     serveSnapshots([
-      snapshot({ name: "own", general: false }),
       snapshot({ name: "building", state: "building" }),
       snapshot({ name: "container", sandboxClass: "container" }),
       snapshot({ name: "elsewhere", regionIds: ["eu"] }),
     ]);
 
     await expect(listDaytonaAccountSizes(config)).resolves.toEqual([]);
+  });
+
+  it("lists the org's own snapshots too, owned by the account", async () => {
+    serveSnapshots([snapshot({ name: "own-vm", general: false })]);
+
+    const sizes = await listDaytonaAccountSizes(config);
+
+    expect(sizes).toEqual([
+      expect.objectContaining({ image: "own-vm", imageOwner: "account" }),
+    ]);
+  });
+
+  it("lists only what the configured target region serves", async () => {
+    organizationsApi.listAvailableRegions.mockResolvedValue({
+      data: [
+        { id: "us", name: "us" },
+        { id: "eu-1", name: "eu" },
+      ],
+    });
+    serveSnapshots([
+      snapshot({ name: "in-us", regionIds: ["us"] }),
+      snapshot({ name: "in-eu", regionIds: ["eu-1"] }),
+    ]);
+
+    const byName = await listDaytonaAccountSizes({ ...config, target: "eu" });
+    expect(byName.map((s) => s.image)).toEqual(["in-eu"]);
+
+    serveSnapshots([
+      snapshot({ name: "in-us", regionIds: ["us"] }),
+      snapshot({ name: "in-eu", regionIds: ["eu-1"] }),
+    ]);
+    const byId = await listDaytonaAccountSizes({ ...config, target: "us" });
+    expect(byId.map((s) => s.image)).toEqual(["in-us"]);
   });
 
   it("lists container snapshots when the config does not use VMs", async () => {

@@ -551,6 +551,11 @@ export interface AccountSize extends SandboxResources {
    * resources). Absent where a create sets the size itself.
    */
   image?: string;
+  /**
+   * Who made `image`: the provider, which publishes it to every account,
+   * or the account itself. Absent when there is no `image`.
+   */
+  imageOwner?: "provider" | "account";
 }
 
 /** What the credentials in use may do at the provider's account level. */
@@ -558,7 +563,7 @@ export interface AccountCapability {
   /**
    * The sizes a new sandbox may have with these credentials, the size a
    * create naming none gets first. Empty only when the account can boot
-   * nothing, for example a Daytona org with no usable general snapshot of its
+   * nothing, for example a Daytona org with no usable snapshot of its
    * sandbox class.
    */
   listSizes(): Promise<AccountSize[]>;
