@@ -148,6 +148,35 @@ describe("rigUserOps over a real shell", () => {
   });
 });
 
+describe("reads through a staged copy", () => {
+  it("copies as the rig user and reads the copy back", async () => {
+    const unstaged: string[] = [];
+    const staging: VendorShell = {
+      ...shell,
+      unstage: async (path) => {
+        unstaged.push(path);
+        return new Uint8Array(await readFile(path));
+      },
+    };
+    const ops = rigUserOps(staging);
+    const path = join(dir, "staged-read.txt");
+    await writeFile(path, "via staging");
+    expect(Buffer.from((await ops.readFile(path)) ?? []).toString("utf8")).toBe(
+      "via staging",
+    );
+    expect(unstaged).toHaveLength(1);
+    expect(unstaged[0].startsWith(join(dir, "staging"))).toBe(true);
+    expect(await ops.readFile(join(dir, "missing"))).toBeNull();
+    await writeFile(path, "y".repeat(10));
+    await expect(ops.readFile(path, { maxBytes: 9 })).rejects.toBeInstanceOf(
+      SandboxFileTooLargeError,
+    );
+    expect(await run("ls", ["-A", join(dir, "staging")])).toMatchObject({
+      stdout: "",
+    });
+  });
+});
+
 describe("command lines", () => {
   it("runs as amika by default and as root with sudo", () => {
     expect(rigCommandLine("id")).toBe(
