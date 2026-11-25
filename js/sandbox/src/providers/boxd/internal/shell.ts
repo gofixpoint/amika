@@ -28,7 +28,7 @@ export function boxdShell(config: BoxdConfig, machineId: string): VendorShell {
       streamBoxdScript(config, machineId, script, handlers),
     stagingDir: BOXD_STAGING_DIR,
     stage: async (path, content) => {
-      const boxd = await boxdClient(config);
+      const boxd = boxdClient(config);
       await boxd.machines.fs.write(machineId, path, content);
     },
   };
@@ -39,7 +39,7 @@ export async function runBoxdScript(
   machineId: string,
   script: string,
 ): Promise<SandboxExecResult> {
-  const boxd = await boxdClient(config);
+  const boxd = boxdClient(config);
   const result = await boxd.machines.exec(machineId, {
     command: `bash -c ${shellQuote(script)}`,
     timeout: BOXD_EXEC_TIMEOUT_MS,
@@ -57,7 +57,7 @@ async function streamBoxdScript(
   script: string,
   handlers: StreamCommandHandlers,
 ): Promise<number> {
-  const boxd = await boxdClient(config);
+  const boxd = boxdClient(config);
   const stream = boxd.machines.streamExec(machineId, {
     command: `bash -c ${shellQuote(script)}`,
     closeStdin: true,

@@ -2,9 +2,7 @@
 
 [boxd](https://boxd.sh) runs Ubuntu microVMs ("machines"). Its API is gRPC
 only (`boxd.api.v1.BoxdApi` at `boxd.sh:9443`), so this provider uses boxd's
-SDK (`@boxd-sh/sdk`, pinned) instead of a fetch client. The SDK, and the
-`@grpc/grpc-js` it needs, load only when a boxd provider makes its first
-call.
+SDK (`@boxd-sh/sdk`, pinned) instead of a fetch client.
 
 ## Configuration
 

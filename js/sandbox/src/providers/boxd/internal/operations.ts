@@ -97,7 +97,7 @@ export async function createBoxdSandbox(
   config: BoxdConfig,
   input: CreateSandboxProviderInput,
 ): Promise<CreatedProviderSandbox> {
-  const boxd = await boxdClient(config);
+  const boxd = boxdClient(config);
   const name = boxdMachineName(input.name);
   const autoSuspend = autoSuspendSeconds(input.autoStopInterval);
   ctx.logger.info(
@@ -173,7 +173,7 @@ export async function deleteBoxdSandbox(
   config: BoxdConfig,
   machineId: string,
 ): Promise<void> {
-  const boxd = await boxdClient(config);
+  const boxd = boxdClient(config);
   try {
     await boxd.machines.delete(machineId);
   } catch (error) {
@@ -188,7 +188,7 @@ export async function startBoxdSandbox(
   machineId: string,
   autoStopInterval?: number | null,
 ): Promise<void> {
-  const boxd = await boxdClient(config);
+  const boxd = boxdClient(config);
   const machine = await boxd.machines.get(machineId);
   switch (machine.status) {
     case "stopped":
@@ -215,7 +215,7 @@ export async function stopBoxdSandbox(
   config: BoxdConfig,
   machineId: string,
 ): Promise<void> {
-  const boxd = await boxdClient(config);
+  const boxd = boxdClient(config);
   const machine = await boxd.machines.get(machineId);
   if (machine.status === "stopped") return;
   if (machine.status === "suspended" || machine.status === "hibernated") {
@@ -229,7 +229,7 @@ export async function getBoxdSandboxState(
   config: BoxdConfig,
   machineId: string,
 ): Promise<string> {
-  const boxd = await boxdClient(config);
+  const boxd = boxdClient(config);
   try {
     return (await boxd.machines.get(machineId)).status;
   } catch (error) {
@@ -263,7 +263,7 @@ export function mapBoxdSandboxState(rawState: string): SandboxStatus {
 export async function listBoxdSandboxes(
   config: BoxdConfig,
 ): Promise<ProviderSandboxListing[]> {
-  const boxd = await boxdClient(config);
+  const boxd = boxdClient(config);
   const machines = await boxd.machines.list({
     labels: { [MANAGED_LABEL]: "true" },
   });
@@ -284,7 +284,7 @@ export async function listBoxdSandboxes(
 export async function listBoxdSizes(
   config: BoxdConfig,
 ): Promise<SandboxResources[]> {
-  const boxd = await boxdClient(config);
+  const boxd = boxdClient(config);
   const defaults = await boxd.orgs.getMachineDefaults();
   return BOXD_SIZES.filter(
     (s) =>
