@@ -13,6 +13,7 @@
 import {
   Configuration,
   OrganizationsApi,
+  SandboxClass,
   SnapshotsApi,
   SnapshotState,
   type SnapshotDto,
@@ -37,13 +38,15 @@ export async function listDaytonaAccountSizes(
     listSnapshots(config),
     listRegionIds(config),
   ]);
-  const sandboxClass = config.useVm ? "linux-vm" : "container";
+  const sandboxClass = config.useVm
+    ? SandboxClass.LINUX_VM
+    : SandboxClass.CONTAINER;
   return snapshots
     .filter(
       (s) =>
         s.general &&
         s.state === SnapshotState.ACTIVE &&
-        (s.sandboxClass ?? "container") === sandboxClass &&
+        (s.sandboxClass ?? SandboxClass.CONTAINER) === sandboxClass &&
         (s.regionIds ?? []).some((id) => regionIds.has(id)),
     )
     .map((s) => ({
@@ -52,7 +55,10 @@ export async function listDaytonaAccountSizes(
       diskGib: s.disk,
       image: s.name,
     }))
-    .sort((a, b) => a.vcpus - b.vcpus || a.memoryGib - b.memoryGib);
+    .sort(
+      (a, b) =>
+        a.vcpus - b.vcpus || a.memoryGib - b.memoryGib || a.diskGib - b.diskGib,
+    );
 }
 
 /** Every snapshot the org can see, its own and Daytona's general ones. */

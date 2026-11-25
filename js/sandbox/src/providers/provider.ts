@@ -558,7 +558,8 @@ export interface AccountCapability {
   /**
    * The sizes a new sandbox may have with these credentials, the size a
    * create naming none gets first. Empty only when the account can boot
-   * nothing, for example a Daytona org with no usable VM snapshot.
+   * nothing, for example a Daytona org with no usable general snapshot of its
+   * sandbox class.
    */
   listSizes(): Promise<AccountSize[]>;
 }
