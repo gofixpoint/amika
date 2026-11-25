@@ -25,5 +25,6 @@ export const daytonaCapabilities: SandboxProviderCapabilities = {
   snapshotIdsAreOpaque: false,
   // Daytona deletes idle sandboxes on the auto-delete interval.
   supportsAutoDelete: true,
-  accountSizes: false,
+  // The org's general snapshots fix the sizes it can boot (`./internal/account`).
+  accountSizes: true,
 };
