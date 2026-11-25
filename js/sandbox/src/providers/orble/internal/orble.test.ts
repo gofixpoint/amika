@@ -118,10 +118,16 @@ describe("sizes, states, names", () => {
     expect(mapOrbleSandboxState("running")).toBe("running");
   });
 
-  it("makes hostname-safe box names", () => {
+  it("makes box names Orble's API takes: 2 to 32 of a-z, 0-9, -", () => {
+    const valid = /^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$/;
     expect(orbleBoxName("rig-1")).toBe("rig-1");
-    expect(orbleBoxName("My Rig--sbx_1")).toMatch(
-      /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/,
+    expect(orbleBoxName("My Rig--sbx_1")).toMatch(valid);
+    expect(orbleBoxName("a")).toMatch(valid);
+    // The name Amika sends for a rig: `<rig>--<rig id>`.
+    const rigName = "byoc-orble--baa2af16-13fc-42b7-9952-ead9bb55826e";
+    expect(orbleBoxName(rigName)).toMatch(valid);
+    expect(orbleBoxName(rigName)).not.toBe(
+      orbleBoxName("byoc-orble--baa2af16-13fc-42b7-9952-ead9bb55826f"),
     );
   });
 });
