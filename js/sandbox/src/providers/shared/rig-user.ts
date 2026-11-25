@@ -174,6 +174,10 @@ export function rigUserOps(shell: VendorShell): RigUserOps {
  * {@link RIG_USER_HOME}, a login shell, and passwordless `sudo`, and turns
  * off sudo's command log. It changes nothing when that is all in place.
  * Exported for tests.
+ *
+ * The password is `*`, which no password matches. A bare `useradd` leaves
+ * `!`, a locked account, and amikad's sshd runs without PAM, so OpenSSH
+ * refuses a locked account's key too: SSH and the web terminal would fail.
  */
 export function ensureRigUserScript(): string {
   const user = shellQuote(RIG_USER);
@@ -181,7 +185,7 @@ export function ensureRigUserScript(): string {
   return [
     "set -eu",
     `if ! id -u ${user} >/dev/null 2>&1; then`,
-    `  sudo -n useradd --create-home --user-group --home-dir ${home} --shell /bin/bash ${user}`,
+    `  sudo -n useradd --create-home --user-group --home-dir ${home} --shell /bin/bash --password '*' ${user}`,
     "fi",
     `echo ${shellQuote(`${RIG_USER} ALL=(ALL) NOPASSWD:ALL`)} | sudo -n tee /etc/sudoers.d/90-amika >/dev/null`,
     "sudo -n chmod 0440 /etc/sudoers.d/90-amika",

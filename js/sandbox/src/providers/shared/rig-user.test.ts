@@ -169,6 +169,8 @@ describe("command lines", () => {
     expect(script).toContain("--home-dir '/home/amika'");
     expect(script).toContain("/etc/sudoers.d/90-amika");
     expect(script).toMatch(/if ! id -u 'amika'/);
+    // Unlocked: amikad's sshd has no PAM and refuses a locked account.
+    expect(script).toContain("--password '*'");
     // Command lines carry secrets, so sudo must not log them.
     expect(script).toContain("Defaults !syslog, !logfile");
     expect(script).toContain("visudo -cqf");
