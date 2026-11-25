@@ -97,12 +97,16 @@ export async function createE2bSandbox(
  * its login user at create, as Instabox can, and the runtime install uploads
  * to the rig user's home before `amikad bootstrap` runs. On failure the
  * sandbox is killed, so a half-made sandbox does not outlive the create.
+ *
+ * The password is `*`, which no password matches. A bare `useradd` leaves
+ * `!`, a locked account, and amikad's sshd runs without PAM, so OpenSSH
+ * refuses a locked account's key too: SSH and the web terminal would fail.
  */
 async function addRigUser(sandbox: Sandbox): Promise<void> {
   try {
     await sandbox.commands.run(
       `id -u ${E2B_RIG_USER} >/dev/null 2>&1 || ` +
-        `useradd --create-home --home-dir ${DEFAULT_HOME_DIR} --shell /bin/bash ${E2B_RIG_USER}`,
+        `useradd --create-home --home-dir ${DEFAULT_HOME_DIR} --shell /bin/bash --password '*' ${E2B_RIG_USER}`,
       { user: "root" },
     );
   } catch (error) {

@@ -113,7 +113,7 @@ describe("E2B lifecycle operations", () => {
 
     expect(run).toHaveBeenCalledWith(
       expect.stringContaining(
-        "useradd --create-home --home-dir /home/amika --shell /bin/bash amika",
+        "useradd --create-home --home-dir /home/amika --shell /bin/bash --password '*' amika",
       ),
       { user: "root" },
     );
