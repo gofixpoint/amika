@@ -29,10 +29,12 @@ image) or another image ref boxd accepts.
   4 GiB, 2/8, 4/16, and 8/32. Any other size is refused.
   `provider.account.sizes()` returns the classes under the org's quota
   (`GetOrgMachineDefaults`).
-- **Stop and start.** `stop` powers the machine off (disk kept). boxd also
-  suspends an idle machine with its memory kept; `autoStopInterval` sets
-  that timeout, `0` turns it off, and a command wakes the machine. boxd
-  cannot stop a sleeping machine, so `stop` wakes it first.
+- **Stop and start.** `stop` powers the machine off (disk kept). boxd's
+  stop kills the VM with no guest shutdown, so `stop` runs `sync` first
+  (best effort, up to a minute). boxd also suspends an idle machine with
+  its memory kept; `autoStopInterval` sets that timeout, `0` turns it
+  off, and a command wakes the machine. boxd cannot stop a sleeping
+  machine, so `stop` wakes it first.
 - **Exec.** boxd's `Exec` stream, with stdout and stderr apart. boxd has no
   time limit; the provider stops a command after 30 minutes.
 - **Not supported:**

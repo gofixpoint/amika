@@ -38,11 +38,12 @@ export async function runBoxdScript(
   config: BoxdConfig,
   machineId: string,
   script: string,
+  timeoutMs: number = BOXD_EXEC_TIMEOUT_MS,
 ): Promise<SandboxExecResult> {
   const boxd = boxdClient(config);
   const result = await boxd.machines.exec(machineId, {
     command: `bash -c ${shellQuote(script)}`,
-    timeout: BOXD_EXEC_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
   return {
     exitCode: result.exitCode,

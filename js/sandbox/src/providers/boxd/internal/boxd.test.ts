@@ -117,6 +117,44 @@ describe("run state", () => {
     expect(machines.stop).toHaveBeenCalledWith("vm-1");
   });
 
+  it("flushes the guest's writes before stopping a running machine", async () => {
+    machines.get.mockResolvedValue({ status: "running" });
+    const order: string[] = [];
+    machines.exec.mockImplementation(async () => {
+      order.push("sync");
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    machines.stop.mockImplementation(async () => {
+      order.push("stop");
+    });
+    await stopBoxdSandbox(CONFIG, "vm-1");
+    expect(machines.exec).toHaveBeenCalledWith("vm-1", {
+      command: "bash -c 'sync'",
+      timeout: 60_000,
+    });
+    expect(order).toEqual(["sync", "stop"]);
+  });
+
+  it("stops even when the flush fails", async () => {
+    machines.get.mockResolvedValue({ status: "running" });
+    machines.exec.mockRejectedValue(new Error("exec timed out"));
+    await stopBoxdSandbox(CONFIG, "vm-1");
+    expect(machines.stop).toHaveBeenCalledWith("vm-1");
+  });
+
+  it("skips the flush on a machine that is not running", async () => {
+    machines.get.mockResolvedValue({ status: "failed" });
+    await stopBoxdSandbox(CONFIG, "vm-1");
+    expect(machines.exec).not.toHaveBeenCalled();
+    expect(machines.stop).toHaveBeenCalledWith("vm-1");
+
+    vi.clearAllMocks();
+    machines.get.mockResolvedValue({ status: "stopped" });
+    await stopBoxdSandbox(CONFIG, "vm-1");
+    expect(machines.exec).not.toHaveBeenCalled();
+    expect(machines.stop).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["pending", "starting"],
     ["running", "running"],

@@ -7,9 +7,10 @@
  *   4 GiB, 2/8, 4/16, and 8/32. The org's quota caps them.
  * - **Isolation.** Create sets `isolated`, so the machine gets none of the
  *   org's peers, in-VM boxd CLI, credentials, or integrations.
- * - **Run state.** `stop` powers the machine off; its disk stays. boxd can
- *   also suspend an idle machine (RAM kept), set from `autoStopInterval`;
- *   a command wakes it.
+ * - **Run state.** `stop` powers the machine off; its disk stays. boxd's
+ *   stop kills the VM without a guest shutdown, so we run `sync` first.
+ *   boxd can also suspend an idle machine (RAM kept), set from
+ *   `autoStopInterval`; a command wakes it.
  * - **User.** boxd logs in as `boxd`. Create makes the `amika` rig user
  *   (`../../shared/rig-user.ts`) before it returns.
  */
@@ -28,7 +29,10 @@ import { rigUserOps } from "../../shared/rig-user";
 import type { BoxdConfig } from "../config";
 import { boxdClient, isNotFound } from "./client";
 import { boxdMachineName } from "./names";
-import { boxdShell } from "./shell";
+import { boxdShell, runBoxdScript } from "./shell";
+
+/** How long `stop` waits for the guest's `sync` before powering off. */
+const STOP_SYNC_TIMEOUT_MS = 60_000;
 
 /** The boot source that means boxd's default image (Ubuntu 24.04). */
 export const BOXD_BASE_IMAGE = "ubuntu:24.04";
@@ -210,7 +214,12 @@ export async function startBoxdSandbox(
   await rigUserOps(boxdShell(config, machineId)).ensureRigUser();
 }
 
-/** Power a machine off. Its disk stays; memory and programs do not. */
+/**
+ * Power a machine off. Its disk stays; memory and programs do not. boxd's
+ * stop kills the VM with no guest shutdown, so recent writes still in the
+ * guest's page cache would be lost: a running machine gets a best-effort
+ * `sync` first. A failed or slow `sync` does not block the stop.
+ */
 export async function stopBoxdSandbox(
   config: BoxdConfig,
   machineId: string,
@@ -218,9 +227,16 @@ export async function stopBoxdSandbox(
   const boxd = boxdClient(config);
   const machine = await boxd.machines.get(machineId);
   if (machine.status === "stopped") return;
+  let running = machine.status === "running";
   if (machine.status === "suspended" || machine.status === "hibernated") {
     // boxd cannot stop a sleeping machine; wake it first.
     await boxd.machines.wake(machineId);
+    running = true;
+  }
+  if (running) {
+    await runBoxdScript(config, machineId, "sync", STOP_SYNC_TIMEOUT_MS).catch(
+      () => undefined,
+    );
   }
   await boxd.machines.stop(machineId);
 }
