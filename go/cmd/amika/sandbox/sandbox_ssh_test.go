@@ -248,6 +248,44 @@ func TestOpenSandboxInCodex(t *testing.T) {
 	}
 }
 
+func TestOpenSandboxInOrca(t *testing.T) {
+	opened := stubOpenApp(t)
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.app-amika-dev.amika", sandboxName: "my-sandbox", repoName: "biz"}
+
+	if err := openSandboxInEditor(cmd, "orca", nil, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+
+	want := "SSH host \"my-sandbox.sb_abc.app-amika-dev.amika\" for rig \"my-sandbox\" is available from ~/.ssh/config.\n" +
+		"Opening Orca...\n" +
+		"In Orca, open Settings > SSH, click Add Target, pick host \"my-sandbox.sb_abc.app-amika-dev.amika\" from the OpenSSH config picker, then Test and Save.\n" +
+		"Then add the repo on that SSH target (e.g. /home/amika/workspace/biz) and create worktrees on it.\n"
+	if got := out.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if len(*opened) != 1 || (*opened)[0] != "orca://" {
+		t.Fatalf("expected orca deep link to be opened, got %v", *opened)
+	}
+}
+
+func TestOpenSandboxInOrcaBareMetalWithoutPath(t *testing.T) {
+	stubOpenApp(t)
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	target := sandboxSSHAlias{alias: "metal.sb_abc.prod.amika", sandboxName: "metal", bareMetal: true}
+
+	if err := openSandboxInEditor(cmd, "orca", nil, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+	if got := out.String(); !strings.HasSuffix(got, "Then add a repo on that SSH target and create worktrees on it.\n") {
+		t.Fatalf("output = %q, want no remote folder suggestion", got)
+	}
+}
+
 func TestOpenSandboxInPaseo(t *testing.T) {
 	cmd := &cobra.Command{}
 	out := &bytes.Buffer{}

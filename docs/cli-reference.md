@@ -354,6 +354,10 @@ configures the selected editor:
 - `codex` enables Codex's `remote_connections` feature (in
   `~/.codex/config.toml`), then opens Codex; enable the host under
   Settings > Connections.
+- `orca` opens Orca and prints how to add the sandbox as an SSH target: under
+  Settings > SSH, click Add Target and pick the sandbox's host from the
+  OpenSSH config picker. Orca has no command or link that adds a target for
+  you.
 - `paseo` prints the SSH host to add in Paseo under Hosts > Add host >
   Remote SSH.
 - `herdr` runs `herdr machine add <ssh-host> --label <name>`, which connects
@@ -396,6 +400,7 @@ amika sandbox open my-sandbox --app=cursor
 amika sandbox open my-sandbox --app=vscode
 amika sandbox open my-sandbox --app=claude
 amika sandbox open my-sandbox --app=codex
+amika sandbox open my-sandbox --app=orca
 amika sandbox open my-sandbox --app=paseo
 amika sandbox open my-sandbox --app=herdr
 amika sandbox code my-sandbox --editor=vscode
@@ -403,7 +408,7 @@ amika sandbox code my-sandbox --editor=vscode
 
 | Flag              | Default  | Description                                              |
 | ----------------- | -------- | -------------------------------------------------------- |
-| `--app <name>`    | —        | Required. App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
+| `--app <name>`    | —        | Required. App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `orca`, `paseo`, or `herdr` |
 | `--editor <name>` | —        | Alias for `--app`                                        |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the rig's home directory; must be absolute on a bare-metal rig) |
 
