@@ -137,7 +137,7 @@ describe("send", () => {
 });
 
 describe("createBoatSandbox", () => {
-  it("creates with no env and no deadline, waits, and makes the rig user", async () => {
+  it("creates with no env, no deadline and no monitoring, waits, and makes the rig user", async () => {
     const requests: Array<{ method: string; url: string; body: unknown }> = [];
     vi.stubGlobal(
       "fetch",
@@ -179,6 +179,7 @@ describe("createBoatSandbox", () => {
     expect(create).toMatchObject({
       name: "rig--sbx_1",
       noEnv: true,
+      monitoring: false,
       ttlSeconds: null,
       type: "small",
       labels: {

@@ -11,7 +11,9 @@
  *   resume ask for none. A free trial refuses that; there we ask for the
  *   longest deadline it allows.
  * - **Secrets.** Create sets `noEnv`, so the sandbox gets none of the
- *   account's own secrets or CLI key.
+ *   account's own secrets or CLI key. It also sets `monitoring: false`:
+ *   boat otherwise keeps each command's text and output in its command
+ *   history, and our command lines carry clone tokens and env values.
  * - **User.** boat logs in as `user`. Create makes the `amika` rig user
  *   (`../../shared/rig-user.ts`) before it returns.
  */
@@ -135,6 +137,7 @@ export async function createBoatSandbox(
       [MANAGED_LABEL]: "true",
     }),
     noEnv: true,
+    monitoring: false,
     ttlSeconds: null,
     ...(input.snapshot && input.snapshot !== BOAT_BASE_IMAGE
       ? { from: input.snapshot }

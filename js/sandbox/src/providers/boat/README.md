@@ -40,7 +40,10 @@ image) or the name of a saved snapshot in the account.
   refuses that; there create asks for two hours, the most a trial allows.
   `autoStopInterval` is not used: boat has no idle timer.
 - **Secrets.** Create sets `noEnv`, so the sandbox gets none of the boat
-  account's own secrets or CLI key.
+  account's own secrets or CLI key. It also sets `monitoring: false`, so
+  boat keeps no command history: command lines carry clone tokens and env
+  values, and boat would otherwise keep each one's text and output for 7
+  days.
 - **Stop and start.** `stop` saves the disk and frees the machine; `start`
   resumes it, maybe on a new machine. Running programs end.
 - **Exec.** NDJSON stream, so output has no size cap. A command runs at
