@@ -255,16 +255,11 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 	} else {
 		fmt.Fprintf(out, "Opening Codex...\n")
 	}
-	folder := "a remote folder"
 	if remotePath := target.remotePath(pathOverride); remotePath != "" {
-		folder = fmt.Sprintf("a remote folder (e.g. %s)", remotePath)
-	}
-	// The Windows ChatGPT/Codex app tested (26.1120) had no SSH host list:
-	// its Settings > Connections only pairs devices on the ChatGPT account.
-	if wslIsWSL() {
-		fmt.Fprintf(out, "Codex on Windows may not offer SSH remotes yet. If yours does, connect to host %q and choose %s.\n", target.alias, folder)
+		fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose a remote folder (e.g. %s).\n",
+			target.alias, remotePath)
 	} else {
-		fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose %s.\n", target.alias, folder)
+		fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose a remote folder.\n", target.alias)
 	}
 	return nil
 }

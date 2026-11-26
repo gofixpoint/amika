@@ -400,8 +400,6 @@ the same SSH state, write their settings to the Windows profile
 instead of the WSL home, and open the Windows app. This needs WSL interop
 (`cmd.exe`, `wslpath`) and `WSL_DISTRO_NAME` set (any interactive WSL shell
 sets it); without them these apps fail instead of configuring only the WSL side.
-Codex on Windows may not offer SSH remotes yet, so the host might not show up
-there.
 
 ```bash
 amika sandbox open my-sandbox --app=cursor
