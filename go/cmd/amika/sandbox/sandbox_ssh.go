@@ -23,14 +23,14 @@ import (
 // validateEditor checks that the requested editor is supported.
 func validateEditor(editor string) error {
 	switch editor {
-	case "cursor", "vscode", "claude", "codex", "paseo", "herdr":
+	case "cursor", "vscode", "claude", "codex", "orca", "paseo", "herdr":
 		return nil
 	default:
 		return fmt.Errorf("unsupported app %q; supported apps are %q", editor, supportedEditors)
 	}
 }
 
-var supportedEditors = []string{"cursor", "vscode", "claude", "codex", "paseo", "herdr"}
+var supportedEditors = []string{"cursor", "vscode", "claude", "codex", "orca", "paseo", "herdr"}
 
 // maintainSSHHosts keeps maintenance failures from preventing an editor launch.
 func maintainSSHHosts(cmd *cobra.Command, paths basedir.Paths, client *apiclient.Client, alias string) {
@@ -87,6 +87,8 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 		return openSandboxInClaudeTarget(cmd, paths, target, pathOverride)
 	case "codex":
 		return openSandboxInCodexTarget(cmd, paths, target, pathOverride)
+	case "orca":
+		return openSandboxInOrcaTarget(cmd, target, pathOverride)
 	case "paseo":
 		return openSandboxInPaseoTarget(cmd, target)
 	case "herdr":
@@ -221,6 +223,32 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 			target.alias, remotePath)
 	} else {
 		fmt.Fprintf(out, "In Codex, open Settings > Connections, enable host %q, and choose a remote folder.\n", target.alias)
+	}
+	return nil
+}
+
+// openSandboxInOrcaTarget launches Orca and prints the steps that add a
+// prepared SSH target to it. Orca exposes no CLI command or deep link for
+// adding an SSH host, but its SSH Hosts settings import the concrete Host
+// entry `rig open` wrote to Amika's managed SSH config, which ~/.ssh/config
+// includes, so the user usually only connects.
+func openSandboxInOrcaTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "SSH host for rig %q:\n\n  %s\n\n", target.sandboxName, target.alias)
+	if err := openApp("orca://"); err != nil {
+		fmt.Fprintf(out, "Could not launch Orca automatically (%v); open it yourself.\n\n", err)
+	} else {
+		fmt.Fprintf(out, "Opening Orca...\n\n")
+	}
+	fmt.Fprintln(out, "In Orca:")
+	fmt.Fprintln(out, "  1. Open Settings > SSH Hosts.")
+	fmt.Fprintln(out, "  2. Find the host above in the list. If it is missing, click Add host,")
+	fmt.Fprintln(out, "     enter it under Host or alias, and click Add host.")
+	fmt.Fprintln(out, "  3. Click Connect on the host.")
+	if remotePath := target.remotePath(pathOverride); remotePath != "" {
+		fmt.Fprintf(out, "  4. Add a project on that host (e.g. %s) and create worktrees on it.\n", remotePath)
+	} else {
+		fmt.Fprintln(out, "  4. Add a project on that host and create worktrees on it.")
 	}
 	return nil
 }

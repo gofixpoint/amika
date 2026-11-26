@@ -343,7 +343,7 @@ is an alias, and `--editor` is an alias for `--app`. `--app` is required:
 there is no default app.
 
 The command adds a named SSH connection to Amika's managed config (so editors
-such as Codex that enumerate `Host` entries can find it), then starts or
+such as Codex and Orca that enumerate `Host` entries can find it), then starts or
 configures the selected editor:
 
 - `cursor` launches Cursor connected to the sandbox.
@@ -354,6 +354,11 @@ configures the selected editor:
 - `codex` enables Codex's `remote_connections` feature (in
   `~/.codex/config.toml`), then opens Codex; enable the host under
   Settings > Connections.
+- `orca` opens Orca and prints how to connect to the sandbox: under
+  Settings > SSH Hosts, find the sandbox's host and click Connect. Orca
+  imports the host from `~/.ssh/config`; if it is missing, click Add host and
+  enter it under Host or alias. Orca has no command or link that adds a host
+  for you.
 - `paseo` prints the SSH host to add in Paseo under Hosts > Add host >
   Remote SSH.
 - `herdr` runs `herdr machine add <ssh-host> --label <name>`, which connects
@@ -370,7 +375,8 @@ amika secret ssh-keygen
 ```
 
 To use an existing key, pass `--import <public-key-file>` instead. `--path` has
-no effect with `paseo` or `herdr`.
+no effect with `paseo` or `herdr`. With `orca`, it only changes the folder
+the printed instructions suggest adding as a project.
 
 Without `--path`, the editor opens the directory the rig's agents run in, which
 the API reports as `agent_cwd`: `/home/amika/workspace/<repo>` on a rig built
@@ -396,6 +402,7 @@ amika sandbox open my-sandbox --app=cursor
 amika sandbox open my-sandbox --app=vscode
 amika sandbox open my-sandbox --app=claude
 amika sandbox open my-sandbox --app=codex
+amika sandbox open my-sandbox --app=orca
 amika sandbox open my-sandbox --app=paseo
 amika sandbox open my-sandbox --app=herdr
 amika sandbox code my-sandbox --editor=vscode
@@ -403,7 +410,7 @@ amika sandbox code my-sandbox --editor=vscode
 
 | Flag              | Default  | Description                                              |
 | ----------------- | -------- | -------------------------------------------------------- |
-| `--app <name>`    | —        | Required. App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `paseo`, or `herdr` |
+| `--app <name>`    | —        | Required. App or editor to open: `cursor`, `vscode`, `claude`, `codex`, `orca`, `paseo`, or `herdr` |
 | `--editor <name>` | —        | Alias for `--app`                                        |
 | `--path <path>`   | —        | Override the remote path to open (absolute, or relative to the rig's home directory; must be absolute on a bare-metal rig) |
 

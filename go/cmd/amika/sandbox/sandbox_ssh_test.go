@@ -248,6 +248,49 @@ func TestOpenSandboxInCodex(t *testing.T) {
 	}
 }
 
+func TestOpenSandboxInOrca(t *testing.T) {
+	opened := stubOpenApp(t)
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.app-amika-dev.amika", sandboxName: "my-sandbox", repoName: "biz"}
+
+	if err := openSandboxInEditor(cmd, "orca", nil, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+
+	want := "SSH host for rig \"my-sandbox\":\n\n" +
+		"  my-sandbox.sb_abc.app-amika-dev.amika\n\n" +
+		"Opening Orca...\n\n" +
+		"In Orca:\n" +
+		"  1. Open Settings > SSH Hosts.\n" +
+		"  2. Find the host above in the list. If it is missing, click Add host,\n" +
+		"     enter it under Host or alias, and click Add host.\n" +
+		"  3. Click Connect on the host.\n" +
+		"  4. Add a project on that host (e.g. /home/amika/workspace/biz) and create worktrees on it.\n"
+	if got := out.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if len(*opened) != 1 || (*opened)[0] != "orca://" {
+		t.Fatalf("expected orca deep link to be opened, got %v", *opened)
+	}
+}
+
+func TestOpenSandboxInOrcaBareMetalWithoutPath(t *testing.T) {
+	stubOpenApp(t)
+	cmd := &cobra.Command{}
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	target := sandboxSSHAlias{alias: "metal.sb_abc.prod.amika", sandboxName: "metal", bareMetal: true}
+
+	if err := openSandboxInEditor(cmd, "orca", nil, target, ""); err != nil {
+		t.Fatalf("openSandboxInEditor: %v", err)
+	}
+	if got := out.String(); !strings.HasSuffix(got, "  4. Add a project on that host and create worktrees on it.\n") {
+		t.Fatalf("output = %q, want no remote folder suggestion", got)
+	}
+}
+
 func TestOpenSandboxInPaseo(t *testing.T) {
 	cmd := &cobra.Command{}
 	out := &bytes.Buffer{}
