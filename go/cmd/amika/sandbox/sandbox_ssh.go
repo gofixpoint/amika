@@ -230,7 +230,8 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 // openSandboxInOrcaTarget launches Orca and prints the steps that add a
 // prepared SSH target to it. Orca exposes no CLI command or deep link for
 // adding an SSH host, but its SSH Hosts settings import the concrete Host
-// entry `rig open` wrote to ~/.ssh/config, so the user usually only connects.
+// entry `rig open` wrote to Amika's managed SSH config, which ~/.ssh/config
+// includes, so the user usually only connects.
 func openSandboxInOrcaTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "SSH host for rig %q:\n\n  %s\n\n", target.sandboxName, target.alias)
