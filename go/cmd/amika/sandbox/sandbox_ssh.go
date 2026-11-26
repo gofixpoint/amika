@@ -227,23 +227,27 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 	return nil
 }
 
-// openSandboxInOrcaTarget launches Orca and prints how to add a prepared SSH
-// target to it. Orca exposes no CLI command or deep link for adding an SSH
-// target, so the user picks the alias from the OpenSSH config picker in its
-// SSH settings, which lists the concrete Host entry `rig open` wrote.
+// openSandboxInOrcaTarget launches Orca and prints the steps that add a
+// prepared SSH target to it. Orca exposes no CLI command or deep link for
+// adding an SSH host, but its SSH Hosts settings import the concrete Host
+// entry `rig open` wrote to ~/.ssh/config, so the user usually only connects.
 func openSandboxInOrcaTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "SSH host %q for rig %q is available from ~/.ssh/config.\n", target.alias, target.sandboxName)
+	fmt.Fprintf(out, "SSH host for rig %q:\n\n  %s\n\n", target.sandboxName, target.alias)
 	if err := openApp("orca://"); err != nil {
-		fmt.Fprintf(out, "Could not launch Orca automatically (%v); open it yourself.\n", err)
+		fmt.Fprintf(out, "Could not launch Orca automatically (%v); open it yourself.\n\n", err)
 	} else {
-		fmt.Fprintf(out, "Opening Orca...\n")
+		fmt.Fprintf(out, "Opening Orca...\n\n")
 	}
-	fmt.Fprintf(out, "In Orca, open Settings > SSH, click Add Target, pick host %q from the OpenSSH config picker, then Test and Save.\n", target.alias)
+	fmt.Fprintln(out, "In Orca:")
+	fmt.Fprintln(out, "  1. Open Settings > SSH Hosts.")
+	fmt.Fprintln(out, "  2. Find the host above in the list. If it is missing, click Add host,")
+	fmt.Fprintln(out, "     enter it under Host or alias, and click Add host.")
+	fmt.Fprintln(out, "  3. Click Connect on the host.")
 	if remotePath := target.remotePath(pathOverride); remotePath != "" {
-		fmt.Fprintf(out, "Then add a repo on that SSH target (e.g. %s) and create worktrees on it.\n", remotePath)
+		fmt.Fprintf(out, "  4. Add a project on that host (e.g. %s) and create worktrees on it.\n", remotePath)
 	} else {
-		fmt.Fprintf(out, "Then add a repo on that SSH target and create worktrees on it.\n")
+		fmt.Fprintln(out, "  4. Add a project on that host and create worktrees on it.")
 	}
 	return nil
 }

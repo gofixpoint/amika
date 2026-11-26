@@ -259,10 +259,15 @@ func TestOpenSandboxInOrca(t *testing.T) {
 		t.Fatalf("openSandboxInEditor: %v", err)
 	}
 
-	want := "SSH host \"my-sandbox.sb_abc.app-amika-dev.amika\" for rig \"my-sandbox\" is available from ~/.ssh/config.\n" +
-		"Opening Orca...\n" +
-		"In Orca, open Settings > SSH, click Add Target, pick host \"my-sandbox.sb_abc.app-amika-dev.amika\" from the OpenSSH config picker, then Test and Save.\n" +
-		"Then add a repo on that SSH target (e.g. /home/amika/workspace/biz) and create worktrees on it.\n"
+	want := "SSH host for rig \"my-sandbox\":\n\n" +
+		"  my-sandbox.sb_abc.app-amika-dev.amika\n\n" +
+		"Opening Orca...\n\n" +
+		"In Orca:\n" +
+		"  1. Open Settings > SSH Hosts.\n" +
+		"  2. Find the host above in the list. If it is missing, click Add host,\n" +
+		"     enter it under Host or alias, and click Add host.\n" +
+		"  3. Click Connect on the host.\n" +
+		"  4. Add a project on that host (e.g. /home/amika/workspace/biz) and create worktrees on it.\n"
 	if got := out.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
@@ -281,7 +286,7 @@ func TestOpenSandboxInOrcaBareMetalWithoutPath(t *testing.T) {
 	if err := openSandboxInEditor(cmd, "orca", nil, target, ""); err != nil {
 		t.Fatalf("openSandboxInEditor: %v", err)
 	}
-	if got := out.String(); !strings.HasSuffix(got, "Then add a repo on that SSH target and create worktrees on it.\n") {
+	if got := out.String(); !strings.HasSuffix(got, "  4. Add a project on that host and create worktrees on it.\n") {
 		t.Fatalf("output = %q, want no remote folder suggestion", got)
 	}
 }

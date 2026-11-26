@@ -180,7 +180,7 @@ name or ID, or name=<name> / id=<id> (see "amika rig --help").
   vscode   launch VS Code connected to the rig
   claude   register the rig as a Claude Desktop SSH environment
   codex    expose the rig to Codex as an SSH connection
-  orca     open Orca and print how to add the rig as an SSH target
+  orca     open Orca and print how to connect to the rig over SSH
   paseo    print instructions for adding the rig as a Paseo SSH host
   herdr    add the rig to Herdr as a remote machine
 

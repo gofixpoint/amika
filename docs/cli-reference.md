@@ -354,10 +354,11 @@ configures the selected editor:
 - `codex` enables Codex's `remote_connections` feature (in
   `~/.codex/config.toml`), then opens Codex; enable the host under
   Settings > Connections.
-- `orca` opens Orca and prints how to add the sandbox as an SSH target: under
-  Settings > SSH, click Add Target and pick the sandbox's host from the
-  OpenSSH config picker. Orca has no command or link that adds a target for
-  you.
+- `orca` opens Orca and prints how to connect to the sandbox: under
+  Settings > SSH Hosts, find the sandbox's host and click Connect. Orca
+  imports the host from `~/.ssh/config`; if it is missing, click Add host and
+  enter it under Host or alias. Orca has no command or link that adds a host
+  for you.
 - `paseo` prints the SSH host to add in Paseo under Hosts > Add host >
   Remote SSH.
 - `herdr` runs `herdr machine add <ssh-host> --label <name>`, which connects
@@ -375,7 +376,7 @@ amika secret ssh-keygen
 
 To use an existing key, pass `--import <public-key-file>` instead. `--path` has
 no effect with `paseo` or `herdr`. With `orca`, it only changes the folder
-the printed instructions suggest adding as a repo.
+the printed instructions suggest adding as a project.
 
 Without `--path`, the editor opens the directory the rig's agents run in, which
 the API reports as `agent_cwd`: `/home/amika/workspace/<repo>` on a rig built
