@@ -88,7 +88,7 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 	case "codex":
 		return openSandboxInCodexTarget(cmd, paths, target, pathOverride)
 	case "orca":
-		return openSandboxInOrcaTarget(cmd, target, pathOverride)
+		return openSandboxInOrcaTarget(cmd, paths, target, pathOverride)
 	case "paseo":
 		return openSandboxInPaseoTarget(cmd, target)
 	case "herdr":
@@ -190,9 +190,9 @@ func prepareWindowsSide(paths basedir.Paths) (wslbridge.Target, error) {
 	return windowsTarget, nil
 }
 
-// resolveDesktopApp returns the paths a desktop app (Claude Desktop, Codex)
-// reads its config from and the function that opens it by URL. Under WSL the
-// app is taken to be the Windows build, so the SSH state is mirrored to
+// resolveDesktopApp returns the paths a desktop app (Claude Desktop, Codex,
+// Orca) reads its config from and the function that opens it by URL. Under
+// WSL the app is taken to be the Windows build, so the SSH state is mirrored to
 // Windows, the config goes under the Windows user profile, and the URL opens
 // on the Windows desktop. Only the home-based files of the returned paths
 // (such as ClaudeSettingsFile and CodexConfigFile) point at the Windows side.
@@ -269,10 +269,19 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 // adding an SSH host, but its SSH Hosts settings import the concrete Host
 // entry `rig open` wrote to Amika's managed SSH config, which ~/.ssh/config
 // includes, so the user usually only connects.
-func openSandboxInOrcaTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
+//
+// Under WSL, Orca is taken to be the Windows build, which is how Orca supports
+// WSL (it opens \\wsl.localhost repos and WSL terminals itself). That build
+// imports hosts from %USERPROFILE%\.ssh\config, so the host must be mirrored
+// there; Orca reads none of the other files `rig open` writes.
+func openSandboxInOrcaTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
+	_, openURL, err := resolveDesktopApp(paths)
+	if err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "SSH host for rig %q:\n\n  %s\n\n", target.sandboxName, target.alias)
-	if err := openApp("orca://"); err != nil {
+	if err := openURL("orca://"); err != nil {
 		fmt.Fprintf(out, "Could not launch Orca automatically (%v); open it yourself.\n\n", err)
 	} else {
 		fmt.Fprintf(out, "Opening Orca...\n\n")

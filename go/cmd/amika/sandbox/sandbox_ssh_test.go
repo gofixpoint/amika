@@ -254,6 +254,8 @@ func TestOpenSandboxInCodex(t *testing.T) {
 
 func TestOpenSandboxInOrca(t *testing.T) {
 	opened := stubOpenApp(t)
+	mirrored, launched := stubWSLSeams(t)
+	wslIsWSL = func() bool { return false }
 	cmd := &cobra.Command{}
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -278,10 +280,15 @@ func TestOpenSandboxInOrca(t *testing.T) {
 	if len(*opened) != 1 || (*opened)[0] != "orca://" {
 		t.Fatalf("expected orca deep link to be opened, got %v", *opened)
 	}
+	if len(*mirrored) != 0 || len(*launched) != 0 {
+		t.Fatalf("mirrored %v / launched %q outside WSL, want nothing", *mirrored, *launched)
+	}
 }
 
 func TestOpenSandboxInOrcaBareMetalWithoutPath(t *testing.T) {
 	stubOpenApp(t)
+	stubWSLSeams(t)
+	wslIsWSL = func() bool { return false }
 	cmd := &cobra.Command{}
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
@@ -623,10 +630,10 @@ func TestOpenSandboxInEditorMirrorsToWindowsUnderWSL(t *testing.T) {
 	}
 }
 
-// TestOpenDesktopAppsUseWindowsSideUnderWSL covers Claude Desktop and Codex,
-// which run as Windows apps under WSL: their config must land in the Windows
-// profile, the SSH alias must be mirrored there, and the app must open on the
-// Windows desktop, with nothing written to the WSL home.
+// TestOpenDesktopAppsUseWindowsSideUnderWSL covers Claude Desktop, Codex, and
+// Orca, which run as Windows apps under WSL: the SSH alias must be mirrored to
+// the Windows profile, any app config must land there too, with nothing
+// written to the WSL home, and the app must open on the Windows desktop.
 func TestOpenDesktopAppsUseWindowsSideUnderWSL(t *testing.T) {
 	cases := []struct {
 		editor     string
@@ -640,6 +647,8 @@ func TestOpenDesktopAppsUseWindowsSideUnderWSL(t *testing.T) {
 		{"codex", filepath.Join(".codex", "config.toml"), func(data []byte) bool {
 			return bytes.Contains(data, []byte("remote_connections = true"))
 		}, "codex://"},
+		// Orca has no config of its own; it imports the mirrored SSH host.
+		{"orca", "", nil, "orca://"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.editor, func(t *testing.T) {
@@ -657,15 +666,17 @@ func TestOpenDesktopAppsUseWindowsSideUnderWSL(t *testing.T) {
 			if len(*mirrored) != 1 {
 				t.Fatalf("mirror calls = %d, want 1", len(*mirrored))
 			}
-			data, err := os.ReadFile(filepath.Join((*mirrored)[0].Home, tc.configFile))
-			if err != nil {
-				t.Fatalf("read Windows-side config: %v", err)
-			}
-			if !tc.configured(data) {
-				t.Fatalf("Windows-side %s not configured:\n%s", tc.configFile, data)
-			}
-			if _, err := os.Stat(filepath.Join(linuxHome, tc.configFile)); !os.IsNotExist(err) {
-				t.Fatalf("WSL-side %s was written (stat err %v)", tc.configFile, err)
+			if tc.configFile != "" {
+				data, err := os.ReadFile(filepath.Join((*mirrored)[0].Home, tc.configFile))
+				if err != nil {
+					t.Fatalf("read Windows-side config: %v", err)
+				}
+				if !tc.configured(data) {
+					t.Fatalf("Windows-side %s not configured:\n%s", tc.configFile, data)
+				}
+				if _, err := os.Stat(filepath.Join(linuxHome, tc.configFile)); !os.IsNotExist(err) {
+					t.Fatalf("WSL-side %s was written (stat err %v)", tc.configFile, err)
+				}
 			}
 			if len(*launched) != 1 || !reflect.DeepEqual((*launched)[0], []string{tc.url}) {
 				t.Fatalf("Windows launches = %q, want [[%s]]", *launched, tc.url)
@@ -684,6 +695,7 @@ func TestOpenDesktopAppFailsWhenWindowsSideUnreachable(t *testing.T) {
 	configFiles := map[string]string{
 		"claude": filepath.Join(".claude", "settings.json"),
 		"codex":  filepath.Join(".codex", "config.toml"),
+		"orca":   "",
 	}
 	for editor, configFile := range configFiles {
 		for _, failure := range []string{"resolve", "mirror"} {
@@ -709,9 +721,11 @@ func TestOpenDesktopAppFailsWhenWindowsSideUnreachable(t *testing.T) {
 				if err := openSandboxInEditor(cmd, editor, paths, target, ""); err == nil {
 					t.Fatal("expected the Windows-side failure to fail the command")
 				}
-				for _, home := range []string{linuxHome, windowsTarget.Home} {
-					if _, err := os.Stat(filepath.Join(home, configFile)); !os.IsNotExist(err) {
-						t.Fatalf("%s was written under %s (stat err %v)", configFile, home, err)
+				if configFile != "" {
+					for _, home := range []string{linuxHome, windowsTarget.Home} {
+						if _, err := os.Stat(filepath.Join(home, configFile)); !os.IsNotExist(err) {
+							t.Fatalf("%s was written under %s (stat err %v)", configFile, home, err)
+						}
 					}
 				}
 				if len(*opened) != 0 || len(*launched) != 0 {
