@@ -5,7 +5,7 @@ import {
   SandboxNotFoundError,
   type CommandResult,
 } from "e2b";
-import { SANDBOX_ORG_ID_LABEL } from "../../../constants";
+import { DEFAULT_HOME_DIR, SANDBOX_ORG_ID_LABEL } from "../../../constants";
 import type { SandboxCtx } from "../../../logger";
 import type { SandboxStatus } from "../../../sandbox-status";
 import type {
@@ -25,7 +25,9 @@ import type { E2bConfig } from "../config";
 import { E2bAdapter } from "./adapter";
 import {
   connectE2bSandbox,
+  E2B_RIG_USER,
   e2bApiOptions,
+  e2bCommandUser,
   getE2bSandboxDiskSizeMib,
 } from "./client";
 
@@ -42,6 +44,13 @@ export function e2bTimeoutMs(autoStopInterval?: number | null): number {
   if (autoStopInterval <= 0) return E2B_MAX_TIMEOUT_MS;
   return Math.min(autoStopInterval * 60_000, E2B_MAX_TIMEOUT_MS);
 }
+
+/**
+ * E2B's own template: Debian with a login user named `user`, which any API
+ * key can boot. A rig in an org's own E2B account boots it, since the
+ * account cannot see Amika's templates.
+ */
+export const E2B_STOCK_TEMPLATE = "base";
 
 export async function createE2bSandbox(
   ctx: SandboxCtx,
@@ -72,12 +81,38 @@ export async function createE2bSandbox(
     },
     network: { allowPublicTraffic: true },
   });
+  if (input.snapshot === E2B_STOCK_TEMPLATE) {
+    await addRigUser(sandbox);
+  }
   return {
     provider: "e2b",
     providerSandboxId: sandbox.sandboxId,
     services: input.services,
     envVars: input.envVars ?? {},
   };
+}
+
+/**
+ * Create the rig user on a sandbox of the stock template. E2B cannot name
+ * its login user at create, as Instabox can, and the runtime install uploads
+ * to the rig user's home before `amikad bootstrap` runs. On failure the
+ * sandbox is killed, so a half-made sandbox does not outlive the create.
+ *
+ * The password is `*`, which no password matches. A bare `useradd` leaves
+ * `!`, a locked account, and amikad's sshd runs without PAM, so OpenSSH
+ * refuses a locked account's key too: SSH and the web terminal would fail.
+ */
+async function addRigUser(sandbox: Sandbox): Promise<void> {
+  try {
+    await sandbox.commands.run(
+      `id -u ${E2B_RIG_USER} >/dev/null 2>&1 || ` +
+        `useradd --create-home --home-dir ${DEFAULT_HOME_DIR} --shell /bin/bash --password '*' ${E2B_RIG_USER}`,
+      { user: "root" },
+    );
+  } catch (error) {
+    await sandbox.kill().catch(() => {});
+    throw error;
+  }
 }
 
 export async function startE2bSandbox(
@@ -279,6 +314,7 @@ export async function streamE2bCommand(
 ): Promise<void> {
   const sandbox = await connectE2bSandbox(config, providerSandboxId);
   await sandbox.commands.run(command, {
+    user: E2B_RIG_USER,
     timeoutMs: 0,
     onStdout: handlers.onStdout,
     onStderr: handlers.onStderr,
@@ -295,7 +331,10 @@ export async function readE2bFile(
   let stream: ReadableStream<Uint8Array>;
   try {
     // A missing file is reported here, before any bytes stream.
-    stream = await sandbox.files.read(filePath, { format: "stream" });
+    stream = await sandbox.files.read(filePath, {
+      format: "stream",
+      user: E2B_RIG_USER,
+    });
   } catch (error) {
     if (error instanceof FileNotFoundError) return null;
     throw error;
@@ -312,7 +351,7 @@ export async function writeE2bFile(
   const sandbox = await connectE2bSandbox(config, providerSandboxId);
   const data =
     typeof content === "string" ? content : Uint8Array.from(content).buffer;
-  await sandbox.files.write(filePath, data);
+  await sandbox.files.write(filePath, data, { user: E2B_RIG_USER });
 }
 
 export async function listE2bSandboxes(
@@ -360,7 +399,7 @@ function commandOptions(opts?: ExecCommandOptions) {
   return {
     cwd: opts?.cwd,
     envs: opts?.env,
-    user: opts?.sudo ? ("root" as const) : undefined,
+    user: e2bCommandUser(opts?.sudo),
     timeoutMs: 0,
   };
 }
