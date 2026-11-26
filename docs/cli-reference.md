@@ -394,8 +394,12 @@ Windows application. The command mirrors the managed SSH config, identity,
 and host-key pins to the Windows side (`%USERPROFILE%\.ssh\amika.conf`, added
 via an `Include` line) with a `ProxyCommand` that re-enters your WSL
 distribution through `wsl.exe`, then launches the Windows editor directly
-with `--remote ssh-remote+<alias>`. This needs WSL interop (`cmd.exe`,
-`wslpath`) and `WSL_DISTRO_NAME` set (any interactive WSL shell sets it).
+with `--remote ssh-remote+<alias>`. `--app claude` and `--app codex` mirror
+the same SSH state, write their settings to the Windows profile
+(`%USERPROFILE%\.claude\settings.json` and `%USERPROFILE%\.codex\config.toml`)
+instead of the WSL home, and open the Windows app. This needs WSL interop
+(`cmd.exe`, `wslpath`) and `WSL_DISTRO_NAME` set (any interactive WSL shell
+sets it); without them these apps fail instead of configuring only the WSL side.
 
 ```bash
 amika sandbox open my-sandbox --app=cursor
