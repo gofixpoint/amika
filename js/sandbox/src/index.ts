@@ -40,6 +40,7 @@ export { E2B_STOCK_TEMPLATE } from "./providers/e2b/provider";
 export type { FreestyleConfig } from "./providers/freestyle/config";
 export type { VercelConfig } from "./providers/vercel/config";
 export type { InstaboxConfig } from "./providers/instabox/config";
+export type { BoxdConfig } from "./providers/boxd/config";
 export type { AmikaHostdConfig } from "./providers/amika-hostd/config";
 // The header that carries a host's secret key on its service routes, for
 // control-plane code that dials hostd service URLs itself.

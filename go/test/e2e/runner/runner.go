@@ -40,6 +40,7 @@ type Case struct {
 // point's -sandbox-provider validation and VarSpec's load-time key checking,
 // so a provider added in one place cannot be silently unknown in the other.
 var SupportedSandboxProviders = map[string]bool{
+	"boxd":      true,
 	"daytona":   true,
 	"e2b":       true,
 	"freestyle": true,
