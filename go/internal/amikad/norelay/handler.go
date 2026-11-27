@@ -13,9 +13,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/gofixpoint/amika/go/internal/sshresume"
 )
 
-// SSHSessionsPath is the no-relay WebSocket upgrade route.
+// SSHSessionsPath is the no-relay WebSocket upgrade route. It carries raw SSH
+// bytes, and its session ends with its WebSocket.
 const SSHSessionsPath = "/v1/ssh-sessions"
 
 const copyBufferBytes = 32 * 1024
@@ -49,8 +52,13 @@ type Dialer interface {
 
 // Config contains bounded bridge settings.
 type Config struct {
+	// MaxConnections bounds the sshd connections of both routes together. A
+	// resumable session keeps its slot while it waits for a resume.
 	MaxConnections int
 	SSHDAddress    string
+	// ResumeTiming shortens the resumable route's timers in tests. Zero
+	// fields take the design's values.
+	ResumeTiming sshresume.Timing
 	// RecheckInterval is how often an open session checks its token again.
 	// A session closes when its token no longer verifies, so rotating the
 	// connect token also ends the sessions that the old token opened.
@@ -61,11 +69,17 @@ type Config struct {
 type Dependencies struct {
 	Verifier TokenVerifier
 	Upgrader Upgrader
-	Dialer   Dialer
-	Logger   *slog.Logger
+	// FrameUpgrader serves ResumableSSHSessionsPath. Without it that route
+	// answers 503.
+	FrameUpgrader FrameUpgrader
+	Dialer        Dialer
+	Logger        *slog.Logger
+	// Clock drives the resumable route's timers. Nil is the system clock.
+	Clock sshresume.Clock
 }
 
-// Handler is a fail-closed placeholder for the no-relay route.
+// Handler serves the no-relay routes: SSHSessionsPath and
+// ResumableSSHSessionsPath.
 type Handler struct {
 	config    Config
 	deps      Dependencies
@@ -73,6 +87,9 @@ type Handler struct {
 	active    atomic.Int64
 	streamsMu sync.Mutex
 	streams   map[Stream]struct{}
+	// pendingHellos caps the resumable transports that wait for HELLO.
+	pendingHellos chan struct{}
+	resume        *resumeRegistry
 }
 
 // DefaultMaxConnections is the connection cap used when Config.MaxConnections
@@ -97,19 +114,26 @@ func NewHandler(config Config, deps Dependencies) *Handler {
 	if deps.Logger == nil {
 		deps.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	if deps.Clock == nil {
+		deps.Clock = sshresume.SystemClock{}
+	}
+	config.ResumeTiming = config.ResumeTiming.WithDefaults()
 	return &Handler{
-		config:  config,
-		deps:    deps,
-		slots:   make(chan struct{}, config.MaxConnections),
-		streams: make(map[Stream]struct{}),
+		config:        config,
+		deps:          deps,
+		slots:         make(chan struct{}, config.MaxConnections),
+		streams:       make(map[Stream]struct{}),
+		pendingHellos: make(chan struct{}, maxPendingHellos),
+		resume:        newResumeRegistry(),
 	}
 }
 
-// ActiveConnections returns the number of upgraded bridge sessions currently
-// holding a capacity slot.
+// ActiveConnections returns the number of bridge sessions currently holding a
+// capacity slot, attached or waiting for a resume.
 func (h *Handler) ActiveConnections() int64 { return h.active.Load() }
 
-// Close cancels all active bridge I/O during daemon shutdown.
+// Close cancels all active bridge I/O during daemon shutdown. Each resumable
+// session gets ABORT on its transport, and its sshd connection closes.
 func (h *Handler) Close() {
 	h.streamsMu.Lock()
 	streams := make([]Stream, 0, len(h.streams))
@@ -120,12 +144,18 @@ func (h *Handler) Close() {
 	for _, stream := range streams {
 		_ = stream.Close()
 	}
+	h.closeResumable()
 }
 
-// ServeHTTP authenticates, enforces capacity, and bridges one opaque stream.
+// ServeHTTP authenticates the caller and serves the route its path names.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if request.URL.Path != SSHSessionsPath {
+	refusal := "ssh_bridge_refused"
+	switch request.URL.Path {
+	case SSHSessionsPath:
+	case ResumableSSHSessionsPath:
+		refusal = "ssh_resume_refused"
+	default:
 		http.NotFound(w, request)
 		return
 	}
@@ -134,19 +164,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h.deps.Verifier == nil || h.deps.Upgrader == nil || h.deps.Dialer == nil {
-		h.log("ssh_bridge_refused", slog.String("reason", "not_configured"))
+	upgraderMissing := h.deps.Upgrader == nil
+	if request.URL.Path == ResumableSSHSessionsPath {
+		upgraderMissing = h.deps.FrameUpgrader == nil
+	}
+	if h.deps.Verifier == nil || upgraderMissing || h.deps.Dialer == nil {
+		h.log(refusal, slog.String("reason", "not_configured"))
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	token, ok := requestBearerToken(request)
 	if !ok || !h.deps.Verifier.Verify(token) {
-		h.log("ssh_bridge_refused", slog.String("reason", "unauthorized"))
+		h.log(refusal, slog.String("reason", "unauthorized"))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
+	if request.URL.Path == ResumableSSHSessionsPath {
+		h.serveResumable(w, request, token)
+		return
+	}
+	h.serveRaw(w, request, token)
+}
+
+// serveRaw bridges one opaque stream for SSHSessionsPath.
+func (h *Handler) serveRaw(w http.ResponseWriter, request *http.Request, token string) {
 	select {
 	case h.slots <- struct{}{}:
 		h.active.Add(1)
@@ -184,7 +227,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 
 	sessionID := newSessionID()
 	startedAt := time.Now()
-	h.log("ssh_bridge_open", slog.String("session_id", sessionID))
+	h.log("ssh_bridge_open", slog.String("session_id", sessionID), slog.String("mode", "raw"))
 	stopRecheck := h.closeWhenRevoked(token, sshdStream, websocketStream)
 	fromClient, fromSSHD, closeReason := bridge(websocketStream, sshdStream)
 	if stopRecheck() {
@@ -208,6 +251,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 // that wait. The returned function stops the check and reports whether the
 // check closed the session.
 func (h *Handler) closeWhenRevoked(token string, sshd, websocket Stream) func() bool {
+	return h.watchToken(token, func() {
+		_ = sshd.Close()
+		_ = websocket.Close()
+	})
+}
+
+// watchToken verifies token again every RecheckInterval, and calls revoke
+// once when it no longer verifies. The returned function stops the check
+// and reports whether revoke ran.
+func (h *Handler) watchToken(token string, revoke func()) func() bool {
 	done := make(chan struct{})
 	finished := make(chan struct{})
 	var revoked atomic.Bool
@@ -224,8 +277,7 @@ func (h *Handler) closeWhenRevoked(token string, sshd, websocket Stream) func() 
 					continue
 				}
 				revoked.Store(true)
-				_ = sshd.Close()
-				_ = websocket.Close()
+				revoke()
 				return
 			}
 		}

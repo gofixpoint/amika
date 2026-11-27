@@ -2,12 +2,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/gofixpoint/amika/go/internal/buildmeta"
 	"github.com/gofixpoint/amika/go/internal/cliflags"
 	"github.com/gofixpoint/amika/go/internal/output"
+	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 )
 
@@ -58,6 +60,17 @@ func versionString() string {
 func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
+}
+
+// exitCode is 1, or the SSH stdio proxy's status: it exits 255 when a
+// session it could not resume ends. Only the proxy's error counts, so a
+// wrapped subprocess failure, such as an editor's, still exits 1.
+func exitCode(err error) int {
+	var proxyExit *ssh.ProxyExitError
+	if errors.As(err, &proxyExit) {
+		return proxyExit.ExitCode()
+	}
+	return 1
 }
