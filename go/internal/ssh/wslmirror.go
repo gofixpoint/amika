@@ -141,7 +141,14 @@ func mirrorStateToWindowsLocked(paths basedir.Paths, state HostsState, target ws
 		return err
 	}
 	if identityCopied {
-		if err := runIcacls(target.SSHDirWindows+"\\"+basedir.SSHIdentityName(), target.User); err != nil {
+		// Grant by SID, in the `*S-1-...` form icacls takes, so no account
+		// name has to resolve. The lookup waits until an identity was copied,
+		// keeping whoami.exe off mirrors that have no identity to restrict.
+		sid, err := windowsUserSID()
+		if err != nil {
+			return fmt.Errorf("restrict mirrored identity permissions: %w", err)
+		}
+		if err := runIcacls(target.SSHDirWindows+"\\"+basedir.SSHIdentityName(), "*"+sid); err != nil {
 			return fmt.Errorf("restrict mirrored identity permissions: %w", err)
 		}
 	}
@@ -149,11 +156,12 @@ func mirrorStateToWindowsLocked(paths basedir.Paths, state HostsState, target ws
 	return mirrorKnownHostsFile(knownHostsPath, filepath.Join(target.SSHDir, basedir.SSHKnownHostsName()))
 }
 
-// isWSL and resolveWSLTarget are seams over WSL detection, so a test can drive
-// both sides of the mirrored pin store's branch from any platform.
+// isWSL, resolveWSLTarget, and windowsUserSID are seams over WSL interop, so a
+// test can drive the mirror from any platform.
 var (
 	isWSL            = wslbridge.IsWSL
 	resolveWSLTarget = wslbridge.ResolveTarget
+	windowsUserSID   = wslbridge.UserSID
 )
 
 // windowsMirroredPins wraps a pin store so every pin it accepts is republished
