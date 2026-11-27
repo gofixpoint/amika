@@ -42,6 +42,7 @@ import {
   getDaytonaDockerRegistry,
   listDaytonaDockerRegistries,
 } from "./internal/docker-registry";
+import { listDaytonaAccountSizes } from "./internal/account";
 
 // Provider-root re-exports of the server-side surface the registry wires up.
 // The implementations live in `internal/`; routing them through `provider.ts`
@@ -122,6 +123,8 @@ export default defineProvider(daytonaCapabilities, (config: DaytonaConfig) => ({
     },
     isEnvScrubbable: (id) => isSandboxEnvScrubbable(config, id),
   },
+
+  account: { listSizes: () => listDaytonaAccountSizes(config) },
 
   dockerRegistries: {
     createRegistry: (input) => createDaytonaDockerRegistry(config, input),

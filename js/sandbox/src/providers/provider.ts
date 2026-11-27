@@ -543,13 +543,30 @@ export interface DockerRegistryCapability {
   deleteRegistry(registryId: string): Promise<void>;
 }
 
+/** One size a new sandbox may have with the credentials in use. */
+export interface AccountSize extends SandboxResources {
+  /**
+   * The provider image that boots a sandbox of this size, where the image
+   * fixes the size (Daytona: a create from a snapshot cannot set
+   * resources). Absent where a create sets the size itself.
+   */
+  image?: string;
+  /**
+   * Who made `image`: the provider, which publishes it to every account,
+   * or the account itself. Absent when there is no `image`.
+   */
+  imageOwner?: "provider" | "account";
+}
+
 /** What the credentials in use may do at the provider's account level. */
 export interface AccountCapability {
   /**
    * The sizes a new sandbox may have with these credentials, the size a
-   * create naming none gets first. Never empty.
+   * create naming none gets first. Empty only when the account can boot
+   * nothing, for example a Daytona org with no usable snapshot of its
+   * sandbox class.
    */
-  listSizes(): Promise<SandboxResources[]>;
+  listSizes(): Promise<AccountSize[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1021,9 +1038,9 @@ export interface AccountNamespace {
   /**
    * The sizes a new sandbox may have with these credentials, as the
    * provider reports them now. The first is the size a create naming none
-   * gets. Never empty.
+   * gets. Empty only when the account can boot nothing.
    */
-  sizes(): Promise<readonly SandboxResources[]>;
+  sizes(): Promise<readonly AccountSize[]>;
 }
 
 /**
