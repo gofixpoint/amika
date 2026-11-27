@@ -48,6 +48,7 @@ import {
   type ServiceRegistry,
 } from "./internal/service-registry.js";
 import { namedRoute, type NamedRoute } from "./internal/tunnel-rig-route.js";
+import { createRigFetch } from "./internal/rig-fetch.js";
 
 export interface AppConfig {
   /**
@@ -104,7 +105,10 @@ export interface AppDeps {
   registry?: ServiceRegistry;
   /** This host's snapshots; without it, rigs cannot be snapshotted. */
   snapshots?: SnapshotSupport;
-  /** Reaches a machine's published guest ports for service routes. */
+  /**
+   * Reaches a machine's published guest ports for service routes. The
+   * default is `createRigFetch`, over `node:http`.
+   */
   fetch?: typeof fetch;
   /**
    * hostd's own throwaway machines (`prepull.ts`), left out of the machine
@@ -142,7 +146,7 @@ export function createApp(
   {
     registry = memoryServiceRegistry(),
     snapshots,
-    fetch: fetcher = fetch,
+    fetch: fetcher = createRigFetch(),
     hiddenMachines = () => new Set(),
     pullingImages = () => new Set(),
     buildingLumeImages = () => new Set(),
