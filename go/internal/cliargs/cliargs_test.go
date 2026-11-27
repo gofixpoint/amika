@@ -128,6 +128,26 @@ func TestFirstOperand(t *testing.T) {
 	}
 }
 
+func TestHasShortOption(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"-v"}, true},
+		{[]string{"-Nvvv"}, true},
+		{[]string{"-i", "private-key", "-v"}, true},
+		{[]string{"-oLogLevel=verbose"}, false},
+		{[]string{"-o", "-v"}, false},
+		{[]string{"-Nl", "-v"}, false},
+		{[]string{"--", "-v"}, false},
+		{nil, false},
+	} {
+		if got := HasShortOption(tc.args, 'v', SSHArgLetters); got != tc.want {
+			t.Errorf("HasShortOption(%q) = %v, want %v", tc.args, got, tc.want)
+		}
+	}
+}
+
 func TestHasHelpFlag(t *testing.T) {
 	tests := []struct {
 		name string

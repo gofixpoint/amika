@@ -8,14 +8,23 @@ package sandboxcmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/gofixpoint/amika/go/internal/amikanet"
 	"github.com/gofixpoint/amika/go/internal/apiclient"
 	"github.com/gofixpoint/amika/go/internal/basedir"
+	"github.com/gofixpoint/amika/go/internal/filelock"
 	"github.com/gofixpoint/amika/go/internal/ssh"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -30,6 +39,10 @@ type sshV2Harness struct {
 	argv  []string
 	alias string
 	ran   bool
+	// creator is what prepareSessionTarget received, and client the API
+	// client behind it.
+	creator ssh.SessionCreator
+	client  *stubV2SSHClient
 }
 
 // sandboxSSHV2Cmd is a package-level singleton and New() may be called only
@@ -51,6 +64,7 @@ func sshV2TestTree() (*cobra.Command, *cobra.Command) {
 		// Mirrors the real tree's hidden registration of the retired --local.
 		sshV2Parent.PersistentFlags().Bool("local", false, "Removed; rigs are always remote")
 		sshV2Parent.PersistentFlags().MarkHidden("local")
+		sshV2Parent.PersistentFlags().Bool("new-device-key", false, "Replace the device key")
 		sshV2Root.AddCommand(sshV2Parent)
 	})
 	return sshV2Root, sshV2Parent
@@ -66,6 +80,7 @@ func newSSHV2Harness(t *testing.T, procArgs []string) (*cobra.Command, *sshV2Har
 	// AMIKA_API_KEY short-circuits RequireAuth, so the command reaches the
 	// argv-building step without a login.
 	t.Setenv("AMIKA_API_KEY", "test-key")
+	t.Setenv("AMIKA_NET_AGENT_DIR", filepath.Join(t.TempDir(), "agent"))
 
 	prevArgs, prevExec, prevClient, prevPrepare := osArgs, execSessionSSH, newSSHV2Client, prepareSessionTarget
 	osArgs = func() []string { return procArgs }
@@ -73,10 +88,10 @@ func newSSHV2Harness(t *testing.T, procArgs []string) (*cobra.Command, *sshV2Har
 		h.ran, h.alias, h.argv = true, alias, argv
 		return nil
 	}
-	newSSHV2Client = func(string) (sshV2Client, error) {
-		return &stubV2SSHClient{sandbox: &apiclient.RemoteSandbox{Name: "my-box", ID: "sb_abc"}}, nil
-	}
-	prepareSessionTarget = func(basedir.Paths, ssh.SessionCreator, string, string) (string, error) {
+	h.client = &stubV2SSHClient{sandbox: &apiclient.RemoteSandbox{Name: "my-box", ID: "sb_abc"}}
+	newSSHV2Client = func(string) (sshV2Client, error) { return h.client, nil }
+	prepareSessionTarget = func(_ basedir.Paths, creator ssh.SessionCreator, _, _ string) (string, error) {
+		h.creator = creator
 		return testV2Alias, nil
 	}
 	t.Cleanup(func() {
@@ -94,7 +109,7 @@ func newSSHV2Harness(t *testing.T, procArgs []string) (*cobra.Command, *sshV2Har
 	// the command's parse and its reads go through Flags(), so resetting there
 	// is what the command actually observes.
 	_ = sandboxSSHV2Cmd.InheritedFlags()
-	for _, name := range []string{"local", "remote", "remote-target", "output"} {
+	for _, name := range []string{"local", "remote", "remote-target", "output", "transport", "new-device-key"} {
 		resetSSHV2Flag(t, sandboxSSHV2Cmd.Flags().Lookup(name))
 	}
 
@@ -104,6 +119,249 @@ func newSSHV2Harness(t *testing.T, procArgs []string) (*cobra.Command, *sshV2Har
 	// procArgs carries the binary path at index 0; Cobra wants only the rest.
 	root.SetArgs(procArgs[1:])
 	return root, h, out
+}
+
+func TestSSHV2VerbosePassesToTheProxy(t *testing.T) {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMIKA_BINARY_PATH", binary)
+	for _, option := range []string{"-v", "-Nvvv"} {
+		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", option, "my-box"})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"-o", "ProxyCommand=" + binary + " plumbing ssh-stdio-proxy --verbose %h", option, testV2Alias}
+		if !reflect.DeepEqual(h.argv, want) {
+			t.Fatalf("ssh argv = %q, want %q", h.argv, want)
+		}
+	}
+}
+
+func TestSSHV2NewDeviceKeyIsExplicit(t *testing.T) {
+	previous, previousStop := makeNewDeviceKey, stopDeviceAgent
+	t.Cleanup(func() { makeNewDeviceKey, stopDeviceAgent = previous, previousStop })
+	calls := 0
+	var steps []string
+	stopDeviceAgent = func(context.Context) error { steps = append(steps, "stop"); return nil }
+	makeNewDeviceKey = func(io.Writer) error { calls++; steps = append(steps, "replace"); return nil }
+	for _, replace := range []bool{false, true} {
+		args := []string{"amika", "sandbox"}
+		if replace {
+			args = append(args, "--new-device-key")
+		}
+		args = append(args, "ssh", "my-box")
+		root, h, _ := newSSHV2Harness(t, args)
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(h.argv, []string{testV2Alias}) {
+			t.Fatalf("ssh argv = %q", h.argv)
+		}
+		wantCalls := 0
+		if replace {
+			wantCalls = 1
+		}
+		if calls != wantCalls {
+			t.Fatalf("key replacements = %d, want %d", calls, wantCalls)
+		}
+	}
+	if !reflect.DeepEqual(steps, []string{"stop", "replace"}) {
+		t.Fatalf("key replacement steps = %q", steps)
+	}
+}
+
+func TestSSHV2LeavesTheKeyWhenTheAgentCannotStop(t *testing.T) {
+	previous, previousStop := makeNewDeviceKey, stopDeviceAgent
+	t.Cleanup(func() { makeNewDeviceKey, stopDeviceAgent = previous, previousStop })
+	stopErr := errors.New("agent did not stop")
+	stopDeviceAgent = func(context.Context) error { return stopErr }
+	makeNewDeviceKey = func(io.Writer) error { t.Fatal("replaced the key after agent stop failed"); return nil }
+	root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "--new-device-key", "ssh", "my-box"})
+	if err := root.Execute(); !errors.Is(err, stopErr) || h.ran {
+		t.Fatalf("err = %v, ran SSH = %v", err, h.ran)
+	}
+}
+
+func TestStopDeviceAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no agent role")
+	}
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	argv := filepath.Join(dir, "argv")
+	t.Setenv("TEST_AGENT_ARGV", argv)
+	binary := filepath.Join(dir, "amika-net")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TEST_AGENT_ARGV\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopDeviceAgent(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argv)
+	if err != nil || string(args) != "agent\nstop\n" {
+		t.Fatalf("agent argv = %q, err = %v", args, err)
+	}
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 7\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopDeviceAgent(context.Background()); err == nil {
+		t.Fatal("ignored an agent stop failure")
+	}
+	if err := os.Remove(binary); err != nil {
+		t.Fatal(err)
+	}
+	if err := stopDeviceAgent(context.Background()); err != nil {
+		t.Fatalf("a missing amika-net should leave the new key ready for later: %v", err)
+	}
+}
+
+func TestReplaceDeviceKeyExcludesConcurrentAgentStartup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no agent")
+	}
+	dir := t.TempDir()
+	t.Setenv("AMIKA_NET_AGENT_DIR", filepath.Join(dir, "agent"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	keyFile, err := amikanet.DeviceKeyFile(basedir.New(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := amikanet.LoadOrCreateDeviceKey(keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	seen := make(chan string, 1)
+	previous := stopDeviceAgent
+	t.Cleanup(func() { stopDeviceAgent = previous })
+	stopDeviceAgent = func(context.Context) error {
+		lockPath := filepath.Join(dir, "agent", "agent.lock")
+		competingCtx, competingCancel := context.WithTimeout(ctx, 50*time.Millisecond)
+		defer competingCancel()
+		lock, err := filelock.Acquire(competingCtx, lockPath)
+		if err == nil {
+			_ = lock.Close()
+			return errors.New("agent startup entered the key replacement gap")
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		go func() {
+			lock, err := filelock.Acquire(ctx, lockPath)
+			if err != nil {
+				seen <- "lock failed"
+				return
+			}
+			defer lock.Close()
+			key, err := amikanet.LoadOrCreateDeviceKey(keyFile)
+			if err != nil {
+				seen <- "key load failed"
+				return
+			}
+			seen <- amikanet.EndpointID(key)
+		}()
+		return nil
+	}
+	if err := replaceDeviceKey(ctx, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	current, err := amikanet.LoadOrCreateDeviceKey(keyFile)
+	if err != nil || current.Equal(old) {
+		t.Fatal("the device key was not replaced")
+	}
+	select {
+	case endpoint := <-seen:
+		if endpoint != amikanet.EndpointID(current) {
+			t.Fatal("the concurrent agent did not load the replacement key")
+		}
+	case <-ctx.Done():
+		t.Fatal("the agent-start lock was not released after replacement")
+	}
+}
+
+func TestReplaceDeviceKeyBoundsItsLockWait(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no agent")
+	}
+	dir := filepath.Join(t.TempDir(), "agent")
+	t.Setenv("AMIKA_NET_AGENT_DIR", dir)
+	if err := ensurePrivateAgentDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := filelock.Acquire(context.Background(), filepath.Join(dir, "agent.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	previous, previousStop := makeNewDeviceKey, stopDeviceAgent
+	t.Cleanup(func() { makeNewDeviceKey, stopDeviceAgent = previous, previousStop })
+	stopDeviceAgent = func(context.Context) error { t.Fatal("stopped the agent without the lock"); return nil }
+	makeNewDeviceKey = func(io.Writer) error { t.Fatal("replaced the key without the lock"); return nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := replaceDeviceKey(ctx, io.Discard); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lock wait error = %v", err)
+	}
+}
+
+func TestDeviceAgentDirectorySelection(t *testing.T) {
+	for _, tc := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{map[string]string{"AMIKA_NET_AGENT_DIR": "agent", "XDG_RUNTIME_DIR": "/run/u"}, "agent"},
+		{map[string]string{"AMIKA_NET_AGENT_DIR": ""}, "."},
+		{map[string]string{"XDG_RUNTIME_DIR": "/run/u", "XDG_CACHE_HOME": "/cache"}, filepath.Join("/run/u", "amika-net")},
+		{map[string]string{"XDG_RUNTIME_DIR": "", "XDG_CACHE_HOME": "/cache", "HOME": "/home/u"}, filepath.Join("/cache", "amika", "amika-net")},
+		{map[string]string{"XDG_CACHE_HOME": "", "HOME": "/home/u"}, filepath.Join("/home/u", ".cache", "amika", "amika-net")},
+	} {
+		got, err := deviceAgentDir(func(key string) (string, bool) { v, set := tc.env[key]; return v, set })
+		want, _ := filepath.Abs(tc.want)
+		absolute, _ := filepath.Abs(got)
+		if err != nil || absolute != want {
+			t.Fatalf("env = %v: directory = %q, err = %v, want %q", tc.env, got, err, want)
+		}
+	}
+	if _, err := deviceAgentDir(func(string) (string, bool) { return "", false }); err == nil {
+		t.Fatal("accepted an unset HOME without another agent directory")
+	}
+}
+
+func TestAgentDirectoryMustBePrivateAndOwned(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no agent")
+	}
+	dir := t.TempDir()
+	private := filepath.Join(dir, "private")
+	if err := ensurePrivateAgentDir(private); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(dir, "shared")
+	if err := os.Mkdir(shared, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateAgentDir(shared); err == nil {
+		t.Fatal("accepted an agent directory another user can open")
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(private, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateAgentDir(link); err == nil {
+		t.Fatal("accepted a symlink as the agent directory")
+	}
+	if os.Geteuid() != 0 {
+		root, err := os.Stat("/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := checkAgentDirectoryOwner("/", root); err == nil {
+			t.Fatal("accepted an agent directory owned by root")
+		}
+	}
 }
 
 // resetSSHV2Flag restores a flag to its declared default and clears Changed.
@@ -349,4 +607,52 @@ func TestSSHV2ForwardsRemoteCommandLocalFlag(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The hidden --transport goes into the session's own ProxyCommand on the ssh
+// command line, and the create request at prepare time asks for that
+// transport alone, so one the server cannot give fails before ssh starts.
+func TestSSHV2TransportFlag(t *testing.T) {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AMIKA_BINARY_PATH", binary)
+	for _, transport := range []string{"iroh", "direct_ws"} {
+		t.Run(transport, func(t *testing.T) {
+			root, h, out := newSSHV2Harness(t, []string{"amika", "sandbox", "--transport", transport, "ssh", "-N", "my-box"})
+			if err := root.Execute(); err != nil {
+				t.Fatalf("Execute: %v (output %q)", err, out.String())
+			}
+			wantArgv := []string{"-o", "ProxyCommand=" + binary + " plumbing ssh-stdio-proxy --transport " + transport + " %h", "-N", testV2Alias}
+			if !reflect.DeepEqual(h.argv, wantArgv) {
+				t.Fatalf("ssh argv = %#v, want %#v", h.argv, wantArgv)
+			}
+			_, _ = h.creator.CreateSSHSession("sb_abc", nil)
+			want := []apiclient.SSHSessionTransport{apiclient.SSHSessionTransport(transport)}
+			if !reflect.DeepEqual(h.client.transports, want) {
+				t.Fatalf("create request transports = %v, want %v", h.client.transports, want)
+			}
+		})
+	}
+
+	t.Run("no flag keeps the managed ProxyCommand", func(t *testing.T) {
+		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "ssh", "my-box"})
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(h.argv, []string{testV2Alias}) {
+			t.Fatalf("ssh argv = %#v", h.argv)
+		}
+	})
+
+	t.Run("unknown transport", func(t *testing.T) {
+		root, h, _ := newSSHV2Harness(t, []string{"amika", "sandbox", "--transport", "tunnel", "ssh", "my-box"})
+		if err := root.Execute(); err == nil || !strings.Contains(err.Error(), "unknown --transport") {
+			t.Fatalf("err = %v", err)
+		}
+		if h.ran {
+			t.Fatal("ssh ran")
+		}
+	})
 }
