@@ -17,7 +17,7 @@
  *   login itself runs on two endpoints the server mounts: `startLogin` and
  *   `finishLogin`.
  * - A request the server names (`GatewayRequest.named`): one that reached
- *   a service at its own hostname, `<service>--<rig>.r.<org>.o.<zone>`.
+ *   a service at its own hostname, `s-<service>--<rig>--<org>.<zone>`.
  *   Every path on that origin is the service's, but for the two login
  *   endpoints. It takes a browser session for that origin, as a preview
  *   does, and nothing else: no hop in front of it passes a caller's

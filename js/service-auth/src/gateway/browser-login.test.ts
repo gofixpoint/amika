@@ -256,7 +256,7 @@ describe("previews", () => {
 });
 
 describe("a request named by its hostname", () => {
-  const NAMED_ORIGIN = "https://web--demo.r.acme.o.amika.test";
+  const NAMED_ORIGIN = "https://s-web--demo--acme.amika.test";
   const NAMED = { machine: "demo", service: "web" };
 
   /** A request that reached the service at its own name. */
@@ -304,7 +304,7 @@ describe("a request named by its hostname", () => {
       named("/", {
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-origin",
-        Cookie: await session("https://api--demo.r.acme.o.amika.test"),
+        Cookie: await session("https://s-api--demo--acme.amika.test"),
       }),
     );
     expect(decision).toMatchObject({ kind: "refuse", status: 401 });
@@ -334,9 +334,10 @@ describe("a request named by its hostname", () => {
         { upgrade: true },
       );
     expect(await upgrade(NAMED_ORIGIN)).toMatchObject({ kind: "forward" });
-    expect(await upgrade("https://evil--x.r.other.o.amika.test")).toMatchObject(
-      { kind: "refuse", status: 403 },
-    );
+    expect(await upgrade("https://s-evil--x--other.amika.test")).toMatchObject({
+      kind: "refuse",
+      status: 403,
+    });
   });
 
   it("takes no host key or service token: no hop passes them to a name", async () => {
@@ -392,7 +393,7 @@ describe("a request named by its hostname", () => {
     const amikad = (headers: Record<string, string>) =>
       gateway.authorize({
         ...request("/v1/exec", headers, {
-          origin: "https://amikad--demo.r.acme.o.amika.test",
+          origin: "https://s-amikad--demo--acme.amika.test",
         }),
         named: { machine: "demo", service: "amikad" },
       });
@@ -400,7 +401,7 @@ describe("a request named by its hostname", () => {
     expect(
       await amikad({
         ...PAGE_LOAD,
-        Cookie: await session("https://amikad--demo.r.acme.o.amika.test"),
+        Cookie: await session("https://s-amikad--demo--acme.amika.test"),
       }),
     ).toMatchObject({ kind: "refuse", status: 404 });
     // Not sent to log in either: there is nothing to log in to.
@@ -427,7 +428,7 @@ describe("a request named by its hostname", () => {
       ...request(
         path,
         { Connection: "Upgrade", Upgrade: "websocket", ...headers },
-        { method, origin: "https://amikad--demo.r.acme.o.amika.test" },
+        { method, origin: "https://s-amikad--demo--acme.amika.test" },
       ),
       named: { machine: "demo", service: "amikad" },
     });
