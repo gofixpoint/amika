@@ -218,7 +218,9 @@ export async function startBoxdSandbox(
  * Power a machine off. Its disk stays; memory and programs do not. boxd's
  * stop kills the VM with no guest shutdown, so recent writes still in the
  * guest's page cache would be lost: a running machine gets a best-effort
- * `sync` first. A failed or slow `sync` does not block the stop.
+ * `sync` first. A sleeping machine is woken and, as on start, waited on
+ * until it can run commands, so the `sync` does not race the wake. A
+ * failed or slow wait or `sync` does not block the stop.
  */
 export async function stopBoxdSandbox(
   config: BoxdConfig,
@@ -229,8 +231,16 @@ export async function stopBoxdSandbox(
   if (machine.status === "stopped") return;
   let running = machine.status === "running";
   if (machine.status === "suspended" || machine.status === "hibernated") {
-    // boxd cannot stop a sleeping machine; wake it first.
+    // boxd cannot stop a sleeping machine; wake it first. `wake` can
+    // return before the guest runs commands, so wait as start does.
     await boxd.machines.wake(machineId);
+    try {
+      await boxd.machines.waitUntilReady(machineId, {
+        timeout: STOP_SYNC_TIMEOUT_MS,
+      });
+    } catch {
+      // Not ready in time: the flush is best effort, and the stop runs.
+    }
     running = true;
   }
   if (running) {

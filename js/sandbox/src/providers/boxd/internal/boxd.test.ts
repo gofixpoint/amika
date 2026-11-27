@@ -135,6 +135,33 @@ describe("run state", () => {
     expect(order).toEqual(["sync", "stop"]);
   });
 
+  it("waits for a woken machine to be ready before flushing it", async () => {
+    machines.get.mockResolvedValue({ status: "suspended" });
+    const order: string[] = [];
+    machines.wake.mockImplementation(async () => {
+      order.push("wake");
+    });
+    machines.waitUntilReady.mockImplementation(async () => {
+      order.push("ready");
+    });
+    machines.exec.mockImplementation(async () => {
+      order.push("sync");
+      return { stdout: "", stderr: "", exitCode: 0 };
+    });
+    machines.stop.mockImplementation(async () => {
+      order.push("stop");
+    });
+    await stopBoxdSandbox(CONFIG, "vm-1");
+    expect(order).toEqual(["wake", "ready", "sync", "stop"]);
+  });
+
+  it("stops a woken machine that never becomes ready", async () => {
+    machines.get.mockResolvedValue({ status: "hibernated" });
+    machines.waitUntilReady.mockRejectedValueOnce(new Error("not ready"));
+    await stopBoxdSandbox(CONFIG, "vm-1");
+    expect(machines.stop).toHaveBeenCalledWith("vm-1");
+  });
+
   it("stops even when the flush fails", async () => {
     machines.get.mockResolvedValue({ status: "running" });
     machines.exec.mockRejectedValue(new Error("exec timed out"));
