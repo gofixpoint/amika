@@ -7,7 +7,7 @@
  */
 import { EventEmitter, once } from "node:events";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo } from "node:net";
 import { WebSocket as WebSocketClient, type WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
 import {
@@ -96,6 +96,134 @@ describe("a gateway that refuses the upgrade", () => {
       // `ws` emits `error` and then `close` on a later tick. An `error`
       // with no listener throws there, and `close` never comes.
       await closed;
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe("the v3 offer and the resume handshake", () => {
+  const target = {
+    gatewayUrl: "wss://gateway.amika.test/v2/host-tunnel",
+    hostId: "host-1",
+    credential: "cred-1",
+    generation: 1,
+  };
+
+  /** A socket that opens with `protocol` and a `101` carrying `headers`. */
+  function opening(protocol: string, headers: Record<string, string> = {}) {
+    let sent: ConnectOptions | undefined;
+    const socket = Object.assign(new EventEmitter(), {
+      protocol,
+      close: () => {},
+      paused: false,
+      pause() {
+        this.paused = true;
+      },
+    });
+    const connect = (_url: string, options: ConnectOptions) => {
+      sent = options;
+      setImmediate(() => {
+        socket.emit("upgrade", { headers });
+        socket.emit("open");
+      });
+      return socket as unknown as WebSocket;
+    };
+    return { connect, sent: () => sent };
+  }
+
+  it("offers v2 alone by default, and sends no resume headers", async () => {
+    const socket = opening(TUNNEL_SUBPROTOCOL);
+    const dialed = await dialTunnel(target, {
+      handshakeTimeoutMs: 1_000,
+      userAgent: "amika-hostd/test",
+      connect: socket.connect,
+    });
+    expect(socket.sent()?.protocols).toEqual([TUNNEL_SUBPROTOCOL]);
+    const headers = socket.sent()?.headers as Record<string, string>;
+    expect(headers["x-amika-tunnel-session"]).toBeUndefined();
+    expect(headers["x-amika-tunnel-received"]).toBeUndefined();
+    expect(dialed.protocol).toBe(TUNNEL_SUBPROTOCOL);
+    // Paused until a link takes it, so no frame is emitted unheard.
+    expect((dialed.ws as unknown as { paused: boolean }).paused).toBe(true);
+  });
+
+  it("offers v3 first, names the session to resume, and reads the answer", async () => {
+    const socket = opening("amika.tunnel.v3", {
+      "x-amika-connection-id": "conn-1",
+      "x-amika-tunnel-received": "42",
+    });
+    const dialed = await dialTunnel(target, {
+      handshakeTimeoutMs: 1_000,
+      userAgent: "amika-hostd/test",
+      protocols: ["amika.tunnel.v3", TUNNEL_SUBPROTOCOL],
+      resume: { connectionId: "conn-1", received: 17 },
+      connect: socket.connect,
+    });
+    expect(socket.sent()?.protocols).toEqual([
+      "amika.tunnel.v3",
+      TUNNEL_SUBPROTOCOL,
+    ]);
+    const headers = socket.sent()?.headers as Record<string, string>;
+    expect(headers["x-amika-tunnel-session"]).toBe("conn-1");
+    expect(headers["x-amika-tunnel-received"]).toBe("17");
+    expect(dialed).toMatchObject({
+      protocol: "amika.tunnel.v3",
+      connectionId: "conn-1",
+      received: "42",
+    });
+  });
+
+  it("accepts v2 from a relay that does not speak v3", async () => {
+    const socket = opening(TUNNEL_SUBPROTOCOL, {
+      "x-amika-connection-id": "conn-9",
+    });
+    const dialed = await dialTunnel(target, {
+      handshakeTimeoutMs: 1_000,
+      userAgent: "amika-hostd/test",
+      protocols: ["amika.tunnel.v3", TUNNEL_SUBPROTOCOL],
+      resume: { connectionId: "conn-1", received: 17 },
+      connect: socket.connect,
+    });
+    expect(dialed.protocol).toBe(TUNNEL_SUBPROTOCOL);
+    expect(dialed.received).toBeUndefined();
+  });
+
+  it("refuses a subprotocol it did not offer", async () => {
+    const socket = opening("amika.tunnel.v3");
+    await expect(
+      dialTunnel(target, {
+        handshakeTimeoutMs: 1_000,
+        userAgent: "amika-hostd/test",
+        connect: socket.connect,
+      }),
+    ).rejects.toBeInstanceOf(TunnelUnavailable);
+  });
+});
+
+describe("a dial the network holds", () => {
+  it("gives up within its handshake timeout", async () => {
+    // Accepts the connection and never answers, as a path that dropped
+    // the handshake's packets looks from here.
+    const server = createNetServer(() => {});
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = server.address() as AddressInfo;
+    const started = Date.now();
+    try {
+      await expect(
+        dialTunnel(
+          {
+            gatewayUrl: `ws://127.0.0.1:${port}/v2/host-tunnel`,
+            hostId: "host-1",
+            credential: "cred-1",
+            generation: 1,
+          },
+          { handshakeTimeoutMs: 200, userAgent: "amika-hostd/test" },
+        ),
+      ).rejects.toBeInstanceOf(TunnelUnavailable);
+      expect(Date.now() - started).toBeLessThan(2_000);
     } finally {
       server.close();
     }

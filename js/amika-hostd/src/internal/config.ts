@@ -105,6 +105,13 @@ export interface HostdConfig {
    */
   tunnelGatewayUrl?: string;
   /**
+   * Offer `amika.tunnel.v3`, so a dropped tunnel resumes rather than ending
+   * every stream. On unless `AMIKA_HOSTD_TUNNEL_RESUME=0`, which offers v2
+   * alone. The relay decides which one a session speaks, so this is safe to
+   * leave on with any gateway. Only read from the environment.
+   */
+  tunnelResume: boolean;
+  /**
    * The amikad binary the `bare_metal` runtime runs, in place of the one
    * hostd installs into its data directory. For development; absolute. Only
    * read from TOML.
@@ -152,6 +159,7 @@ export const ENV_NAMES = {
   snapshotDir: ["AMIKA_HOSTD_SNAPSHOT_DIR"],
   transport: ["AMIKA_HOSTD_TRANSPORT"],
   tunnelGatewayUrl: ["AMIKA_HOSTD_TUNNEL_GATEWAY_URL"],
+  tunnelResume: ["AMIKA_HOSTD_TUNNEL_RESUME"],
 } as const;
 
 /** Resolve every setting. Each one takes the first source that sets it. */
@@ -209,6 +217,7 @@ export function resolveConfig({
     tunnelGatewayUrl: parseGatewayUrl(
       fromEnv("tunnelGatewayUrl") ?? toml.tunnel_gateway_url,
     ),
+    tunnelResume: parseTunnelResume(fromEnv("tunnelResume")),
     amikadPath: parseAmikadPath(toml.amikad_path),
     configPath: file?.path,
   };
@@ -302,6 +311,18 @@ function parseGatewayUrl(value: string | undefined): string | undefined {
       `tunnel_gateway_url is not a URL (set ${ENV_NAMES.tunnelGatewayUrl[0]} or tunnel_gateway_url in config.toml)`,
     );
   }
+}
+
+/**
+ * The resume switch: `1` or unset offers v3, `0` offers v2 alone. Anything
+ * else is refused, so a typo never turns a kill switch into a no-op.
+ */
+function parseTunnelResume(value: string | undefined): boolean {
+  if (value === undefined || value === "1") return true;
+  if (value === "0") return false;
+  throw new ConfigError(
+    `${ENV_NAMES.tunnelResume[0]} must be 0 or 1, not ${JSON.stringify(value)}`,
+  );
 }
 
 /**
