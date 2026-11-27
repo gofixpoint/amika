@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -97,15 +98,16 @@ func TestUserProfileRejectsGarbage(t *testing.T) {
 
 func TestResolveTarget(t *testing.T) {
 	t.Setenv("WSL_DISTRO_NAME", "Ubuntu")
-	stubInterop(t, map[string]string{
+	calls := stubInterop(t, map[string]string{
 		"cmd.exe": "C:\\Users\\hrishikesh\r\n",
-		"wslpath": "/mnt/c/Users/hrishikesh/.ssh\n",
+		"wslpath": "/mnt/c/Users/hrishikesh\n",
 	})
 	target, err := ResolveTarget()
 	if err != nil {
 		t.Fatalf("ResolveTarget: %v", err)
 	}
 	want := Target{
+		Home:          "/mnt/c/Users/hrishikesh",
 		SSHDir:        "/mnt/c/Users/hrishikesh/.ssh",
 		SSHDirWindows: `C:\Users\hrishikesh\.ssh`,
 		Distro:        "Ubuntu",
@@ -113,6 +115,11 @@ func TestResolveTarget(t *testing.T) {
 	}
 	if target != want {
 		t.Fatalf("ResolveTarget = %+v, want %+v", target, want)
+	}
+	// Home is the converted profile itself; converting a subdirectory such as
+	// .ssh would nest every Windows-side path one level too deep.
+	if !slices.Contains(*calls, `wslpath -u C:\Users\hrishikesh`) {
+		t.Fatalf("interop calls = %q, want the profile converted with wslpath", *calls)
 	}
 }
 

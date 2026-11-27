@@ -88,7 +88,7 @@ func openSandboxInEditor(cmd *cobra.Command, editor string, paths basedir.Paths,
 	case "codex":
 		return openSandboxInCodexTarget(cmd, paths, target, pathOverride)
 	case "orca":
-		return openSandboxInOrcaTarget(cmd, target, pathOverride)
+		return openSandboxInOrcaTarget(cmd, paths, target, pathOverride)
 	case "paseo":
 		return openSandboxInPaseoTarget(cmd, target)
 	case "herdr":
@@ -163,17 +163,11 @@ func resolveEditorLauncher(cli, installHint string, paths basedir.Paths) (func(a
 	}, nil
 }
 
-// resolveWindowsEditorLauncher prepares the Windows side of a WSL launch: it
-// mirrors the SSH config, identity, and host-key pins to the Windows user's
-// .ssh directory so the editor's own OpenSSH can reach the sandbox, then
-// returns a launcher that opens the Windows editor on the desktop.
+// resolveWindowsEditorLauncher prepares the Windows side of a WSL launch,
+// then returns a launcher that opens the Windows editor on the desktop.
 func resolveWindowsEditorLauncher(cli string, paths basedir.Paths) (func(args ...string) error, error) {
-	windowsTarget, err := wslResolveTarget()
-	if err != nil {
-		return nil, fmt.Errorf("resolve the Windows side: %w", err)
-	}
-	if err := mirrorSSHToWindows(paths, windowsTarget); err != nil {
-		return nil, fmt.Errorf("mirror SSH config to Windows: %w", err)
+	if _, err := prepareWindowsSide(paths); err != nil {
+		return nil, err
 	}
 	exe, err := wslEditorExe(cli)
 	if err != nil {
@@ -182,21 +176,56 @@ func resolveWindowsEditorLauncher(cli string, paths basedir.Paths) (func(args ..
 	return func(args ...string) error { return wslLaunchWindows(exe, args...) }, nil
 }
 
+// prepareWindowsSide resolves the Windows side of a WSL launch and mirrors
+// the SSH config, identity, and host-key pins to the Windows user's .ssh
+// directory, so a Windows application's own OpenSSH can reach the sandbox.
+func prepareWindowsSide(paths basedir.Paths) (wslbridge.Target, error) {
+	windowsTarget, err := wslResolveTarget()
+	if err != nil {
+		return wslbridge.Target{}, fmt.Errorf("resolve the Windows side: %w", err)
+	}
+	if err := mirrorSSHToWindows(paths, windowsTarget); err != nil {
+		return wslbridge.Target{}, fmt.Errorf("mirror SSH config to Windows: %w", err)
+	}
+	return windowsTarget, nil
+}
+
+// resolveDesktopApp returns the paths a desktop app (Claude Desktop, Codex,
+// Orca) reads its config from and the function that opens it by URL. Under
+// WSL the app is taken to be the Windows build, so the SSH state is mirrored to
+// Windows, the config goes under the Windows user profile, and the URL opens
+// on the Windows desktop. Only the home-based files of the returned paths
+// (such as ClaudeSettingsFile and CodexConfigFile) point at the Windows side.
+func resolveDesktopApp(paths basedir.Paths) (basedir.Paths, func(url string) error, error) {
+	if !wslIsWSL() {
+		return paths, openApp, nil
+	}
+	windowsTarget, err := prepareWindowsSide(paths)
+	if err != nil {
+		return nil, nil, err
+	}
+	return basedir.New(windowsTarget.Home), func(url string) error { return wslLaunchWindows(url) }, nil
+}
+
 // openSandboxInClaudeTarget registers a prepared SSH target in Claude Desktop.
 func openSandboxInClaudeTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
+	appPaths, openURL, err := resolveDesktopApp(paths)
+	if err != nil {
+		return err
+	}
 	host := appcfg.ClaudeSSHHost{
 		ID:             target.alias,
 		Name:           "Amika: " + target.sandboxName,
 		SSHHost:        target.alias,
 		StartDirectory: target.remotePath(pathOverride),
 	}
-	if _, err := appcfg.UpsertClaudeSSHConfig(paths, host); err != nil {
+	if _, err := appcfg.UpsertClaudeSSHConfig(appPaths, host); err != nil {
 		return fmt.Errorf("write Claude settings: %w", err)
 	}
 
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "Registered SSH environment %q for rig %q in Claude Desktop.\n", host.Name, target.sandboxName)
-	if err := openApp("claude://code/new"); err != nil {
+	if err := openURL("claude://code/new"); err != nil {
 		fmt.Fprintf(out, "Could not launch Claude Desktop automatically (%v); open it yourself.\n", err)
 	} else {
 		fmt.Fprintf(out, "Opening Claude Desktop...\n")
@@ -207,13 +236,21 @@ func openSandboxInClaudeTarget(cmd *cobra.Command, paths basedir.Paths, target s
 
 // openSandboxInCodexTarget enables Codex remote connections for a prepared SSH target.
 func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
-	if _, err := appcfg.EnableCodexRemoteConnections(paths); err != nil {
+	appPaths, openURL, err := resolveDesktopApp(paths)
+	if err != nil {
+		return err
+	}
+	if _, err := appcfg.EnableCodexRemoteConnections(appPaths); err != nil {
 		return fmt.Errorf("enable Codex remote connections: %w", err)
+	}
+	sshConfig := "~/.ssh/config"
+	if wslIsWSL() {
+		sshConfig = `%USERPROFILE%\.ssh\config`
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Enabled Codex remote connections; SSH host %q for rig %q is available from ~/.ssh/config.\n", target.alias, target.sandboxName)
-	if err := openApp("codex://"); err != nil {
+	fmt.Fprintf(out, "Enabled Codex remote connections; SSH host %q for rig %q is available from %s.\n", target.alias, target.sandboxName, sshConfig)
+	if err := openURL("codex://"); err != nil {
 		fmt.Fprintf(out, "Could not launch Codex automatically (%v); open it yourself.\n", err)
 	} else {
 		fmt.Fprintf(out, "Opening Codex...\n")
@@ -232,10 +269,19 @@ func openSandboxInCodexTarget(cmd *cobra.Command, paths basedir.Paths, target sa
 // adding an SSH host, but its SSH Hosts settings import the concrete Host
 // entry `rig open` wrote to Amika's managed SSH config, which ~/.ssh/config
 // includes, so the user usually only connects.
-func openSandboxInOrcaTarget(cmd *cobra.Command, target sandboxSSHAlias, pathOverride string) error {
+//
+// Under WSL, Orca is taken to be the Windows build, which is how Orca supports
+// WSL (it opens \\wsl.localhost repos and WSL terminals itself). That build
+// imports hosts from %USERPROFILE%\.ssh\config, so the host must be mirrored
+// there; Orca reads none of the other files `rig open` writes.
+func openSandboxInOrcaTarget(cmd *cobra.Command, paths basedir.Paths, target sandboxSSHAlias, pathOverride string) error {
+	_, openURL, err := resolveDesktopApp(paths)
+	if err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "SSH host for rig %q:\n\n  %s\n\n", target.sandboxName, target.alias)
-	if err := openApp("orca://"); err != nil {
+	if err := openURL("orca://"); err != nil {
 		fmt.Fprintf(out, "Could not launch Orca automatically (%v); open it yourself.\n\n", err)
 	} else {
 		fmt.Fprintf(out, "Opening Orca...\n\n")
