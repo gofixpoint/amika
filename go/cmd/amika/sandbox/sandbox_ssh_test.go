@@ -177,6 +177,8 @@ func TestValidateEditor(t *testing.T) {
 
 func TestOpenSandboxInClaude(t *testing.T) {
 	opened := stubOpenApp(t)
+	stubWSLSeams(t)
+	wslIsWSL = func() bool { return false }
 	paths, home := testSSHPaths(t)
 	target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.app-amika-dev.amika", sandboxName: "my-sandbox", repoName: "biz"}
 
@@ -219,6 +221,8 @@ func TestOpenSandboxInClaude(t *testing.T) {
 
 func TestOpenSandboxInCodex(t *testing.T) {
 	opened := stubOpenApp(t)
+	stubWSLSeams(t)
+	wslIsWSL = func() bool { return false }
 	paths, home := testSSHPaths(t)
 	target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.app-amika-dev.amika", sandboxName: "my-sandbox", repoName: "biz"}
 
@@ -555,9 +559,11 @@ func stubWSLSeams(t *testing.T) (*[]wslbridge.Target, *[][]string) {
 
 	prevIsWSL, prevTarget, prevExe, prevLaunch, prevMirror := wslIsWSL, wslResolveTarget, wslEditorExe, wslLaunchWindows, mirrorSSHToWindows
 	wslIsWSL = func() bool { return true }
+	windowsHome := t.TempDir()
 	wslResolveTarget = func() (wslbridge.Target, error) {
 		return wslbridge.Target{
-			SSHDir:        t.TempDir(),
+			Home:          windowsHome,
+			SSHDir:        filepath.Join(windowsHome, ".ssh"),
 			SSHDirWindows: `C:\Users\testuser\.ssh`,
 			Distro:        "Ubuntu",
 			User:          "testuser",
@@ -614,6 +620,105 @@ func TestOpenSandboxInEditorMirrorsToWindowsUnderWSL(t *testing.T) {
 	}
 	if len(*mirrored) != 1 || len(*launched) != 1 {
 		t.Fatalf("mirror/launch calls = %d/%d, want 1/1", len(*mirrored), len(*launched))
+	}
+}
+
+// TestOpenDesktopAppsUseWindowsSideUnderWSL covers Claude Desktop and Codex,
+// which run as Windows apps under WSL: their config must land in the Windows
+// profile, the SSH alias must be mirrored there, and the app must open on the
+// Windows desktop, with nothing written to the WSL home.
+func TestOpenDesktopAppsUseWindowsSideUnderWSL(t *testing.T) {
+	cases := []struct {
+		editor     string
+		configFile string
+		configured func(data []byte) bool
+		url        string
+	}{
+		{"claude", filepath.Join(".claude", "settings.json"), func(data []byte) bool {
+			return bytes.Contains(data, []byte(`"sshHost": "my-sandbox.sb_abc.prod.amika"`))
+		}, "claude://code/new"},
+		{"codex", filepath.Join(".codex", "config.toml"), func(data []byte) bool {
+			return bytes.Contains(data, []byte("remote_connections = true"))
+		}, "codex://"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.editor, func(t *testing.T) {
+			opened := stubOpenApp(t)
+			mirrored, launched := stubWSLSeams(t)
+			paths, linuxHome := testSSHPaths(t)
+
+			cmd := &cobra.Command{}
+			cmd.SetOut(&bytes.Buffer{})
+			target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.prod.amika", sandboxName: "my-sandbox", repoName: "biz"}
+			if err := openSandboxInEditor(cmd, tc.editor, paths, target, ""); err != nil {
+				t.Fatalf("openSandboxInEditor(%s): %v", tc.editor, err)
+			}
+
+			if len(*mirrored) != 1 {
+				t.Fatalf("mirror calls = %d, want 1", len(*mirrored))
+			}
+			data, err := os.ReadFile(filepath.Join((*mirrored)[0].Home, tc.configFile))
+			if err != nil {
+				t.Fatalf("read Windows-side config: %v", err)
+			}
+			if !tc.configured(data) {
+				t.Fatalf("Windows-side %s not configured:\n%s", tc.configFile, data)
+			}
+			if _, err := os.Stat(filepath.Join(linuxHome, tc.configFile)); !os.IsNotExist(err) {
+				t.Fatalf("WSL-side %s was written (stat err %v)", tc.configFile, err)
+			}
+			if len(*launched) != 1 || !reflect.DeepEqual((*launched)[0], []string{tc.url}) {
+				t.Fatalf("Windows launches = %q, want [[%s]]", *launched, tc.url)
+			}
+			if len(*opened) != 0 {
+				t.Fatalf("opened %v inside WSL, want nothing", *opened)
+			}
+		})
+	}
+}
+
+// TestOpenDesktopAppFailsWhenWindowsSideUnreachable keeps a WSL launch from
+// reporting success, writing config, or opening the app when the Windows side
+// cannot be resolved or the SSH mirror fails.
+func TestOpenDesktopAppFailsWhenWindowsSideUnreachable(t *testing.T) {
+	configFiles := map[string]string{
+		"claude": filepath.Join(".claude", "settings.json"),
+		"codex":  filepath.Join(".codex", "config.toml"),
+	}
+	for editor, configFile := range configFiles {
+		for _, failure := range []string{"resolve", "mirror"} {
+			t.Run(editor+"/"+failure, func(t *testing.T) {
+				opened := stubOpenApp(t)
+				_, launched := stubWSLSeams(t)
+				windowsTarget, _ := wslResolveTarget()
+				switch failure {
+				case "resolve":
+					wslResolveTarget = func() (wslbridge.Target, error) {
+						return wslbridge.Target{}, errors.New("WSL_DISTRO_NAME is not set")
+					}
+				case "mirror":
+					mirrorSSHToWindows = func(basedir.Paths, wslbridge.Target) error {
+						return errors.New("icacls failed")
+					}
+				}
+				paths, linuxHome := testSSHPaths(t)
+
+				cmd := &cobra.Command{}
+				cmd.SetOut(&bytes.Buffer{})
+				target := sandboxSSHAlias{alias: "my-sandbox.sb_abc.prod.amika", sandboxName: "my-sandbox", repoName: "biz"}
+				if err := openSandboxInEditor(cmd, editor, paths, target, ""); err == nil {
+					t.Fatal("expected the Windows-side failure to fail the command")
+				}
+				for _, home := range []string{linuxHome, windowsTarget.Home} {
+					if _, err := os.Stat(filepath.Join(home, configFile)); !os.IsNotExist(err) {
+						t.Fatalf("%s was written under %s (stat err %v)", configFile, home, err)
+					}
+				}
+				if len(*opened) != 0 || len(*launched) != 0 {
+					t.Fatalf("opened %v / launched %q, want nothing", *opened, *launched)
+				}
+			})
+		}
 	}
 }
 

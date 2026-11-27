@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -59,10 +60,13 @@ func Distro() (string, error) {
 	return distro, nil
 }
 
-// Target names the Windows side an editor launch needs: the user's .ssh
-// directory in both path spellings, the WSL distribution a proxy command must
-// re-enter, and the Windows account name used for ACL grants.
+// Target names the Windows side an editor launch needs: the user's profile
+// as a WSL path (where Windows apps keep dotfile config such as .claude and
+// .codex), the user's .ssh directory in both path spellings, the WSL
+// distribution a proxy command must re-enter, and the Windows account name
+// used for ACL grants.
 type Target struct {
+	Home          string
 	SSHDir        string
 	SSHDirWindows string
 	Distro        string
@@ -80,8 +84,7 @@ func ResolveTarget() (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
-	sshDirWindows := profile + "\\.ssh"
-	sshDir, err := toWSLPath(sshDirWindows)
+	home, err := toWSLPath(profile)
 	if err != nil {
 		return Target{}, err
 	}
@@ -89,7 +92,13 @@ func ResolveTarget() (Target, error) {
 	if user == "" {
 		return Target{}, fmt.Errorf("derive Windows account name from profile %q", profile)
 	}
-	return Target{SSHDir: sshDir, SSHDirWindows: sshDirWindows, Distro: distro, User: user}, nil
+	return Target{
+		Home:          home,
+		SSHDir:        path.Join(home, ".ssh"),
+		SSHDirWindows: profile + "\\.ssh",
+		Distro:        distro,
+		User:          user,
+	}, nil
 }
 
 // UserProfile returns the Windows user profile directory (for example
@@ -197,8 +206,9 @@ func checkCmdArg(arg string) error {
 	return nil
 }
 
-// LaunchDetached starts a Windows executable through cmd.exe's start command
-// and returns as soon as it is spawned. The empty title argument keeps start
+// LaunchDetached starts a Windows executable, or opens a URL with the app
+// Windows registered for its scheme, through cmd.exe's start command and
+// returns as soon as it is spawned. The empty title argument keeps start
 // from treating a quoted executable path as the window title.
 func LaunchDetached(windowsExe string, args ...string) error {
 	for _, arg := range append([]string{windowsExe}, args...) {
