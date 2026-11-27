@@ -417,8 +417,7 @@ type proxyLiveness struct {
 	timeout  time.Duration
 }
 
-// defaultProxyLiveness finds a dead transport in 45 s or less, the same bound
-// as the managed config's `ServerAliveInterval 15` and `ServerAliveCountMax 3`.
+// defaultProxyLiveness pings every 15 s and gives each ping 30 s to answer.
 // It also applies when the user turns off the SSH keepalive.
 var defaultProxyLiveness = proxyLiveness{interval: 15 * time.Second, timeout: 30 * time.Second}
 
@@ -485,9 +484,9 @@ func carryStreams(ctx context.Context, stream Stream, stdin io.Reader, stdout io
 }
 
 // watchTransport pings the transport at each interval. It returns an error
-// when a ping gets no answer in time, or when the transport takes no data for
-// that time. It returns nil when ctx ends or the transport fails in a
-// different way, because the copy then reports the failure.
+// when a ping gets no answer and no data arrives while it waits, or when a
+// transport write stays blocked for that time. It returns nil when ctx ends
+// or the transport fails in a different way, because the copy reports that.
 func watchTransport(ctx context.Context, pinger pingStream, input, output *busyWriter, liveness proxyLiveness) error {
 	ticker := time.NewTicker(liveness.interval)
 	defer ticker.Stop()
@@ -505,6 +504,7 @@ func watchTransport(ctx context.Context, pinger pingStream, input, output *busyW
 			}
 			return fmt.Errorf("direct SSH transport took no data in %s; closing the connection", liveness.timeout)
 		}
+		received := output.written.Load()
 		pingCtx, cancel := context.WithTimeout(ctx, liveness.timeout)
 		err := pinger.Ping(pingCtx)
 		cancel()
@@ -518,28 +518,35 @@ func watchTransport(ctx context.Context, pinger pingStream, input, output *busyW
 			// write. That write is still in progress, and the next tick
 			// checks it.
 			continue
-		case output.busyFor() > 0:
+		case output.busyFor() > 0 || output.written.Load() != received:
 			// The proxy reads no frames while OpenSSH does not take its
 			// output, so the pong can wait behind that write. This is not
-			// evidence of a dead transport.
+			// evidence of a dead transport. Data received during the ping
+			// also proves life when the pong waits behind queued traffic.
 			continue
 		}
 		return fmt.Errorf("direct SSH transport did not answer a ping in %s; closing the connection", liveness.timeout)
 	}
 }
 
-// busyWriter records when its in-progress write started.
+// busyWriter records an in-progress write and completed bytes.
 type busyWriter struct {
 	writer io.Writer
 	// since is the start of the in-progress write in Unix nanoseconds, or
 	// 0 when no write is in progress.
 	since atomic.Int64
+	// written counts bytes that the writer accepted.
+	written atomic.Uint64
 }
 
 func (w *busyWriter) Write(p []byte) (int, error) {
 	w.since.Store(time.Now().UnixNano())
 	defer w.since.Store(0)
-	return w.writer.Write(p)
+	written, err := w.writer.Write(p)
+	if written > 0 {
+		w.written.Add(uint64(written))
+	}
+	return written, err
 }
 
 // busyFor returns how long the in-progress write has run, or 0 when no write
